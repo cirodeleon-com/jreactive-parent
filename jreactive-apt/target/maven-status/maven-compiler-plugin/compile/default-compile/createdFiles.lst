@@ -1,0 +1,3 @@
+com\ciro\jreactive\Bind.class
+com\ciro\jreactive\tools\TemplateProcessor.class
+META-INF\services\javax.annotation.processing.Processor
