@@ -13,6 +13,7 @@ public class HomeTwoPage extends HtmlComponent{
 	    return """
 	      <div class="page">
 	        <label>Mi segunda page</label>
+	        <a href="/" data-router>regresar</a>
 	      </div>
 	      """;
 	}

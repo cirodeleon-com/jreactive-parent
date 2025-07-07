@@ -11,6 +11,7 @@ public class HomePage extends HtmlComponent {
 	protected String template() {
 	    return """
 	      <div class="page">
+	        <a href="/two" data-router>Ir a otra página</a>
 	        <HelloLeaf/>
 	        <ClockLeaf/>
 	      </div>

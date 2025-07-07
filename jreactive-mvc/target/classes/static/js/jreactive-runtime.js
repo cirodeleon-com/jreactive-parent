@@ -131,29 +131,40 @@
     updateEachBlocks();
   });
   
-  /* ------------------------------------------------------------------
- * 7. SPA Router (añadido)
+ /* ------------------------------------------------------------------
+ * 7. SPA Router (mejorado)
  * ------------------------------------------------------------------ */
+
 async function loadRoute(path = location.pathname) {
   const html = await fetch(path, { headers: { 'X-Partial': '1' } })
                       .then(r => r.text());
-  document.body.innerHTML = html;
 
-  // ① Re-index bindings del nuevo DOM
+  const main = document.querySelector('#app') || document.body;
+  main.innerHTML = html;
+
+  // Reindexa DOM con nuevo contenido
   bindings.clear();
-  indexBindings();
+  reindexBindings();
+
+  // Si hay estado inicial, lo puedes reinyectar aquí si lo guardas
+  updateIfBlocks();
+  updateEachBlocks();
 }
+
+console.log("⚡ La app NO se recargó completamente");
+
 
 document.addEventListener('click', e => {
   const a = e.target.closest('a[data-router]');
-  if (!a) return;
+  if (!a || a.target === '_blank') return;
   e.preventDefault();
   history.pushState({}, '', a.href);
   loadRoute(a.pathname);
 });
+
 window.addEventListener('popstate', () => loadRoute());
 
-function indexBindings() {
+function reindexBindings() {
   bindings.clear();
 
   // Paso 1: indexar nodos con {{variable}}
@@ -184,11 +195,6 @@ function indexBindings() {
     });
   });
 }
-
-
-indexBindings();                  // se llama al cargar la primera vez
-
-
   
 })();
 
