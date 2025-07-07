@@ -136,19 +136,15 @@
  * ------------------------------------------------------------------ */
 
 async function loadRoute(path = location.pathname) {
-  const html = await fetch(path, { headers: { 'X-Partial': '1' } })
-                      .then(r => r.text());
+  const html = await fetch(path, { headers: { 'X-Partial': '1' } }).then(r => r.text());
 
-  const main = document.querySelector('#app') || document.body;
-  main.innerHTML = html;
+  // Reemplaza solo el contenido de #app
+  const container = document.getElementById('app');
+  container.innerHTML = html;
 
-  // Reindexa DOM con nuevo contenido
-  bindings.clear();
-  reindexBindings();
-
-  // Si hay estado inicial, lo puedes reinyectar aquí si lo guardas
-  updateIfBlocks();
-  updateEachBlocks();
+  reindexBindings();         // ← vuelve a enlazar {{}} y inputs
+  updateIfBlocks();        // ← actualiza condiciones
+  updateEachBlocks();      // ← actualiza loops
 }
 
 console.log("⚡ La app NO se recargó completamente");
