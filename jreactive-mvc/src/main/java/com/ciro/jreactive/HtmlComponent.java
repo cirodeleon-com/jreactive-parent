@@ -8,6 +8,8 @@ public abstract class HtmlComponent extends ViewLeaf {
 
     private Map<String, ReactiveVar<?>> map;      // se crea on-demand
     private ComponentEngine.Rendered cached;
+     // para IDs automáticos
+    
 
 
     /* --------------------- API ViewLeaf -------------------- */

@@ -8,41 +8,37 @@ import org.springframework.web.bind.annotation.RestController;
 
 import com.ciro.jreactive.router.RouteRegistry;
 
+import jakarta.servlet.http.HttpServletRequest;
+
 @SpringBootApplication
 public class JReactiveApplication {
 
-	private final HomePage root = new HomePage();
+	
 
     public static void main(String[] args) {
         SpringApplication.run(JReactiveApplication.class, args);
     }
 
-    public HomePage getRoot() { return root; }
+    
 
-    @RestController
+    @RestController          // usa Lombok o constructor manual
     class PageController {
-    	
-    	
-    	private final RouteRegistry registry;
-    	
-    	public PageController(RouteRegistry registry) {
-    		this.registry=registry;
-    	}
-    	
-    	
+        private final PageResolver pageResolver;
+        
+        public PageController(PageResolver pageResolver) {
+        	this.pageResolver=pageResolver;
+        }
 
-        @GetMapping(value = "/", produces = MediaType.TEXT_HTML_VALUE)
-        public String index() {
+        @GetMapping(value = {"/", "/{path:^(?!js|ws).*$}"}, produces = MediaType.TEXT_HTML_VALUE)
+        public String page(HttpServletRequest req) {
+        	HtmlComponent page = pageResolver.getPage(req.getRequestURI());
             return """
-                <!DOCTYPE html>
-                <html>
-                  <head><meta charset=\"UTF-8\"/></head>
-                  <body>
-                    %s
-                    <script src="/js/jreactive-runtime.js"></script>
-                  </body>
-                </html>
-                """.formatted(root.render());
+                <!DOCTYPE html><html><head><meta charset='UTF-8'></head><body>
+                  %s
+                  <script src='/js/jreactive-runtime.js'></script>
+                </body></html>
+                """.formatted(page.render());
         }
     }
+
 }

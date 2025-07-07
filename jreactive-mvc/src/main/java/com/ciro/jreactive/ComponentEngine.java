@@ -43,7 +43,10 @@ final class ComponentEngine {
                     .getDeclaredConstructor()
                     .newInstance();
 
-                String ns = className + "#" + (++COUNTER) + ".";
+                String ns = leaf.getId() + ".";
+                System.out.println("🔗 Renderizando componente con namespace: " + ns);
+
+
 
                 String child = leaf.render();           // HTML del hijo
 

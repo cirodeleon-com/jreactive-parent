@@ -9,15 +9,18 @@ import org.springframework.web.socket.config.annotation.WebSocketHandlerRegistry
 @EnableWebSocket
 public class WebSocketConfig implements WebSocketConfigurer {
 
-    private final JReactiveSocketHandler socketHandler;
+    private final DelegatingWebSocketHandler delegator;
 
-    public WebSocketConfig(JReactiveApplication app) {
-    	HtmlComponent root = app.getRoot();//registry.resolve("/");
-        this.socketHandler = new JReactiveSocketHandler(root);
+    public WebSocketConfig(DelegatingWebSocketHandler delegator) {
+        this.delegator = delegator;
     }
 
     @Override
     public void registerWebSocketHandlers(WebSocketHandlerRegistry registry) {
-        registry.addHandler(socketHandler, "/ws").setAllowedOrigins("*");
+        registry.addHandler(delegator, "/ws")
+                .setAllowedOrigins("*")
+                .addInterceptors(new PathInterceptor());
     }
 }
+
+

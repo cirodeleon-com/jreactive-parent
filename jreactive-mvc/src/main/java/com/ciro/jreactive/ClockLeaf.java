@@ -11,6 +11,7 @@ public class ClockLeaf extends HtmlComponent {
 	@Bind public Type<String> clock = $("--:--:--");
 
     public ClockLeaf() {
+    	System.out.println("🕒 Instanciado ClockLeaf con id: " + this.getId());
     	new Timer(true).scheduleAtFixedRate(new TimerTask() {
             @Override public void run() {
                 clock.set(LocalTime.now().withNano(0).toString());  // 🔥 actualiza

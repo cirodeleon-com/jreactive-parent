@@ -27,4 +27,11 @@ public class RouteRegistry {
                        .orElse(routes.get("/"))      // fallback a Home
                        .get();
     }
+    
+    public HtmlComponent resolveWithInstance(String path) {
+        Supplier<HtmlComponent> factory = Optional.ofNullable(routes.get(path))
+                                                   .orElse(routes.get("/"));
+        return factory.get();
+    }
+
 }

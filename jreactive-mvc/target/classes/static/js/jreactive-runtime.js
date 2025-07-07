@@ -97,12 +97,19 @@
    * 5. WebSocket + sincronización de UI
    * ------------------------------------------------------------------ */
   console.log("📡 Conectando a WebSocket:", `ws://${location.host}/ws`);
-  const ws = new WebSocket(`ws://${location.host}/ws`);
+  const path = window.location.pathname;
+  const ws = new WebSocket(`ws://${location.host}/ws?path=${encodeURIComponent(path)}`);
 
   ws.onmessage = ({ data }) => {
 	  
 	console.log("📨 Mensaje recibido:", data); // ← muy importante  
     const { k, v } = JSON.parse(data);
+    
+   /* if (type === 'event') {
+       document.dispatchEvent(new CustomEvent(k, { detail: v }));
+       return;
+    }*/
+    
     state[k] = v;
 
     (bindings.get(k) || []).forEach(el => {
@@ -123,27 +130,65 @@
     updateIfBlocks();
     updateEachBlocks();
   });
-})();
+  
+  /* ------------------------------------------------------------------
+ * 7. SPA Router (añadido)
+ * ------------------------------------------------------------------ */
+async function loadRoute(path = location.pathname) {
+  const html = await fetch(path, { headers: { 'X-Partial': '1' } })
+                      .then(r => r.text());
+  document.body.innerHTML = html;
 
-window.addEventListener('popstate', () => loadRoute(location.pathname));
+  // ① Re-index bindings del nuevo DOM
+  bindings.clear();
+  indexBindings();
+}
 
 document.addEventListener('click', e => {
   const a = e.target.closest('a[data-router]');
-  if (a && a.href.startsWith(location.origin)) {
-    e.preventDefault();
-    history.pushState(null, '', a.href);
-    loadRoute(a.pathname);
-  }
+  if (!a) return;
+  e.preventDefault();
+  history.pushState({}, '', a.href);
+  loadRoute(a.pathname);
 });
+window.addEventListener('popstate', () => loadRoute());
 
-function loadRoute(path) {
-  fetch(path)
-    .then(res => res.text())
-    .then(html => {
-      document.body.innerHTML = html;
-      // Re-ejecutar la lógica de bindings
-      setTimeout(() => {
-        location.reload(); // por ahora reload completo, luego lo refinamos
-      }, 10);
+function indexBindings() {
+  bindings.clear();
+
+  // Paso 1: indexar nodos con {{variable}}
+  const reG = /{{\s*([\w#.-]+)\s*}}/g;
+  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+
+  let node;
+  while ((node = walker.nextNode())) {
+    if (reG.test(node.textContent)) {
+      node.__tpl = node.textContent;
+      reG.lastIndex = 0;
+      for (const [, key] of node.__tpl.matchAll(reG)) {
+        (bindings.get(key) || bindings.set(key, []).get(key)).push(node);
+      }
+    }
+  }
+
+  // Paso 2: inputs con name o id que coincidan con la variable
+  $$('input,textarea,select').forEach(el => {
+    const k = el.name || el.id;
+    if (!k) return;
+    (bindings.get(k) || bindings.set(k, []).get(k)).push(el);
+
+    const evt = (el.type === 'checkbox' || el.type === 'radio') ? 'change' : 'input';
+    el.addEventListener(evt, () => {
+      const v = (el.type === 'checkbox' || el.type === 'radio') ? el.checked : el.value;
+      ws.send(JSON.stringify({ k, v }));
     });
+  });
 }
+
+
+indexBindings();                  // se llama al cargar la primera vez
+
+
+  
+})();
+
