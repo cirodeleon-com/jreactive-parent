@@ -3,15 +3,19 @@ package com.ciro.jreactive;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.*;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+
 import java.util.Map;
 
 @Component
 public class DelegatingWebSocketHandler implements WebSocketHandler {
 
     private final PageResolver pageResolver;
+    private final ObjectMapper mapper;
 
-    public DelegatingWebSocketHandler(PageResolver pageResolver) {
+    public DelegatingWebSocketHandler(PageResolver pageResolver,ObjectMapper mapper) {
         this.pageResolver = pageResolver;
+        this.mapper = mapper;
     }
 
     @Override
@@ -20,7 +24,7 @@ public class DelegatingWebSocketHandler implements WebSocketHandler {
         if (path == null) path = "/";
         HtmlComponent page = pageResolver.getPage(path);
 
-        JReactiveSocketHandler delegate = new JReactiveSocketHandler(page);
+        JReactiveSocketHandler delegate = new JReactiveSocketHandler(page,mapper);
         delegate.afterConnectionEstablished(session);
 
         // OPCIONAL: podrías guardar `session -> delegate` si quieres manejar mensajes luego

@@ -29,6 +29,17 @@
       <groupId>com.fasterxml.jackson.core</groupId>
       <artifactId>jackson-databind</artifactId>
     </dependency>
+    <!--  ✅  Pega estas dos deps justo después de jackson-databind  -->
+<dependency>
+    <groupId>com.fasterxml.jackson.datatype</groupId>
+    <artifactId>jackson-datatype-jdk8</artifactId>
+</dependency>
+
+<dependency>
+    <groupId>com.fasterxml.jackson.module</groupId>
+    <artifactId>jackson-module-parameter-names</artifactId>
+</dependency>
+
 
 
     <dependency>
@@ -73,6 +84,7 @@
             <arg>jdk.compiler/com.sun.source.util=ALL-UNNAMED</arg>
             <arg>--add-exports</arg>
             <arg>jdk.compiler/com.sun.source.tree=ALL-UNNAMED</arg>
+            <arg>-parameters</arg>
           </compilerArgs>
         </configuration>
       </plugin>

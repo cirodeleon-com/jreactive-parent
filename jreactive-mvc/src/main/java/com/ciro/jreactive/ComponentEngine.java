@@ -15,9 +15,19 @@ final class ComponentEngine {
         Pattern.compile("\\{\\{#if\\s+([^}]+)}}([\\s\\S]*?)\\{\\{/if}}",
                         Pattern.MULTILINE);
 
+ // 1) Captura opcionalmente "as alias"
+ // 1) Captura opcional “as alias”
+    /** Captura '{{#each key [as alias]}}...{{/each}}' */
+    /** Captura '{{#each key [as alias]}}...{{/each}}', permitiendo espacios antes de '}}' */
     private static final Pattern EACH_BLOCK =
-        Pattern.compile("\\{\\{#each\\s+([^}]+)}}([\\s\\S]*?)\\{\\{/each}}",
-                        Pattern.MULTILINE);
+        Pattern.compile(
+          "\\{\\{#each\\s+([\\w#.-]+)(?:\\s+as\\s+(\\w+))?\\s*\\}\\}([\\s\\S]*?)\\{\\{\\/each\\s*\\}\\}",
+          Pattern.MULTILINE
+        );
+
+
+
+
 
     private static long COUNTER = 0;                    // ClockLeaf#1., …
 
@@ -25,6 +35,8 @@ final class ComponentEngine {
 
     /*─────────────────────────── 2. RENDER ────────────────────────────*/
     static Rendered render(HtmlComponent ctx) {
+    	
+    	ctx._children().clear(); 
 
         /* 2-A) Procesar subcomponentes <ClockLeaf/> … -----------------*/
         StringBuilder out = new StringBuilder();
@@ -42,6 +54,13 @@ final class ComponentEngine {
                     .forName(ctx.getClass().getPackageName() + "." + className)
                     .getDeclaredConstructor()
                     .newInstance();
+                
+                if (leaf instanceof HtmlComponent && ctx instanceof HtmlComponent) {
+                    HtmlComponent hc     = (HtmlComponent) leaf;
+                    HtmlComponent parent = (HtmlComponent) ctx;
+                    parent._addChild(hc);
+                }
+
 
                 String ns = leaf.getId() + ".";
                 System.out.println("🔗 Renderizando componente con namespace: " + ns);
@@ -82,10 +101,26 @@ final class ComponentEngine {
         html = IF_BLOCK.matcher(html)
                 .replaceAll("<template data-if=\"$1\">$2</template>");
 
-        html = EACH_BLOCK.matcher(html)
-                .replaceAll("<template data-each=\"$1\">$2</template>");
+        /* 2-D) CONVERSIÓN {{#each key [as alias]}} → <template data-each="key:alias"> */
+        Matcher m2 = EACH_BLOCK.matcher(html);
+        StringBuffer sb = new StringBuffer();
+        while (m2.find()) {
+            String listKey = m2.group(1);                      // ej. "fruits"
+            String alias   = m2.group(2) != null 
+                             ? m2.group(2)                    // ej. "fruit"
+                             : "this";                       // fallback
+            String body    = m2.group(3);                      // contenido interno
+            String tpl     = String.format(
+                "<template data-each=\"%s:%s\">%s</template>",
+                listKey, alias, body
+            );
+            m2.appendReplacement(sb, Matcher.quoteReplacement(tpl));
+        }
+        m2.appendTail(sb);
+        html = sb.toString();
 
         return new Rendered(html, all);
+
     }
 
     private ComponentEngine() {}   // util-class

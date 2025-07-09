@@ -1,13 +1,19 @@
 package com.ciro.jreactive;
 
 import java.lang.reflect.Field;
+import java.lang.reflect.Method;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 public abstract class HtmlComponent extends ViewLeaf {
 
     private Map<String, ReactiveVar<?>> map;      // se crea on-demand
     private ComponentEngine.Rendered cached;
+    private final List<HtmlComponent> _children = new ArrayList<>();
+    void _addChild(HtmlComponent child) { _children.add(child); }
+    List<HtmlComponent> _children()     { return _children; }
      // para IDs automáticos
     
 
@@ -56,6 +62,18 @@ public abstract class HtmlComponent extends ViewLeaf {
                 throw new RuntimeException(e);
             }
         }
+    }
+    
+    
+    public Map<String, Method> getCallableMethods() {
+        Map<String, Method> callables = new HashMap<>();
+        for (Method m : this.getClass().getDeclaredMethods()) {
+            if (m.isAnnotationPresent(com.ciro.jreactive.annotations.Call.class)) {
+                m.setAccessible(true);
+                callables.put(m.getName(), m);
+            }
+        }
+        return callables;
     }
 }
 

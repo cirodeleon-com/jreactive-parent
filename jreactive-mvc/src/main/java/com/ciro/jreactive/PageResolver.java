@@ -18,6 +18,9 @@ public class PageResolver {
     public HtmlComponent getPage(String path) {
         return instances.computeIfAbsent(path, registry::resolveWithInstance);
     }
+    
+    
+
 
     public HtmlComponent getHomePageInstance() {
         return getPage("/");

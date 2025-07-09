@@ -17,12 +17,18 @@ public class JReactiveSocketHandler extends TextWebSocketHandler {
 
     private final Map<String, ReactiveVar<?>> bindings;
     private final Set<WebSocketSession> sessions = ConcurrentHashMap.newKeySet();
-    private final ObjectMapper mapper = new ObjectMapper();
+    private final ObjectMapper mapper;
 
-    public JReactiveSocketHandler(ViewNode root) {
+    /*  reemplaza TODO el constructor  */
+    public JReactiveSocketHandler(ViewNode root, ObjectMapper mapper) {
+        this.mapper   = mapper;
+        /*  ✅  SIEMPRE recoge recursivamente TODO el árbol  */
         this.bindings = collect(root);
+
+        /*  listeners para broadcast */
         bindings.forEach((k, v) -> v.onChange(val -> broadcast(k, val)));
     }
+
 
     /* --- 1. registrar nueva sesión y enviar snapshot --- */
     @Override
@@ -65,7 +71,7 @@ public class JReactiveSocketHandler extends TextWebSocketHandler {
             try {
                 synchronized (s) {          
                     s.sendMessage(payload);
-                    System.out.println("🔁 Enviado a cliente: " + payload);
+                    //System.out.println("🔁 Enviado a cliente: " + payload);
                 }
             } catch (IOException ex) { return true; }
             return false;
@@ -86,21 +92,34 @@ public class JReactiveSocketHandler extends TextWebSocketHandler {
     }
 
     
+    
     /* -------------------------------------------------
      * Reúne los bindings de TODO el árbol de componentes
      * ------------------------------------------------- */
     private Map<String, ReactiveVar<?>> collect(ViewNode node) {
         Map<String, ReactiveVar<?>> map = new HashMap<>();
 
-        if (node instanceof ViewLeaf leaf) {                    // hoja
+        // 1) cualquier ViewLeaf (incluye HtmlComponent)
+        if (node instanceof ViewLeaf leaf) {
             map.putAll(leaf.bindings());
-        } else if (node instanceof ViewComposite composite) {   // compuesto
-            for (ViewNode child : composite.children()) {
-                map.putAll(collect(child));                     // recursivo
+        }
+
+        // 2) si además es HtmlComponent, recorrer sus hijos vivos
+        if (node instanceof HtmlComponent hc) {
+            for (HtmlComponent child : hc._children()) {
+                map.putAll(collect(child));          // recursivo
+            }
+        }
+
+        // 3) ViewComposite también puede tener hijos ViewNode
+        if (node instanceof ViewComposite comp) {
+            for (ViewNode child : comp.children()) {
+                map.putAll(collect(child));          // recursivo
             }
         }
         return map;
     }
+
     
     /*
     public void emitEvent(String eventName, Object payload) {
