@@ -15,6 +15,7 @@ com\ciro\jreactive\HtmlComponent.class
 com\ciro\jreactive\JReactiveApplication$PageController.class
 com\ciro\jreactive\ReactiveVar.class
 com\ciro\jreactive\JacksonConfig.class
+com\ciro\jreactive\Order.class
 com\ciro\jreactive\ViewLeaf.class
 com\ciro\jreactive\HomeTwoPage.class
 com\ciro\jreactive\JReactiveApplication.class

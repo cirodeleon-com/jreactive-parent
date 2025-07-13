@@ -104,6 +104,7 @@ public final class TemplateProcessor extends AbstractProcessor {
                           ? v.substring(v.lastIndexOf('.') + 1)
                           : v;
             if ("this".equals(simple)) continue;  // ignorar {{this}}
+            if ("size".equals(simple) || "length".equals(simple)) continue;
             if (!binds.contains(simple)) {
                 processingEnv.getMessager().printMessage(
                     Diagnostic.Kind.ERROR,

@@ -6,22 +6,25 @@
   const state    = Object.create(null);  // último valor conocido
   const $$       = sel => [...document.querySelectorAll(sel)];
 
-  /* ------------------------------------------------------------------
-   * 1. Indexar nodos con {{variable}}
-   * ------------------------------------------------------------------ */
-  const reG = /{{\s*([\w#.-]+)\s*}}/g;
-  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+/* ------------------------------------------------------------------
+ * 1. Indexar nodos con {{variable[.path]}}  (incluye .size/.length)
+ * ------------------------------------------------------------------ */
+const reG = /{{\s*([\w#.-]+)(?:\.(size|length))?\s*}}/g;
+const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
 
-  let node;
-  while ((node = walker.nextNode())) {
-    if (reG.test(node.textContent)) {
-      node.__tpl = node.textContent;     // plantilla original
-      reG.lastIndex = 0;
-      for (const [, key] of node.__tpl.matchAll(reG)) {
-        (bindings.get(key) || bindings.set(key, []).get(key)).push(node);
-      }
+let node;
+while ((node = walker.nextNode())) {
+  if (reG.test(node.textContent)) {
+    node.__tpl = node.textContent;
+    reG.lastIndex = 0;
+    for (const m of node.__tpl.matchAll(reG)) {
+      const expr = m[1];                   // p.e. "orders.size" ó "persona.nombre"
+      const root = expr.split('.')[0];     //   → "orders" / "persona"
+      (bindings.get(root) || bindings.set(root, []).get(root)).push(node);
     }
   }
+}
+
 
   /* ------------------------------------------------------------------
    * 2. Enlazar inputs cuyo name|id = variable
@@ -40,13 +43,82 @@
     });
   });
 
-  /* ------------------------------------------------------------------
-   * 3. Re-render de nodos texto
-   * ------------------------------------------------------------------ */
-  function renderText(node) {
-    const re = /{{\s*([\w#.-]+)\s*}}/g;
-    node.textContent = node.__tpl.replace(re, (_, k) => state[k] ?? '');
+
+/* ----------------------------------------------------------
+ *  Util: resuelve cualquier placeholder {{expr[.prop]}}
+ * ---------------------------------------------------------*/
+/* ---------------------------------------------------------
+ *  Resuelve expresiones con “.”  +  size / length
+ * --------------------------------------------------------- */
+function resolveExpr(expr) {
+  /* 0) — la clave completa existe tal cual ------------------ */
+  if (expr in state) {
+    const v = state[expr];
+    return v == null ? '' : v;
   }
+
+  /* 1) — split por puntos para navegar ---------------------- */
+  const parts   = expr.split('.');
+  const rootKey = parts[0];
+
+  /* 1-A)  Si “rootKey” NO está, prueba cualquier k que termine en '.rootKey' */
+  let rootStateKey = rootKey in state
+                   ? rootKey
+                   : Object.keys(state).find(k => k.endsWith('.' + rootKey));
+
+  if (!rootStateKey) return '';          // nada encontrado
+
+  let value = state[rootStateKey];
+
+  /* 1-B)  Recorre el resto de la ruta ----------------------- */
+  for (let i = 1; i < parts.length; i++) {
+    const p = parts[i];
+    if (value == null) return '';
+
+    /* tamaños ------------------------------------------------ */
+    if (p === 'size' || p === 'length') {
+      if (Array.isArray(value) || typeof value === 'string') return value.length;
+      if (value && typeof value === 'object') {
+        if (typeof value.length === 'number')   return value.length;
+        if (typeof value.size   === 'number')   return value.size;
+        if (typeof value.size   === 'function') return value.size();
+      }
+      return '0';
+    }
+
+    /* navegación normal ------------------------------------- */
+    value = value?.[p];
+  }
+  return value == null ? '' : value;
+}
+
+
+ /* ------------------------------------------------------------------
+ * 3. Re-render de nodos texto   (ahora con dot-path, size, length)
+ * ------------------------------------------------------------------ */
+
+function renderText(node) {
+  const re = /{{\s*([\w#.-]+)\s*}}/g;
+  node.textContent = node.__tpl.replace(re, (_, expr) => resolveExpr(expr));
+}
+
+
+
+function calcSizeLen(val, prop) {
+  if (prop === 'size' || prop === 'length') {
+    if (Array.isArray(val))   return val.length;
+    if (typeof val === 'string') return val.length;
+    if (val && typeof val === 'object') {
+      if ('length' in val) return val.length;
+      if (typeof val.size === 'number')    return val.size;
+      if (typeof val.size === 'function')  return val.size();
+    }
+    return '0';
+  }
+  return val ?? '';
+}
+
+
 
   /* ------------------------------------------------------------------
    * 4. Motores data-if  y  data-each
@@ -169,27 +241,52 @@ function connectWs(path) {
   // 2) Nuevo socket apuntando a la ruta solicitada
   currentPath = path;
   ws = new WebSocket(`ws://${location.host}/ws?path=${encodeURIComponent(path)}`);
+  
+  ws.onclose = e => {
+  if (e.code !== 1000) {                 // 1000 = cierre normal
+    setTimeout(() => connectWs(currentPath), 1000); // reintenta en 1 s
+  }
+};
 
   // 3) Manejador de mensajes idéntico al de antes
-  ws.onmessage = ({ data }) => {
-    console.log("📨 Mensaje recibido:", data);
-    const { k, v } = JSON.parse(data);
+/* ------------------------------------------------------------------
+ * 5-bis  WebSocket + 1ª hidratación segura
+ * ------------------------------------------------------------------ */
+let firstMiss   = true;          // ← solo reindexa una vez
+ws.onmessage = ({ data }) => {
+  // 1) snapshot ó cambio
+  const { k, v } = JSON.parse(data);
+  state[k] = v;
 
-    state[k] = v;
+  // 2)  ¿hay nodos ya enlazados?
+  let list = bindings.get(k);
+      if (!list || !list.length) {
+      if (firstMiss) {
+        reindexBindings();          // ← ya estaba
+        setupEventBindings();       // ← NUEVO: vuelve a enganchar inputs
+        hydrateClickDirectives();   // ← NUEVO: por si hay @click nuevos
+        list      = bindings.get(k);
+        firstMiss = false;
+      }
+    }
 
-    (bindings.get(k) || []).forEach(el => {
-      if (el.nodeType === Node.TEXT_NODE)            renderText(el);
-      else if (el.type === "checkbox" || el.type === "radio") el.checked = !!v;
-      else                                           el.value = v ?? "";
-    });
 
-    updateIfBlocks();
-    updateEachBlocks();
-  };
+  // 3) pinta texto / inputs
+  (list || []).forEach(el => {
+    if (el.nodeType === Node.TEXT_NODE)            renderText(el);
+    else if (el.type === 'checkbox' || el.type === 'radio') el.checked = !!v;
+    else                                           el.value   = v ?? '';
+  });
+
+  updateIfBlocks();
+  updateEachBlocks();
+};
+
+
+
 }
 
-/*  ⚡ primera conexión al arrancar */
-connectWs(window.location.pathname);
+
 
 
 
@@ -199,11 +296,9 @@ connectWs(window.location.pathname);
 document.addEventListener('DOMContentLoaded', () => {
   updateIfBlocks();
   updateEachBlocks();
-
-hydrateClickDirectives();
-setupEventBindings();
-
-  
+  hydrateClickDirectives();
+  setupEventBindings();
+  connectWs(window.location.pathname);
 });
 
   
@@ -245,7 +340,7 @@ async function loadRoute(path = location.pathname) {
   
   setupEventBindings();
   
-  connectWs(path);
+  //connectWs(path);
 
   // 3) Mostrar #app ya procesado
   app.style.visibility = '';
@@ -278,8 +373,14 @@ function reindexBindings() {
     if (reG.test(node.textContent)) {
       node.__tpl = node.textContent;
       reG.lastIndex = 0;
-      for (const [, key] of node.__tpl.matchAll(reG)) {
-        (bindings.get(key) || bindings.set(key, []).get(key)).push(node);
+      for (const m of node.__tpl.matchAll(reG)) {
+         const expr   = m[1];                     // p.e.  ClockLeaf#3.greet
+         const root   = expr.split('.')[0];       //       ClockLeaf#3
+         const simple = expr.split('.').at(-1);   //       greet
+
+         [expr, root, simple].forEach(key => {
+             (bindings.get(key) || bindings.set(key, []).get(key)).push(node);
+         });
       }
     }
   }

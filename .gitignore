@@ -1,0 +1,56 @@
+# ------------------------------------------------------------
+# JReactive – multi‑module Maven project
+# ------------------------------------------------------------
+
+# 1️⃣  Maven build output
+/target/
+**/target/
+
+# Generated sources & annotation‑processor output
+**/generated-sources/
+**/maven-status/
+**/maven-archiver/
+.apt_generated/
+.apt_generated_tests/
+
+# 2️⃣  IDE metadata
+# IntelliJ IDEA
+.idea/
+*.iml
+*.iws
+
+# Eclipse / Spring Tools Suite
+.project
+.classpath
+.settings/
+
+# VS Code
+.vscode/
+
+# 3️⃣  OS & tool cruft
+.DS_Store
+Thumbs.db
+hs_err_pid*
+
+# 4️⃣  Archives & compiled classes
+*.class
+*.jar
+*.war
+*.ear
+
+# 5️⃣  Logs & reports
+*.log
+
+# 6️⃣  Dependency‑check & coverage reports (optional)
+**/dependency-check-report*/
+**/jacoco.exec
+**/jacoco‑report/
+
+# 7️⃣  Node / Web tooling (if ever added)
+node_modules/
+
+# 8️⃣  Misc
+#   – local environment overrides
+.env
+
+# End of .gitignore

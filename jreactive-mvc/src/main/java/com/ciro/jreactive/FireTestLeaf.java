@@ -12,7 +12,7 @@ import com.ciro.jreactive.annotations.Call;
  * ───────────────────────────────────────── */
 record Address(String street, String city) {}
 record Item    (String name,   int    qty ) {}
-record Order   (Address address, List<Item> items, boolean urgent) {}
+record Order   (Address address, List<Item> items, Boolean urgent) {}
 
 /* ─────────────────────────────────────────
  *  Hoja que itera una lista <Order>
@@ -24,7 +24,7 @@ public class FireTestLeaf extends HtmlComponent {
             new Order(new Address("Calle 1-23", "Bogotá"),
                       List.of(new Item("Café",   2),
                               new Item("Azúcar", 1)),
-                      false),
+                      true),
             new Order(new Address("Av. 45 #78-90", "Medellín"),
                       List.of(new Item("Pan",    3)),
                       true)
@@ -38,7 +38,7 @@ public class FireTestLeaf extends HtmlComponent {
                 new Address("Nueva 99-01", "Cali"),
                 List.of(new Item("Chocolate", 5),
                         new Item("Leche",      2)),
-                false));
+                true));
         orders.set(copy);                       // 🔔 notifica al frontend
     }
 

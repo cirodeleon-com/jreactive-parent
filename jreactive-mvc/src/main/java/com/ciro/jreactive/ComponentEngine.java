@@ -49,17 +49,38 @@ final class ComponentEngine {
             out.append(ctx.template(), cursor, m.start());
 
             try {
-                String className = m.group(1);
-                ViewLeaf leaf = (ViewLeaf) Class
-                    .forName(ctx.getClass().getPackageName() + "." + className)
-                    .getDeclaredConstructor()
-                    .newInstance();
+            	String className = m.group(1);
+
+            	/* ── A) Buscar si ya hay un hijo de esa clase ─────────────────────── */
+            	ViewLeaf leaf = ctx._children()               // List<HtmlComponent>
+                        .stream()
+                        .filter(c -> c.getClass()
+                                      .getSimpleName()
+                                      .equals(className))
+                        .map(c -> (ViewLeaf) c)       // ← ★ ESTA LÍNEA ★
+                        .findFirst()
+                        .orElseGet(() -> {
+                            try {
+                                ViewLeaf fresh = (ViewLeaf) Class
+                                    .forName(ctx.getClass().getPackageName()
+                                              + "." + className)
+                                    .getDeclaredConstructor()
+                                    .newInstance();
+                                if (fresh instanceof HtmlComponent hc)
+                                    ctx._addChild(hc);
+                                return fresh;          // mismo tipo: ViewLeaf
+                            } catch (Exception ex) {
+                                throw new RuntimeException(
+                                    "Error instanciando componente", ex);
+                            }
+                        });
+
+
+            	if (leaf instanceof HtmlComponent hc && !ctx._children().contains(hc)) {
+            	    ctx._addChild(hc);             // se añade solo si aún no está
+            	}
+
                 
-                if (leaf instanceof HtmlComponent && ctx instanceof HtmlComponent) {
-                    HtmlComponent hc     = (HtmlComponent) leaf;
-                    HtmlComponent parent = (HtmlComponent) ctx;
-                    parent._addChild(hc);
-                }
 
 
                 String ns = leaf.getId() + ".";

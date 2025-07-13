@@ -18,7 +18,7 @@ public class HelloLeaf extends HtmlComponent {
     @Bind
     public Type<String> newFruit  = $("");
 
-    /* 2️⃣  Añade elemento y dispara notificación */
+    
     @Call
     public void addFruit(String fruta) {
         if (fruta == null || fruta.isBlank()) return;
