@@ -5,6 +5,19 @@
   const bindings = new Map();            // clave → [nodos texto / inputs]
   const state    = Object.create(null);  // último valor conocido
   const $$       = sel => [...document.querySelectorAll(sel)];
+  
+  /* --- helper global para escapar &, <, >, ", ' y / --- */
+function escapeHtml(str) {
+  if (str == null) return '';
+  return String(str)
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#x27;')
+    .replaceAll('/', '&#x2F;');
+}
+
 
 /* ------------------------------------------------------------------
  * 1. Indexar nodos con {{variable[.path]}}  (incluye .size/.length)
@@ -51,31 +64,31 @@ while ((node = walker.nextNode())) {
  *  Resuelve expresiones con “.”  +  size / length
  * --------------------------------------------------------- */
 function resolveExpr(expr) {
-  /* 0) — la clave completa existe tal cual ------------------ */
-  if (expr in state) {
-    const v = state[expr];
-    return v == null ? '' : v;
-  }
+  // Util: escapa solo si es string (números, booleanos y null salen tal cual)
+  const safe = v => (typeof v === 'string' ? escapeHtml(v) : v ?? '');
 
-  /* 1) — split por puntos para navegar ---------------------- */
-  const parts   = expr.split('.');
-  const rootKey = parts[0];
+  /* 0) — clave exacta ------------------------------------------------ */
+  if (expr in state) return safe(state[expr]);
 
-  /* 1-A)  Si “rootKey” NO está, prueba cualquier k que termine en '.rootKey' */
-  let rootStateKey = rootKey in state
-                   ? rootKey
-                   : Object.keys(state).find(k => k.endsWith('.' + rootKey));
+  /* 1) — navegación por puntos -------------------------------------- */
+  const parts    = expr.split('.');
+  const rootKey  = parts[0];
 
-  if (!rootStateKey) return '';          // nada encontrado
+  /* 1-A)  equivale a ClockLeaf#3.greet  →  greet                    */
+  let stateKey = rootKey in state
+               ? rootKey
+               : Object.keys(state).find(k => k.endsWith('.' + rootKey));
 
-  let value = state[rootStateKey];
+  if (!stateKey) return '';
 
-  /* 1-B)  Recorre el resto de la ruta ----------------------- */
+  let value = state[stateKey];
+
+  /* 1-B)  profundiza en la ruta ------------------------------------- */
   for (let i = 1; i < parts.length; i++) {
     const p = parts[i];
     if (value == null) return '';
 
-    /* tamaños ------------------------------------------------ */
+    /* tamaños -------------------------------------------------------- */
     if (p === 'size' || p === 'length') {
       if (Array.isArray(value) || typeof value === 'string') return value.length;
       if (value && typeof value === 'object') {
@@ -86,11 +99,12 @@ function resolveExpr(expr) {
       return '0';
     }
 
-    /* navegación normal ------------------------------------- */
+    /* navegación normal --------------------------------------------- */
     value = value?.[p];
   }
-  return value == null ? '' : value;
+  return safe(value);
 }
+
 
 
  /* ------------------------------------------------------------------
@@ -99,7 +113,11 @@ function resolveExpr(expr) {
 
 function renderText(node) {
   const re = /{{\s*([\w#.-]+)\s*}}/g;
-  node.textContent = node.__tpl.replace(re, (_, expr) => resolveExpr(expr));
+  node.textContent = node.__tpl.replace(
+  re,
+  (_, expr) => escapeHtml(resolveExpr(expr))
+);
+
 }
 
 
@@ -139,83 +157,227 @@ function mount(tpl) {
     tpl._nodes = null;
   }
 
-  function updateIfBlocks() {
-    document.querySelectorAll('template[data-if]').forEach(tpl => {
-      const key  = tpl.dataset.if;
-      const show = !!state[key];        // nullo/false ⇒ oculto
-      if (show && !tpl._nodes)  mount(tpl);
-      if (!show && tpl._nodes)  unmount(tpl);
-    });
+function evalCond(expr) {
+  const tokens = tokenize(expr);
+  const ast    = parseExpr(tokens);
+  return ast();                       // devuelve boolean
+}
+
+
+function valueOfPath(expr) {
+  // Reutiliza la función existente; si no la tienes extrae la parte relevante
+  return resolveExpr(expr);               // devuelve cualquier tipo
+}
+
+function tokenize(src) {
+  const re = /\s*(&&|\|\||!|\(|\)|[a-zA-Z_][\w#.-]*)\s*/g;
+  const out = [];
+  let m;
+  while ((m = re.exec(src))) out.push(m[1]);
+  return out;
+}
+
+function parseExpr(tokens) {         // OR level
+  let node = parseAnd(tokens);
+  while (tokens[0] === '||') {
+    tokens.shift();
+    node = () => node() || parseAnd(tokens)();
   }
+  return node;
+}
+
+function parseAnd(tokens) {          // AND level
+  let node = parseNot(tokens);
+  while (tokens[0] === '&&') {
+    tokens.shift();
+    node = () => node() && parseNot(tokens)();
+  }
+  return node;
+}
+
+function parseNot(tokens) {          // !factor
+  if (tokens[0] === '!') {
+    tokens.shift();
+    const factor = parseNot(tokens);
+    return () => !factor();
+  }
+  return parsePrimary(tokens);
+}
+
+function parsePrimary(tokens) {
+  if (tokens[0] === '(') {
+    tokens.shift();
+    const inside = parseExpr(tokens);
+    tokens.shift();                  // consume ')'
+    return inside;
+  }
+  const id = tokens.shift();         // identifier or path
+  return () => !!valueOfPath(id);
+}
+
+
+function updateIfBlocks() {
+  // plantilla con data-if
+  document.querySelectorAll('template[data-if]').forEach(tpl => {
+    const cond = tpl.dataset.if;
+    const show = evalCond(cond);
+
+    if (show && !tpl._nodes) mount(tpl);
+    if (!show && tpl._nodes) unmount(tpl);
+  });
+
+  // plantilla complementaria data-else (misma key)
+  document.querySelectorAll('template[data-else]').forEach(tpl => {
+    const cond = tpl.dataset.else;
+    const show = !evalCond(cond);
+
+    if (show && !tpl._nodes) mount(tpl);
+    if (!show && tpl._nodes) unmount(tpl);
+  });
+}
+
+
+/* ================================================================
+ *  Helpers para #each incremental
+ * ================================================================ */
+
+/** clave estable: si el item tiene .id la usamos, si no el índice */
+function getKey(item, idx) {
+  return (item && item.id !== undefined) ? item.id : idx;
+}
+
+/** Crea nodos DOM a partir del HTML procesado */
+function htmlToNodes(html) {
+  const span = document.createElement('span');
+  span.innerHTML = html;
+  return [...span.childNodes];
+}
+
+/** Rellena {{index}} y placeholders de alias en un fragmento HTML  */
+function renderTemplate(rawHtml, item, i, alias) {
+  let html = rawHtml.replace(/{{\s*index\s*}}/g, i);
+
+  if (item !== null && typeof item === 'object') {
+    // {{alias.prop.sub}}
+    html = html.replace(
+      new RegExp(`\\{\\{\\s*${alias}(?:\\.\\w+)+\\s*\\}\\}`, 'g'),
+      match => {
+        const path = match.replace(/\{\{\s*|\s*\}\}/g, '')
+                          .split('.')
+                          .slice(1);
+        return escapeHtml(path.reduce((acc, k) => acc?.[k], item) ?? '');
+      }
+    );
+    // {{alias}}
+    html = html.replace(
+      new RegExp(`\\{\\{\\s*${alias}\\s*\\}\\}`, 'g'),
+      escapeHtml(String(item ?? ''))
+    );
+  } else {
+    // primitivos  {{alias}}  /  {{this}}
+    html = html.replace(
+      new RegExp(`\\{\\{\\s*(${alias}|this)\\s*\\}\\}`, 'g'),
+      () => escapeHtml(String(item ?? ''))
+    );
+  }
+  return html;
+}
+
+
 
 /* ──────────────────────────────────────────────────────────────
  *  Each-block 100 % idempotente: nunca deja restos en el DOM
  * ───────────────────────────────────────────────────────────── */
+
+// dentro de updateEachBlocks() antes de montar el fragmento
+function resolveInContext(expr, alias, item) {
+  // a) alias solo  →  truthy si item es truthy
+  if (expr === alias) return !!item;
+
+  // b) alias.prop1.prop2
+  if (expr.startsWith(alias + '.')) {
+    const path = expr.split('.').slice(1);
+    return !!path.reduce((acc, k) => acc?.[k], item);
+  }
+  // c) fallback global (usa state como antes)
+  return evalCond(expr);
+}
+
+
+/* ------------------------------------------------------------------
+ *  #each con diff incremental (keyed) + soporte data-if / data-else
+ * ------------------------------------------------------------------ */
 function updateEachBlocks() {
   document.querySelectorAll('template[data-each]').forEach(tpl => {
 
-    /* 1. Clave y alias */
-    const [localKey, aliasRaw] = tpl.dataset.each.split(':').map(s => s.trim());
-    const alias = aliasRaw || 'this';
+    /* 1 · clave de la lista y alias ---------------------------------- */
+    const [rawKey, rawAlias] = tpl.dataset.each.split(':').map(s => s.trim());
+    const alias = rawAlias || 'this';
 
-    /* 2. Resuelve la key real (namespaced) */
-    let realKey = localKey;
-    if (!(realKey in state)) {
-      realKey = Object.keys(state).find(k => k.endsWith('.' + localKey)) || localKey;
+    // Resuelve llave real (namespaced)
+    let listKey = rawKey;
+    if (!(listKey in state)) {
+      listKey = Object.keys(state).find(k => k.endsWith('.' + rawKey)) || rawKey;
     }
+    const data = Array.isArray(state[listKey]) ? state[listKey] : [];
 
-    /* 3. Obtiene array */
-    const data = Array.isArray(state[realKey]) ? state[realKey] : [];
-
-    /* 4. Crea sentinelas la primera vez ----------------------- */
+    /* 2 · sentinelas & mapas ---------------------------------------- */
     if (!tpl._start) {
       tpl._start = document.createComment('each-start');
       tpl._end   = document.createComment('each-end');
       tpl.after(tpl._end);
       tpl.after(tpl._start);
     }
-
-    /* 5. Borra TODO lo anterior entre start y end ------------- */
-    let ptr = tpl._start.nextSibling;
-    while (ptr && ptr !== tpl._end) {
-      const next = ptr.nextSibling;
-      ptr.remove();
-      ptr = next;
-    }
-
-    /* 6. Renderiza elementos nuevos --------------------------- */
+    const prev = tpl._keyMap || new Map();      // key → {nodes}
+    const next = new Map();
     const frag = document.createDocumentFragment();
 
-    data.forEach(item => {
-      let html = tpl.innerHTML;
+    /* 3 · recorrido con reuse --------------------------------------- */
+    data.forEach((item, idx) => {
+      const key = getKey(item, idx);            // helper: usa item.id o idx
+      let entry = prev.get(key);
 
-      if (item !== null && typeof item === 'object') {
-        /* {{alias.prop}} y {{alias}} */
-        html = html.replace(
-          new RegExp(`\\{\\{\\s*${alias}(?:\\.\\w+)+\\s*\\}\\}`, 'g'),
-          match => {
-            const path = match.replace(/\{\{\s*|\s*\}\}/g, '').split('.').slice(1);
-            return path.reduce((acc, k) => acc?.[k], item) ?? '';
-          });
-        html = html.replace(
-          new RegExp(`\\{\\{\\s*${alias}\\s*\\}\\}`, 'g'),
-          item == null ? '' : String(item));
-      } else {
-        /* primitivos */
-        html = html.replace(
-          new RegExp(`\\{\\{\\s*(${alias}|this)\\s*\\}\\}`, 'g'),
-          item);
+      /* 3-a) si no existía, renderiza nodos */
+      if (!entry) {
+        const html  = renderTemplate(tpl.innerHTML, item, idx, alias); // helper
+        const nodes = htmlToNodes(html);                               // helper
+
+        /* ---- evalúa data-if / data-else en contexto del alias ---- */
+        nodes.forEach(n => {
+          if (n.nodeType === 1) {   // ELEMENT_NODE
+            n.querySelectorAll?.('template[data-if], template[data-else]')
+             .forEach(innerTpl => {
+               const cond   = innerTpl.dataset.if || innerTpl.dataset.else;
+               const isElse = innerTpl.hasAttribute('data-else');
+               const show   = resolveInContext(cond, alias, item);     // helper
+
+               if ((show && !isElse) || (!show && isElse)) mount(innerTpl);
+               else                                         unmount(innerTpl);
+
+               /* ⬇️  elimina el template para que updateIfBlocks lo ignore */
+               innerTpl.remove();
+            });
+          }
+        });
+
+        entry = { nodes };
       }
 
-      const holder = document.createElement('span');
-      holder.innerHTML = html;
-      frag.append(...holder.childNodes);
+      frag.append(...entry.nodes);   // mantiene orden definitivo
+      next.set(key, entry);          // guarda en nuevo mapa
+      prev.delete(key);              // marca como “todavía vivo”
     });
 
-    /* 7. Inserta justo antes del marcador end ----------------- */
+    /* 4 · remueve nodos que ya no existen --------------------------- */
+    prev.forEach(e => e.nodes.forEach(n => n.remove()));
+
+    /* 5 · inserta fragmento resultante ------------------------------ */
     tpl._end.before(frag);
+    tpl._keyMap = next;              // reemplaza mapa viejo
   });
 }
+
+
 
 
 
@@ -254,30 +416,37 @@ function connectWs(path) {
  * ------------------------------------------------------------------ */
 let firstMiss   = true;          // ← solo reindexa una vez
 ws.onmessage = ({ data }) => {
-  // 1) snapshot ó cambio
-  const { k, v } = JSON.parse(data);
-  state[k] = v;
+  const parsed = JSON.parse(data);          // ahora puede ser array
+  const packet = Array.isArray(parsed) ? parsed : [ parsed ];
+  // DEBUG — imprime lote recibido
+  //console.log('WS in', packet);
 
-  // 2)  ¿hay nodos ya enlazados?
-  let list = bindings.get(k);
-      if (!list || !list.length) {
-      if (firstMiss) {
-        reindexBindings();          // ← ya estaba
-        setupEventBindings();       // ← NUEVO: vuelve a enganchar inputs
-        hydrateClickDirectives();   // ← NUEVO: por si hay @click nuevos
-        list      = bindings.get(k);
-        firstMiss = false;
-      }
+
+  /* 1) ---- aplica todos los cambios del lote -------------------- */
+  packet.forEach(({ k, v }) => {
+    state[k] = v;
+
+    /* ¿hay nodos enlazados ya? */
+    let nodes = bindings.get(k);
+
+    /* primera vez que vemos la clave ⇒ re-index + re-hook una vez */
+    if ((!nodes || !nodes.length) && firstMiss) {
+      reindexBindings();
+      setupEventBindings();
+      hydrateClickDirectives();
+      nodes     = bindings.get(k);
+      firstMiss = false;
     }
 
-
-  // 3) pinta texto / inputs
-  (list || []).forEach(el => {
-    if (el.nodeType === Node.TEXT_NODE)            renderText(el);
-    else if (el.type === 'checkbox' || el.type === 'radio') el.checked = !!v;
-    else                                           el.value   = v ?? '';
+    /* pinta texto / inputs concretos */
+    (nodes || []).forEach(el => {
+      if (el.nodeType === Node.TEXT_NODE)  renderText(el);
+      else if (el.type === 'checkbox' || el.type === 'radio') el.checked = !!v;
+      else                                                   el.value   = v ?? '';
+    });
   });
 
+  /* 2) ---- una sola pasada global tras agrupar ------------------ */
   updateIfBlocks();
   updateEachBlocks();
 };

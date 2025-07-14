@@ -7,8 +7,15 @@ import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
 import org.springframework.web.socket.handler.TextWebSocketHandler;
 
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
+
+
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -18,12 +25,20 @@ public class JReactiveSocketHandler extends TextWebSocketHandler {
     private final Map<String, ReactiveVar<?>> bindings;
     private final Set<WebSocketSession> sessions = ConcurrentHashMap.newKeySet();
     private final ObjectMapper mapper;
+    private final ScheduledExecutorService scheduler;
+    
+    /* --- back-pressure buffer --- */
+    private final Map<String,Object> batch = new ConcurrentHashMap<>();
+    private volatile boolean flushScheduled = false;
+
+    
 
     /*  reemplaza TODO el constructor  */
-    public JReactiveSocketHandler(ViewNode root, ObjectMapper mapper) {
+    public JReactiveSocketHandler(ViewNode root, ObjectMapper mapper,ScheduledExecutorService scheduler) {
         this.mapper   = mapper;
         /*  ✅  SIEMPRE recoge recursivamente TODO el árbol  */
         this.bindings = collect(root);
+        this.scheduler=scheduler;
 
         /*  listeners para broadcast */
         bindings.forEach((k, v) -> v.onChange(val -> broadcast(k, val)));
@@ -64,19 +79,47 @@ public class JReactiveSocketHandler extends TextWebSocketHandler {
     //    return json(k, v, "state");
     //}
     
+    /* ---  agrupa varios cambios en un único flush  --- */
     private void broadcast(String k, Object v) {
-        TextMessage payload = json(k, v);
-        sessions.removeIf(s -> {
-            if (!s.isOpen()) return true;
+        batch.put(k, v);
+
+        if (!flushScheduled) {
+            flushScheduled = true;
+            scheduler.schedule(this::flushBatch, 30, TimeUnit.MILLISECONDS); // ~33 fps máx.
+        }
+    }
+
+    private void flushBatch() {
+        flushScheduled = false;
+        if (batch.isEmpty()) return;
+
+        List<Map<String,Object>> payload = new ArrayList<>();
+        batch.forEach((key,val) -> {
+            Map<String,Object> m = new HashMap<>();
+            m.put("k", key);
+            m.put("v", val);
+            payload.add(m);
+        });
+        batch.clear();
+
+        TextMessage msg;
+        try { msg = new TextMessage(mapper.writeValueAsString(payload)); }
+        catch (IOException ex) { return; }
+        
+        if (mapper != null) {   // evita NPE en tests
+            //System.out.println("[WS batch] " + msg.getPayload());
+        }
+
+
+        sessions.removeIf(sess -> {
+            if (!sess.isOpen()) return true;
             try {
-                synchronized (s) {          
-                    s.sendMessage(payload);
-                    //System.out.println("🔁 Enviado a cliente: " + payload);
-                }
+                synchronized (sess) { sess.sendMessage(msg); }
             } catch (IOException ex) { return true; }
             return false;
         });
     }
+
 
 
     private TextMessage json(String k, Object v) {

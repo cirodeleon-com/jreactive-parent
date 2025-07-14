@@ -2,6 +2,7 @@
 package com.ciro.jreactive.tools;
 
 import com.ciro.jreactive.Bind;
+import java.util.stream.Stream;
 import com.google.auto.service.AutoService;
 import com.sun.source.tree.MethodTree;
 import com.sun.source.util.TreePath;
@@ -40,6 +41,20 @@ public final class TemplateProcessor extends AbstractProcessor {
     /** Patrón para eliminar placeholders con alias (alias.prop) */
     private static final Pattern ALIAS_VAR_PATTERN =
         Pattern.compile("\\{\\{\\s*\\w+\\.(\\w+)\\s*}}");
+    
+    /** Busca  :prop="expr"   (prop puede incluir guiones) */
+    private static final Pattern PROP_BIND_PATTERN =
+        Pattern.compile(":(\\w[\\w-]*)\\s*=\\s*\"([^\"]+)\"");
+
+    /** Busca  ref="alias"   */
+    private static final Pattern REF_ALIAS_PATTERN =
+        Pattern.compile("\\bref\\s*=\\s*\"(\\w+)\"");
+    
+    /** Atributos :prop="expr"  →   expr  */
+    private static final Pattern ATTR_BIND =
+        Pattern.compile("\\s:\\w+\\s*=\\s*\"([^\"]+)\"");
+
+
 
     @Override
     public synchronized void init(ProcessingEnvironment env) {
@@ -89,6 +104,13 @@ public final class TemplateProcessor extends AbstractProcessor {
         while (m.find()) {
             vars.add(m.group(1));
         }
+        
+     // 4-bis. Buscar bindings en atributos :prop="expr"
+        Matcher a = ATTR_BIND.matcher(bodySrc);
+        while (a.find()) {
+            vars.add(a.group(1));          // solo la expresión “expr”
+        }
+
 
         // 5. Recoger los campos @Bind de la clase
         Set<String> binds = cls.getEnclosedElements().stream()
@@ -97,6 +119,21 @@ public final class TemplateProcessor extends AbstractProcessor {
             .map(Element::getSimpleName)
             .map(Object::toString)
             .collect(Collectors.toSet());
+        
+        /* ---- Incluye también Bindings de sub-componentes vivos -------------
+         *   • Cualquier {{Componente/>}} se resolverá a Componente#n.<bind>
+         *   • Sólo necesitamos el "root" (antes del punto) para la verificación
+         */
+        Set<String> childRoots = cls.getEnclosedElements().stream()
+            .filter(e -> e.getKind() == ElementKind.CLASS)
+            .map(Element::getSimpleName)
+            .map(Object::toString)
+            .collect(Collectors.toSet());
+
+        /* Unión de roots del propio componente + hijos conocidos */
+        Set<String> allRoots = Stream.concat(binds.stream(), childRoots.stream())
+                                     .collect(Collectors.toSet());
+
 
         // 6. Validar que cada {{var}} esté en @Bind
         for (String v : vars) {
@@ -114,6 +151,43 @@ public final class TemplateProcessor extends AbstractProcessor {
                 );
             }
         }
+        
+     // --- 4·bis  Valida props enlazados ----------------------------------
+        Matcher p = PROP_BIND_PATTERN.matcher(bodySrc);
+        while (p.find()) {
+            String expr  = p.group(2).trim();          // contenido entre comillas
+            String root  = expr.contains(".") ? expr.substring(0, expr.indexOf('.'))
+                                              : expr;
+
+            boolean ok = allRoots.contains(root)      // @Bind propio o hijo
+                      || root.equals("this");         // alias genérico
+
+            if (!ok) {
+                processingEnv.getMessager().printMessage(
+                    Diagnostic.Kind.ERROR,
+                    "Enlace de prop ':"
+                      + p.group(1) + "=\"" + expr + "\"' no resuelve a ningún @Bind",
+                    tpl
+                );
+            }
+        }
+        
+        
+     // --- 5  Rechaza alias ref duplicados --------------------------------
+        Matcher r  = REF_ALIAS_PATTERN.matcher(bodySrc);
+        Set<String> refs = new HashSet<>();
+        while (r.find()) {
+            String alias = r.group(1);
+            if (!refs.add(alias)) {
+                processingEnv.getMessager().printMessage(
+                    Diagnostic.Kind.ERROR,
+                    "Alias 'ref=\"" + alias + "\"' duplicado en el mismo template",
+                    tpl
+                );
+            }
+        }
+
+
     }
 }
 

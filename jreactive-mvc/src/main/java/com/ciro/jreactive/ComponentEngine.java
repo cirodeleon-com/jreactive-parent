@@ -8,12 +8,24 @@ import java.util.regex.Pattern;
 final class ComponentEngine {
 
     /*─────────────────────────── 1. PATTERNS ───────────────────────────*/
+    //private static final Pattern TAG =
+    //    Pattern.compile("<\\s*([A-Z][A-Za-z0-9_]*)\\s*/>", Pattern.MULTILINE);
+    
+ // Sustituye la línea que tenías por esta
     private static final Pattern TAG =
-        Pattern.compile("<\\s*([A-Z][A-Za-z0-9_]*)\\s*/>", Pattern.MULTILINE);
+        Pattern.compile("<\\s*([A-Z][A-Za-z0-9_]*)([^/>]*)/>", Pattern.MULTILINE);
+
 
     private static final Pattern IF_BLOCK =
         Pattern.compile("\\{\\{#if\\s+([^}]+)}}([\\s\\S]*?)\\{\\{/if}}",
                         Pattern.MULTILINE);
+    
+    /** {{#if cond}}true{{else}}false{{/if}} */
+    private static final Pattern IF_ELSE_BLOCK =
+        Pattern.compile(
+          "\\{\\{#if\\s+([^}]+)}}([\\s\\S]*?)\\{\\{else}}([\\s\\S]*?)\\{\\{/if}}",
+          Pattern.MULTILINE);
+
 
  // 1) Captura opcionalmente "as alias"
  // 1) Captura opcional “as alias”
@@ -50,43 +62,88 @@ final class ComponentEngine {
 
             try {
             	String className = m.group(1);
-
-            	/* ── A) Buscar si ya hay un hijo de esa clase ─────────────────────── */
-            	ViewLeaf leaf = ctx._children()               // List<HtmlComponent>
-                        .stream()
-                        .filter(c -> c.getClass()
-                                      .getSimpleName()
-                                      .equals(className))
-                        .map(c -> (ViewLeaf) c)       // ← ★ ESTA LÍNEA ★
-                        .findFirst()
-                        .orElseGet(() -> {
-                            try {
-                                ViewLeaf fresh = (ViewLeaf) Class
-                                    .forName(ctx.getClass().getPackageName()
-                                              + "." + className)
-                                    .getDeclaredConstructor()
-                                    .newInstance();
-                                if (fresh instanceof HtmlComponent hc)
-                                    ctx._addChild(hc);
-                                return fresh;          // mismo tipo: ViewLeaf
-                            } catch (Exception ex) {
-                                throw new RuntimeException(
-                                    "Error instanciando componente", ex);
-                            }
-                        });
+            	
+            	// ─── Captura de atributos del tag  (ej.  ref="hello"  :greet="expr") ───
+            	String rawAttrs = m.group(2);                 // texto “ crudo ” entre el nombre y "/>"
+            	Map<String,String> attrMap = parseProps(rawAttrs);
+            	String refAlias  = attrMap.get("ref");        // null si no existe
 
 
-            	if (leaf instanceof HtmlComponent hc && !ctx._children().contains(hc)) {
-            	    ctx._addChild(hc);             // se añade solo si aún no está
+            	/* ── A) Instancia / reutiliza según ref ───────────────────────────── */
+            	ViewLeaf leaf;
+
+            	if (refAlias != null) {                       // ① hay ref  ⇒ busca por id
+            	    leaf = ctx._children().stream()
+            	             .filter(c -> refAlias.equals(c.getId()))
+            	             .map(c -> (ViewLeaf) c)
+            	             .findFirst()
+            	             .orElseGet(() -> {               // no estaba  ⇒ crear + fijar id
+            	                 ViewLeaf fresh = newInstance(ctx, className);
+            	                 fresh.setId(refAlias);       // id estable = alias
+            	                 if (fresh instanceof HtmlComponent hc) ctx._addChild(hc);
+            	                 return fresh;
+            	             });
+
+            	} else {                                      // ② sin ref ⇒ SIEMPRE nueva
+            	    leaf = newInstance(ctx, className);
+            	    if (leaf instanceof HtmlComponent hc) ctx._addChild(hc);
             	}
 
+
+            	/* añade al listado de hijos si aún no estaba */
+            	if (leaf instanceof HtmlComponent hc && !ctx._children().contains(hc)) {
+            	    ctx._addChild(hc);
+            	}
+
+
                 
+            	/* -----------------------------------------------------------
+            	 *  A)  Props  (literales y bindings de 1 nivel)
+            	 *      – ahora busca también en 'all' y deja el puente reactivo
+            	 * ----------------------------------------------------------- */
+            	Map<String,String> rawProps = parseProps(m.group(2));      // atributos del tag
+            	final Map<String,ReactiveVar<?>> allRx = all;              // acceso dentro lambda
+
+            	if (leaf instanceof HtmlComponent hc) {
+            	    Map<String,ReactiveVar<?>> childBinds = hc.selfBindings(); // asegura mapa
+
+            	    rawProps.forEach((attr, val) -> {
+            	        boolean binding = attr.startsWith(":");         // :greet="expr"
+            	        String  prop    = binding ? attr.substring(1)   // greet
+            	                                  : attr;               // greet
+
+            	        @SuppressWarnings("unchecked")
+            	        var target = (ReactiveVar<Object>) childBinds.get(prop);
+            	        if (target == null) return;                     // el hijo no declara @Bind
+
+            	        ReactiveVar<?> parentRx = null;
+            	        if (binding) {
+            	            /* ❶ intenta primero en los @Bind propios, luego en los hijos ya renderizados */
+            	            parentRx = ctx.selfBindings().get(val);
+            	            if (parentRx == null) parentRx = allRx.get(val);
+            	        }
+
+            	        Object value = (binding && parentRx != null) ? parentRx.get() : val;
+            	        target.set(value);
+
+            	        /* ❷ puente reactivo: si cambia el padre, actualiza el hijo */
+            	        if (binding && parentRx != null) {
+            	            parentRx.onChange(x -> target.set(x));
+            	        }
+            	    });
+            	}
+            	/* ───────────── FIN BLOQUE PROPS ───────────── */
 
 
-                String ns = leaf.getId() + ".";
+
+
+                //String ns = leaf.getId() + ".";
+            	String ns = (refAlias != null ? refAlias : leaf.getId()) + ".";
+
                 System.out.println("🔗 Renderizando componente con namespace: " + ns);
 
 
+                
 
                 String child = leaf.render();           // HTML del hijo
 
@@ -103,7 +160,22 @@ final class ComponentEngine {
                         .replaceAll("data-each\\s*=\\s*\"" + esc + "\"",
                                     "data-each=\"" + ns + key + "\"");
                 }
+                
+                if (refAlias != null) {
+                    // elimina  ref="alias"  solo en la PRIMERA ocurrencia del hijo
+                    child = child.replaceFirst("\\s+ref=\""+Pattern.quote(refAlias)+"\"", "");
+                }
+
+                
                 out.append(child);
+                
+                if (refAlias != null) {
+                    boolean dup = all.keySet().stream().anyMatch(k -> k.startsWith(ns));
+                    if (dup)
+                        throw new IllegalStateException("Duplicate ref alias '"+refAlias+"' inside parent component");
+                }
+
+                
                 leaf.bindings().forEach((k,v)-> all.put(ns + k, v));
 
             } catch (Exception ex) {
@@ -118,6 +190,10 @@ final class ComponentEngine {
 
         /* 2-C) CONVERSIÓN {{#if}} / {{#each}} → <template …> ---------*/
         String html = out.toString();
+        
+        html = IF_ELSE_BLOCK.matcher(out.toString())
+        	      .replaceAll("<template data-if=\"$1\">$2</template><template data-else=\"$1\">$3</template>");
+
 
         html = IF_BLOCK.matcher(html)
                 .replaceAll("<template data-if=\"$1\">$2</template>");
@@ -143,6 +219,34 @@ final class ComponentEngine {
         return new Rendered(html, all);
 
     }
+    
+    /** Convierte  foo="bar"  y  :foo="expr"  →  Map */
+    private static Map<String,String> parseProps(String raw) {
+        Map<String,String> map = new HashMap<>();
+        if (raw == null) return map;
+
+        Matcher mm = Pattern.compile("(\\:?\\w+)\\s*=\\s*\"([^\"]*)\"").matcher(raw);
+        while (mm.find()) {
+            map.put(mm.group(1), mm.group(2));
+        }
+        return map;
+    }
+    
+    /* ╭──────────────────────────────────────────────────────────────╮
+     * │   Crea un componente por reflexión                           │
+     * ╰──────────────────────────────────────────────────────────────╯ */
+    private static ViewLeaf newInstance(HtmlComponent ctx, String className) {
+        try {
+            return (ViewLeaf) Class
+                .forName(ctx.getClass().getPackageName() + "." + className)
+                .getDeclaredConstructor()
+                .newInstance();
+        } catch (Exception ex) {
+            throw new RuntimeException("Error instanciando componente", ex);
+        }
+    }
+
+
 
     private ComponentEngine() {}   // util-class
 }

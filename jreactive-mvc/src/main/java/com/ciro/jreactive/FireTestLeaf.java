@@ -27,7 +27,7 @@ public class FireTestLeaf extends HtmlComponent {
                       true),
             new Order(new Address("Av. 45 #78-90", "Medellín"),
                       List.of(new Item("Pan",    3)),
-                      true)
+                      false)
     )));
 
     /* ❷  Agrega un pedido ficticio para probar @Call + each anidado */

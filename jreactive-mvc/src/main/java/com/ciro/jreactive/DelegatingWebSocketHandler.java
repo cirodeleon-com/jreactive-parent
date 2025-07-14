@@ -6,16 +6,19 @@ import org.springframework.web.socket.*;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.util.Map;
+import java.util.concurrent.ScheduledExecutorService;
 
 @Component
 public class DelegatingWebSocketHandler implements WebSocketHandler {
 
     private final PageResolver pageResolver;
     private final ObjectMapper mapper;
+    private final ScheduledExecutorService scheduler;
 
-    public DelegatingWebSocketHandler(PageResolver pageResolver,ObjectMapper mapper) {
+    public DelegatingWebSocketHandler(PageResolver pageResolver,ObjectMapper mapper, ScheduledExecutorService scheduler) {
         this.pageResolver = pageResolver;
         this.mapper = mapper;
+        this.scheduler = scheduler;
     }
 
     @Override
@@ -24,7 +27,7 @@ public class DelegatingWebSocketHandler implements WebSocketHandler {
         if (path == null) path = "/";
         HtmlComponent page = pageResolver.getPage(path);
 
-        JReactiveSocketHandler delegate = new JReactiveSocketHandler(page,mapper);
+        JReactiveSocketHandler delegate = new JReactiveSocketHandler(page,mapper,scheduler);
         delegate.afterConnectionEstablished(session);
 
         // OPCIONAL: podrías guardar `session -> delegate` si quieres manejar mensajes luego
