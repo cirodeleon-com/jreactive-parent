@@ -311,14 +311,19 @@ function updateEachBlocks() {
   document.querySelectorAll('template[data-each]').forEach(tpl => {
 
     /* 1 · clave de la lista y alias ---------------------------------- */
-    const [rawKey, rawAlias] = tpl.dataset.each.split(':').map(s => s.trim());
-    const alias = rawAlias || 'this';
+    //const [rawKey, rawAlias] = tpl.dataset.each.split(':').map(s => s.trim());
+    //const alias = rawAlias || 'this';
 
     // Resuelve llave real (namespaced)
-    let listKey = rawKey;
-    if (!(listKey in state)) {
-      listKey = Object.keys(state).find(k => k.endsWith('.' + rawKey)) || rawKey;
-    }
+    //let listKey = rawKey;
+    //if (!(listKey in state)) {
+    //  listKey = Object.keys(state).find(k => k.endsWith('.' + rawKey)) || rawKey;
+    //}
+    
+    const [listKey, alias] = tpl.dataset.each.split(':');
+    
+    
+    
     const data = Array.isArray(state[listKey]) ? state[listKey] : [];
 
     /* 2 · sentinelas & mapas ---------------------------------------- */
@@ -686,7 +691,8 @@ function setupEventBindings() {
       paramList.forEach(root => args.push(buildValue(root)));
 
       /* --- 2. Enviar al backend ------------------------------------ */
-      await fetch('/call/' + el.dataset.call, {
+      const qualified = encodeURIComponent(el.dataset.call);
+      await fetch('/call/' + qualified, {
         method: 'POST',
         headers: {
           'X-Requested-With': 'JReactive',
@@ -707,6 +713,7 @@ function setupEventBindings() {
  *            → data-call / data-param una sola pasada
  * ───────────────────────────────────────────────────────── */
 function hydrateClickDirectives(root=document) {
+  /*
   root.querySelectorAll('[\\@click]').forEach(el => {
     const value = el.getAttribute('@click');           // ej. addFruit(newFruit)
     const m     = value.match(/^(\w+)\s*\((.*)\)$/);
@@ -724,6 +731,21 @@ function hydrateClickDirectives(root=document) {
     if (params) el.setAttribute('data-param', params);
     el.removeAttribute('@click');
   });
+  */
+ root.querySelectorAll('[\\@click]').forEach(el => {
+  const value = el.getAttribute('@click');
+  // captura "componente.metodo(par1,par2)"
+  const m = value.match(/^([\w#-]+)\.([\w]+)\((.*)\)$/);
+  if (!m) return;
+  const compId   = m[1];            // ej. "hello" o "HelloLeaf#1"
+  const method   = m[2];            // ej. "addFruit"
+  const rawArgs  = m[3].trim();     // ej. "hello.newFruit" o ""
+  // define data-call como "compId.metodo"
+  el.setAttribute('data-call', `${compId}.${method}`);
+  // si hay args, los pasamos como data-param
+  if (rawArgs) el.setAttribute('data-param', rawArgs);
+  el.removeAttribute('@click');
+});
 }
 
 

@@ -3,6 +3,9 @@ package com.ciro.jreactive;
 import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
+import java.util.Optional;
+
 
 /** Resuelve etiquetas <Componente/> y convierte {{#if}} / {{#each}}. */
 final class ComponentEngine {
@@ -157,8 +160,10 @@ final class ComponentEngine {
                                     "name=\"" + ns + key + "\"")
                         .replaceAll("data-if\\s*=\\s*\"" + esc + "\"",
                                     "data-if=\"" + ns + key + "\"")
-                        .replaceAll("data-each\\s*=\\s*\"" + esc + "\"",
-                                    "data-each=\"" + ns + key + "\"");
+                        .replaceAll("data-each\\s*=\\s*\"" + esc + ":",
+                                    "data-each=\"" + ns + key + ":")
+                        .replaceAll("data-param\\s*=\\s*\"" + esc + "\"", "data-param=\"" + ns + key + "\"")
+                        ;
                 }
                 
                 if (refAlias != null) {
@@ -166,6 +171,30 @@ final class ComponentEngine {
                     child = child.replaceFirst("\\s+ref=\""+Pattern.quote(refAlias)+"\"", "");
                 }
 
+                
+                
+                
+
+                Pattern clickPat = Pattern.compile("@click=\"(\\w+)\\(([^)]*)\\)\"");
+                Matcher clickM = clickPat.matcher(child);
+                StringBuffer sbClick = new StringBuffer();
+                while (clickM.find()) {
+                    String method = clickM.group(1);
+                    String args   = clickM.group(2).trim();
+                    // split on comma, prefix each with ns, rejoin
+                    String namespacedArgs = Arrays.stream(args.split(","))
+                        .map(String::trim)
+                        .filter(s -> !s.isEmpty())
+                        .map(a -> ns + a)
+                        .collect(Collectors.joining(","));
+                    String replacement = "@click=\"" + ns + method + "(" + namespacedArgs + ")\"";
+                    clickM.appendReplacement(sbClick, Matcher.quoteReplacement(replacement));
+                }
+                clickM.appendTail(sbClick);
+                child = sbClick.toString();
+
+                
+                
                 
                 out.append(child);
                 
@@ -199,15 +228,34 @@ final class ComponentEngine {
                 .replaceAll("<template data-if=\"$1\">$2</template>");
 
         /* 2-D) CONVERSIÓN {{#each key [as alias]}} → <template data-each="key:alias"> */
+
+     // 2-D) CONVERSIÓN {{#each key [as alias]}} → <template data-each="key:alias">
         Matcher m2 = EACH_BLOCK.matcher(html);
         StringBuffer sb = new StringBuffer();
         while (m2.find()) {
-            String listKey = m2.group(1);                      // ej. "fruits"
-            String alias   = m2.group(2) != null 
-                             ? m2.group(2)                    // ej. "fruit"
-                             : "this";                       // fallback
-            String body    = m2.group(3);                      // contenido interno
-            String tpl     = String.format(
+            String rawKey = m2.group(1);            // "fruits"
+            String alias  = m2.group(2) != null
+                            ? m2.group(2)
+                            : "this";              // "fruit"
+            String body   = m2.group(3);
+
+            // 1) Intentamos extraer el namespace inspeccionando los {{alias}} del body
+            Pattern pAlias = Pattern.compile("\\{\\{\\s*([\\w#.-]+)\\." + alias + "\\s*\\}\\}");
+            Matcher mAlias = pAlias.matcher(body);
+
+            String listKey;
+            if (mAlias.find()) {
+                // ej. mAlias.group(1) == "hello" o "HelloLeaf#1"
+                listKey = mAlias.group(1) + "." + rawKey;
+            } else {
+                // fallback — en caso de que no encontremos alias (poco probable)
+                listKey = all.keySet().stream()
+                             .filter(k -> k.endsWith("." + rawKey))
+                             .findAny()
+                             .orElse(rawKey);
+            }
+
+            String tpl = String.format(
                 "<template data-each=\"%s:%s\">%s</template>",
                 listKey, alias, body
             );
@@ -215,6 +263,34 @@ final class ComponentEngine {
         }
         m2.appendTail(sb);
         html = sb.toString();
+        
+        String rootNs = ctx.getId() + ".";
+
+     // aplica namespacing a TODOS los bindings en 'all'
+     for (String fullKey : all.keySet()) {
+         // el nombre simple es la parte después del último '.'
+         String simple = fullKey.substring(fullKey.lastIndexOf('.') + 1);
+         String esc    = Pattern.quote(simple);
+
+         // name="foo" → name="ComponentId.foo"
+         html = html.replaceAll(
+           "\\bname\\s*=\\s*\"" + esc + "\"",
+           "name=\"" + rootNs + fullKey + "\""
+         );
+
+         // data-param="foo" → data-param="ComponentId.foo"
+         html = html.replaceAll(
+           "\\bdata-param\\s*=\\s*\"" + esc + "\"",
+           "data-param=\"" + rootNs + fullKey + "\""
+         );
+
+         // ref="foo" → ref="ComponentId.foo"
+         html = html.replaceAll(
+           "\\bref\\s*=\\s*\"" + esc + "\"",
+           "ref=\"" + rootNs + fullKey + "\""
+         );
+     }
+
 
         return new Rendered(html, all);
 

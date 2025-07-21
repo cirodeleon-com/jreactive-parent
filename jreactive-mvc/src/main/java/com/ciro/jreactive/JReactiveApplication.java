@@ -69,63 +69,74 @@ public class JReactiveApplication {
             """.formatted(html);
         }
         
-        @PostMapping(value = "/call/{method}", consumes = MediaType.APPLICATION_JSON_VALUE)
-        public String callMethod(@PathVariable String method,
-                                 @RequestBody Map<String, Object> body,
-                                 HttpServletRequest req) {
+        @PostMapping(
+        	    value = "/call/{qualified:.+}",           // ← aquí el .+ permite puntos y escapes
+        	    consumes = MediaType.APPLICATION_JSON_VALUE,
+        	    produces = MediaType.APPLICATION_JSON_VALUE
+        	)
+        	public String callMethod(
+        	      @PathVariable("qualified") String qualified,
+        	      @RequestBody Map<String,Object> body,
+        	      HttpServletRequest req
+        	) {
+        	    // 1) Reconstruyo la página
+        	    String path = req.getHeader("Referer")
+        	                     .replaceFirst("https?://[^/]+", "");
+        	    HtmlComponent page = pageResolver.getPage(path);
 
-        	System.out.print("llamando a callMethod");
-            /* 1) Página origen (cabecera Referer) */
-            String path = req.getHeader("Referer").replaceFirst("https?://[^/]+", "");
-            HtmlComponent page = pageResolver.getPage(path);
+        	    // 2) Busco el método completo "compId.metodo"
+        	    var callables = collectCallables(page);
+        	    var entry     = callables.get(qualified);
+        	    if (entry == null) {
+        	        return "{\"error\":\"Método no permitido: " + qualified + "\"}";
+        	    }
+        	    Method target = entry.getKey();
+        	    Object owner  = entry.getValue();
 
-            /* 2) Método @Call */
-            var callables = collectCallables(page);            // ← nuevo
-            var entry = callables.get(method);
-            if (entry == null) return "Método no permitido: " + method;
+        	    // 3) Deserializo args
+        	    @SuppressWarnings("unchecked")
+        	    List<Object> rawArgs = (List<Object>) body.getOrDefault("args", List.of());
+        	    Parameter[] params   = target.getParameters();
+        	    Object[] args        = new Object[params.length];
+        	    for (int i = 0; i < params.length; i++) {
+        	        Object raw = i < rawArgs.size() ? rawArgs.get(i) : null;
+        	        JavaType type = objectMapper.getTypeFactory()
+        	                                    .constructType(params[i].getParameterizedType());
+        	        args[i] = objectMapper.convertValue(raw, type);
+        	    }
 
-            Method target = entry.getKey();
-            Object owner  = entry.getValue();   
+        	    // 4) Invoco y devuelvo
+        	    try {
+        	        Object result = target.invoke(owner, args);
+        	        return (result == null)
+        	             ? ""
+        	             : objectMapper.writeValueAsString(result);
+        	    } catch (Exception e) {
+        	        e.printStackTrace();
+        	        return "{\"error\":\"Error al invocar " + qualified 
+        	             + ": " + e.getMessage() + "\"}";
+        	    }
+        	}
 
-            /* 3) Deserializar por posición */
-            List<?> rawArgs = (List<?>) body.getOrDefault("args", List.of());
-            Parameter[] params = target.getParameters();
-            Object[] args = new Object[params.length];
 
-            for (int i = 0; i < params.length; i++) {
-                Object raw = (i < rawArgs.size()) ? rawArgs.get(i) : null;
-
-                JavaType type = objectMapper.getTypeFactory()      // usa tu instancia
-                                            .constructType(params[i].getParameterizedType());
-
-                args[i] = objectMapper.convertValue(raw, type);
-            }
-
-            /* 4) Invocar y devolver */
-            try {
-            	System.out.println("llamando a " + target.getName());
-            	Object result = target.invoke(owner, args);
-                return result == null ? "" : objectMapper.writeValueAsString(result);
-            } catch (Exception e) {
-                e.printStackTrace();
-                return "Error al invocar " + method + ": " + e.getMessage();
-            }
-        }
         
         
         private Map<String, Map.Entry<Method, HtmlComponent>> collectCallables(HtmlComponent root) {
             Map<String, Map.Entry<Method, HtmlComponent>> map = new HashMap<>();
+            String compId = root.getId();  // puede ser tu ref o HelloLeaf#1
 
-            // 1) los propios del componente
-            root.getCallableMethods()
-                .forEach((n, m) -> map.put(n, Map.entry(m, root)));
-
-            // 2) recursivo en los hijos “vivos”
+            // 1) propios
+            for (var e : root.getCallableMethods().entrySet()) {
+                String key = compId + "." + e.getKey();
+                map.put(key, Map.entry(e.getValue(), root));
+            }
+            // 2) hijos recursivos
             for (HtmlComponent child : root._children()) {
                 map.putAll(collectCallables(child));
             }
             return map;
         }
+
 
 
 

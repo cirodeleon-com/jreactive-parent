@@ -18,7 +18,7 @@ public class HomePage extends HtmlComponent {
 	    return """
 	      <div class="page">
 	        <a href="/two" data-router>Ir a otra página</a>
-	        <HelloLeaf/>
+	        <HelloLeaf ref="helloTwo"/>
 	        <HelloLeaf ref="hello"/>
 	        <ClockLeaf :greet="hello.newFruit" />
 			<FireTestLeaf/>  
