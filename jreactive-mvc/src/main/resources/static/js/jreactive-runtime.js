@@ -679,6 +679,14 @@ function buildValue(root) {
  * ------------------------------------------------------------------ */
 function setupEventBindings() {
   $$('[data-call]').forEach(el => {
+
+    /* ① ¿ya tenía listener? ──> salir */
+    if (el._jrxBound) return;
+
+    /* ② marca para la próxima vez */
+    el._jrxBound = true;
+
+    /* ③ primer y único addEventListener */
     el.addEventListener(el.dataset.event || 'click', async () => {
 
       /* --- 1. Preparar el array 'args' en el orden declarado -------- */
@@ -698,7 +706,7 @@ function setupEventBindings() {
           'X-Requested-With': 'JReactive',
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify({ args })   // ← siempre { "args": [...] }
+        body: JSON.stringify({ args })     // siempre { "args": [...] }
       });
     });
   });

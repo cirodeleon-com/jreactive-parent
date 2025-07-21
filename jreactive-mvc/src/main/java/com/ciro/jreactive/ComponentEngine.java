@@ -51,7 +51,9 @@ final class ComponentEngine {
     /*─────────────────────────── 2. RENDER ────────────────────────────*/
     static Rendered render(HtmlComponent ctx) {
     	
-    	ctx._children().clear(); 
+    	//ctx._children().clear();
+    	List<HtmlComponent> pool = new ArrayList<>(ctx._children()); // <<< MOD
+        ctx._children().clear(); 
 
         /* 2-A) Procesar subcomponentes <ClockLeaf/> … -----------------*/
         StringBuilder out = new StringBuilder();
@@ -75,28 +77,39 @@ final class ComponentEngine {
             	/* ── A) Instancia / reutiliza según ref ───────────────────────────── */
             	ViewLeaf leaf;
 
-            	if (refAlias != null) {                       // ① hay ref  ⇒ busca por id
-            	    leaf = ctx._children().stream()
-            	             .filter(c -> refAlias.equals(c.getId()))
-            	             .map(c -> (ViewLeaf) c)
-            	             .findFirst()
-            	             .orElseGet(() -> {               // no estaba  ⇒ crear + fijar id
-            	                 ViewLeaf fresh = newInstance(ctx, className);
-            	                 fresh.setId(refAlias);       // id estable = alias
-            	                 if (fresh instanceof HtmlComponent hc) ctx._addChild(hc);
-            	                 return fresh;
-            	             });
+            	if (refAlias != null) {
+            	    /* ---------- caso con ref explícito ---------- */
+            		leaf = pool.stream()
+            	               .filter(c -> refAlias.equals(c.getId()))
+            	               .map(c -> (ViewLeaf) c)
+            	               .findFirst()
+            	               .orElseGet(() -> {
+            	                   ViewLeaf f = newInstance(ctx, className);
+            	                   f.setId(refAlias);
+            	                   return f;
+            	               });
 
-            	} else {                                      // ② sin ref ⇒ SIEMPRE nueva
-            	    leaf = newInstance(ctx, className);
-            	    if (leaf instanceof HtmlComponent hc) ctx._addChild(hc);
+            	    pool.removeIf(c -> c == leaf);
+            	} else {
+            	    /* ---------- SIN ref → intenta reutilizar ---------- */
+            		Optional<HtmlComponent> reused = pool.stream()
+            		        .filter(c -> c.getClass().getSimpleName().equals(className))
+            		        .findFirst();
+
+            		    if (reused.isPresent()) {
+            		        leaf = reused.get();           // mantiene HelloLeaf#1
+            		        pool.remove(reused.get());
+            		    } else {
+            		        leaf = newInstance(ctx, className);   // primera vez
+            		        leaf.setId(leaf.getId());             // ← congelar id
+            		    }
             	}
 
+            	/* vuelve a añadir el hijo en la posición correcta */
+            	if (leaf instanceof HtmlComponent hc) ctx._addChild(hc);
 
-            	/* añade al listado de hijos si aún no estaba */
-            	if (leaf instanceof HtmlComponent hc && !ctx._children().contains(hc)) {
-            	    ctx._addChild(hc);
-            	}
+
+            	
 
 
                 
@@ -141,7 +154,8 @@ final class ComponentEngine {
 
 
                 //String ns = leaf.getId() + ".";
-            	String ns = (refAlias != null ? refAlias : leaf.getId()) + ".";
+            	String ns = leaf.getId() + ".";
+
 
                 System.out.println("🔗 Renderizando componente con namespace: " + ns);
 
@@ -175,7 +189,10 @@ final class ComponentEngine {
                 
                 
 
-                Pattern clickPat = Pattern.compile("@click=\"(\\w+)\\(([^)]*)\\)\"");
+                //Pattern clickPat = Pattern.compile("@click=\"(\\w+)\\(([^)]*)\\)\"");
+                //Pattern clickPat = Pattern.compile("@click=\"([\\w#-]+)\\(([^)]*)\\)\"");
+                Pattern clickPat = Pattern.compile("@click=['\"]([\\w#.-]+)\\(([^)]*)\\)['\"]");
+
                 Matcher clickM = clickPat.matcher(child);
                 StringBuffer sbClick = new StringBuffer();
                 while (clickM.find()) {
