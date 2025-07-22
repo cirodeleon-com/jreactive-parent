@@ -34,7 +34,9 @@
   <!-- Los dos sub-módulos -->
   <modules>
     <module>jreactive-apt</module>
-    <module>jreactive-mvc</module>
+    <module>jreactive-starter-spring</module>
+    <module>jreactive-core</module>
+    <module>jreactive-runtime-js</module> 
   </modules>
 
   <build>

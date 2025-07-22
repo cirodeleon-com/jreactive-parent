@@ -19,6 +19,12 @@
   <dependencies>
     <!-- genera META-INF/services/javax.annotation.processing.Processor -->
     <dependency>
+        <groupId>com.ciro</groupId>
+        <artifactId>jreactive-core</artifactId>
+        <version>${project.version}</version>
+    </dependency>
+    
+    <dependency>
       <groupId>com.google.auto.service</groupId>
       <artifactId>auto-service</artifactId>
       <version>${auto-service.version}</version>
