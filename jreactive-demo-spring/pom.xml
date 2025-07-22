@@ -5,6 +5,7 @@
                              https://maven.apache.org/xsd/maven-4.0.0.xsd">
   <modelVersion>4.0.0</modelVersion>
 
+  <!-- hereda la configuración y el dependencyManagement del padre -->
   <parent>
     <groupId>com.ciro</groupId>
     <artifactId>jreactive-parent</artifactId>
@@ -12,72 +13,43 @@
   </parent>
 
   <artifactId>jreactive-demo-spring</artifactId>
+  <name>jreactive demo spring</name>
   <packaging>jar</packaging>
-  <name>jreactive MVC demo</name>
 
+  <!-- 🔑 propiedad que faltaba -->
+  <properties>
+    <!-- todos los sub‑artefactos jreactive usan esta propiedad internamente;
+         la igualamos a la versión del proyecto para que “resuelva” -->
+    <jreactive.version>${project.version}</jreactive.version>
+
+    <!-- si tu parent ya define java.version y spring‑boot.version,
+         estas líneas pueden omitirse -->
+    <java.version>17</java.version>
+  </properties>
 
   <dependencies>
-  <dependency>
-     <groupId>com.ciro</groupId>
-     <artifactId>jreactive-core</artifactId>
-     <version>${project.version}</version>
-  </dependency>
-   
-  <dependency>
-     <groupId>com.ciro</groupId>
-     <artifactId>jreactive-runtime-js</artifactId>
-     <version>${project.version}</version>
-  </dependency>
-
-  
-    <dependency>
-      <groupId>org.springframework.boot</groupId>
-      <artifactId>spring-boot-starter-web</artifactId>
-    </dependency>
-    <dependency>
-      <groupId>org.springframework.boot</groupId>
-      <artifactId>spring-boot-starter-websocket</artifactId>
-    </dependency>
-    <dependency>
-      <groupId>com.fasterxml.jackson.core</groupId>
-      <artifactId>jackson-databind</artifactId>
-    </dependency>
-    <!--  ✅  Pega estas dos deps justo después de jackson-databind  -->
-<dependency>
-    <groupId>com.fasterxml.jackson.datatype</groupId>
-    <artifactId>jackson-datatype-jdk8</artifactId>
-</dependency>
-
-<dependency>
-    <groupId>com.fasterxml.jackson.module</groupId>
-    <artifactId>jackson-module-parameter-names</artifactId>
-</dependency>
-
-
-
+    <!-- único starter necesario en tiempo de ejecución -->
     <dependency>
       <groupId>com.ciro</groupId>
-      <artifactId>jreactive-apt</artifactId>
+      <artifactId>jreactive-starter-spring</artifactId>
       <version>${project.version}</version>
-      <scope>provided</scope>
     </dependency>
   </dependencies>
 
   <build>
     <plugins>
 
-      <!-- Spring-Boot re-package -->
+      <!-- versión fijada en <pluginManagement> del parent -->
       <plugin>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-maven-plugin</artifactId>
-        <version>${spring-boot.version}</version>
       </plugin>
 
-      <!-- Javac + processor + add-exports -->
+      <!-- compilación + annotation processor -->
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-compiler-plugin</artifactId>
-        <version>3.11.0</version>
+        <!-- usa la versión que definiste en el parent (3.8.1) -->
         <configuration>
           <source>${java.version}</source>
           <target>${java.version}</target>
@@ -90,9 +62,9 @@
             </path>
           </annotationProcessorPaths>
 
+          <!-- necesarios para que el processor acceda al API del compilador -->
           <fork>true</fork>
           <compilerArgs>
-            <!-- acceso al API del compilador para el processor -->
             <arg>--add-exports</arg>
             <arg>jdk.compiler/com.sun.source.util=ALL-UNNAMED</arg>
             <arg>--add-exports</arg>
@@ -101,6 +73,7 @@
           </compilerArgs>
         </configuration>
       </plugin>
+
     </plugins>
   </build>
 </project>

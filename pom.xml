@@ -28,6 +28,30 @@
         <type>pom</type>
         <scope>import</scope>
       </dependency>
+      
+      <dependency>
+      <groupId>com.ciro</groupId>
+      <artifactId>jreactive-core</artifactId>
+      <version>${jreactive.version}</version>
+    </dependency>
+
+    <dependency>
+      <groupId>com.ciro</groupId>
+      <artifactId>jreactive-runtime-js</artifactId>
+      <version>${jreactive.version}</version>
+    </dependency>
+
+    <dependency>
+      <groupId>com.ciro</groupId>
+      <artifactId>jreactive-apt</artifactId>
+      <version>${jreactive.version}</version>
+    </dependency>
+
+    <dependency>
+      <groupId>com.ciro</groupId>
+      <artifactId>jreactive-starter-spring</artifactId>
+      <version>${jreactive.version}</version>
+    </dependency>
     </dependencies>
   </dependencyManagement>
 
@@ -37,6 +61,7 @@
     <module>jreactive-starter-spring</module>
     <module>jreactive-core</module>
     <module>jreactive-runtime-js</module> 
+    <module>jreactive-demo-spring</module>
   </modules>
 
   <build>
@@ -53,6 +78,13 @@
             <target>${java.version}</target>
           </configuration>
         </plugin>
+        
+        <plugin>
+          <groupId>org.springframework.boot</groupId>
+          <artifactId>spring-boot-maven-plugin</artifactId>
+          <version>${spring-boot.version}</version>
+        </plugin>
+        
       </plugins>
     </pluginManagement>
   </build>

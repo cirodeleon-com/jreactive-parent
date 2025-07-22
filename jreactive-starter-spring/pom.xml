@@ -13,7 +13,7 @@
 
   <artifactId>jreactive-starter-spring</artifactId>
   <packaging>jar</packaging>
-  <name>jreactive MVC demo</name>
+  <name>jreactive starter demo</name>
 
 
   <dependencies>
