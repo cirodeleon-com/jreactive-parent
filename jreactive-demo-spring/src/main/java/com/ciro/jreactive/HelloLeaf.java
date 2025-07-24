@@ -5,6 +5,8 @@ import java.util.ArrayList;
 import java.util.List;
 import com.ciro.jreactive.annotations.Call;
 
+import jakarta.validation.constraints.NotBlank;
+
 public class HelloLeaf extends HtmlComponent {
 
     /* 1️⃣  Haz la lista MUTABLE + reactiva */
@@ -20,7 +22,7 @@ public class HelloLeaf extends HtmlComponent {
 
     
     @Call
-    public void addFruit(String fruta) {
+    public void addFruit(@NotBlank String fruta) {
         if (fruta == null || fruta.isBlank()) return;
 
         // 1️⃣ copia la lista actual

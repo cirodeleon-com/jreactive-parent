@@ -37,11 +37,13 @@ public class JReactiveApplication {
 
         private final PageResolver pageResolver;
         private final ObjectMapper objectMapper;
+        private final CallGuard    guard; 
 
 
-        public PageController(PageResolver pageResolver,ObjectMapper objectMapper) {
+        public PageController(PageResolver pageResolver,ObjectMapper objectMapper,CallGuard guard) {
             this.pageResolver = pageResolver;
             this.objectMapper = objectMapper;
+            this.guard=guard;
         }
 
         @GetMapping(value = {"/", "/{path:^(?!js|ws).*$}"}, produces = MediaType.TEXT_HTML_VALUE)
@@ -70,53 +72,67 @@ public class JReactiveApplication {
         }
         
         @PostMapping(
-        	    value = "/call/{qualified:.+}",           // ← aquí el .+ permite puntos y escapes
-        	    consumes = MediaType.APPLICATION_JSON_VALUE,
-        	    produces = MediaType.APPLICATION_JSON_VALUE
-        	)
-        	public String callMethod(
-        	      @PathVariable("qualified") String qualified,
-        	      @RequestBody Map<String,Object> body,
-        	      HttpServletRequest req
-        	) {
-        	    // 1) Reconstruyo la página
-        	    String path = req.getHeader("Referer")
-        	                     .replaceFirst("https?://[^/]+", "");
-        	    HtmlComponent page = pageResolver.getPage(path);
+                value = "/call/{qualified:.+}",            // admite puntos y escapes
+                consumes = MediaType.APPLICATION_JSON_VALUE,
+                produces = MediaType.APPLICATION_JSON_VALUE
+        )
+        public String callMethod(
+                @PathVariable("qualified") String qualified,
+                @RequestBody Map<String, Object> body,
+                HttpServletRequest req) {
 
-        	    // 2) Busco el método completo "compId.metodo"
-        	    var callables = collectCallables(page);
-        	    var entry     = callables.get(qualified);
-        	    if (entry == null) {
-        	        return "{\"error\":\"Método no permitido: " + qualified + "\"}";
-        	    }
-        	    Method target = entry.getKey();
-        	    Object owner  = entry.getValue();
+            /* ── 1. reconstruir la página desde Referer ─────────────────────── */
+            String path = req.getHeader("Referer").replaceFirst("https?://[^/]+", "");
+            HtmlComponent page = pageResolver.getPage(path);
 
-        	    // 3) Deserializo args
-        	    @SuppressWarnings("unchecked")
-        	    List<Object> rawArgs = (List<Object>) body.getOrDefault("args", List.of());
-        	    Parameter[] params   = target.getParameters();
-        	    Object[] args        = new Object[params.length];
-        	    for (int i = 0; i < params.length; i++) {
-        	        Object raw = i < rawArgs.size() ? rawArgs.get(i) : null;
-        	        JavaType type = objectMapper.getTypeFactory()
-        	                                    .constructType(params[i].getParameterizedType());
-        	        args[i] = objectMapper.convertValue(raw, type);
-        	    }
+            /* ── 2. localizar el método "CompId.metodo" ─────────────────────── */
+            var callables = collectCallables(page);
+            var entry     = callables.get(qualified);
+            if (entry == null) {
+                return guard.errorJson("NOT_FOUND",
+                                       "Método no permitido: " + qualified);
+            }
+            Method target = entry.getKey();
+            Object owner  = entry.getValue();
 
-        	    // 4) Invoco y devuelvo
-        	    try {
-        	        Object result = target.invoke(owner, args);
-        	        return (result == null)
-        	             ? ""
-        	             : objectMapper.writeValueAsString(result);
-        	    } catch (Exception e) {
-        	        e.printStackTrace();
-        	        return "{\"error\":\"Error al invocar " + qualified 
-        	             + ": " + e.getMessage() + "\"}";
-        	    }
-        	}
+            /* ── 3. deserializar argumentos ─────────────────────────────────── */
+            @SuppressWarnings("unchecked")
+            List<Object> rawArgs = (List<Object>) body.getOrDefault("args", List.of());
+            Parameter[] params   = target.getParameters();
+            Object[] args        = new Object[params.length];
+
+            for (int i = 0; i < params.length; i++) {
+                Object raw = i < rawArgs.size() ? rawArgs.get(i) : null;
+                JavaType type = objectMapper.getTypeFactory()
+                                            .constructType(params[i].getParameterizedType());
+                args[i] = objectMapper.convertValue(raw, type);
+            }
+
+            /* ── 4‑a. rate‑limit por método ─────────────────────────────────── */
+            if (!guard.tryConsume(qualified)) {
+                return guard.errorJson("RATE_LIMIT",
+                                       "Demasiadas llamadas, inténtalo en un instante");
+            }
+
+            /* ── 4‑b. Bean‑Validation de parámetros ─────────────────────────── */
+            try {
+                guard.validateParams(owner, target, args);
+            } catch (IllegalArgumentException ex) {
+                return guard.errorJson("VALIDATION", ex.getMessage());
+            }
+
+            /* ── 5. invocar y devolver resultado ────────────────────────────── */
+            try {
+                Object result = target.invoke(owner, args);
+                return (result == null)
+                     ? ""
+                     : objectMapper.writeValueAsString(result);
+            } catch (Exception e) {
+                e.printStackTrace();
+                return guard.errorJson("INVOKE_ERROR",
+                                       "Error al invocar " + qualified + ": " + e.getMessage());
+            }
+        }
 
 
         
