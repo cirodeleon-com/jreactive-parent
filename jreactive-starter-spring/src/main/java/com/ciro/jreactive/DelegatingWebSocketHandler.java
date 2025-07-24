@@ -14,11 +14,17 @@ public class DelegatingWebSocketHandler implements WebSocketHandler {
     private final PageResolver pageResolver;
     private final ObjectMapper mapper;
     private final ScheduledExecutorService scheduler;
+    private final WsConfig wsConfig;
 
-    public DelegatingWebSocketHandler(PageResolver pageResolver,ObjectMapper mapper, ScheduledExecutorService scheduler) {
+    public DelegatingWebSocketHandler(PageResolver pageResolver,
+    		ObjectMapper mapper,
+    		ScheduledExecutorService scheduler,
+    		WsConfig wsConfig) {
+    	
         this.pageResolver = pageResolver;
         this.mapper = mapper;
         this.scheduler = scheduler;
+        this.wsConfig = wsConfig;
     }
 
     @Override
@@ -27,7 +33,7 @@ public class DelegatingWebSocketHandler implements WebSocketHandler {
         if (path == null) path = "/";
         HtmlComponent page = pageResolver.getPage(path);
 
-        JReactiveSocketHandler delegate = new JReactiveSocketHandler(page,mapper,scheduler);
+        JReactiveSocketHandler delegate = new JReactiveSocketHandler(page,mapper,scheduler,wsConfig);
         delegate.afterConnectionEstablished(session);
 
         // OPCIONAL: podrías guardar `session -> delegate` si quieres manejar mensajes luego
