@@ -1,62 +1,66 @@
 package com.ciro.jreactive;
 
-
-import java.lang.reflect.Method;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import com.ciro.jreactive.router.Param;
+import com.fasterxml.jackson.databind.JavaType;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.http.MediaType;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PathVariable;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestHeader;
-import org.springframework.web.bind.annotation.RequestParam;
-import org.springframework.web.bind.annotation.RestController;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import java.lang.reflect.Parameter; 
-import jakarta.servlet.http.HttpServletRequest;
-import com.fasterxml.jackson.databind.JavaType;   // ← nuevo
+import org.springframework.web.bind.annotation.*;
 
+import java.lang.reflect.Method;
+import java.lang.reflect.Parameter;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 
 @SpringBootApplication
 public class JReactiveApplication {
-
-	
 
     public static void main(String[] args) {
         SpringApplication.run(JReactiveApplication.class, args);
     }
 
-    
-
     @RestController
     class PageController {
 
-        private final PageResolver pageResolver;
-        private final ObjectMapper objectMapper;
-        private final CallGuard    guard; 
+        private final PageResolver  pageResolver;
+        private final ObjectMapper  objectMapper;
+        private final CallGuard     guard;
 
-
-        public PageController(PageResolver pageResolver,ObjectMapper objectMapper,CallGuard guard) {
+        public PageController(PageResolver pageResolver,
+                              ObjectMapper objectMapper,
+                              CallGuard guard) {
             this.pageResolver = pageResolver;
             this.objectMapper = objectMapper;
-            this.guard=guard;
+            this.guard        = guard;
         }
 
-        @GetMapping(value = {"/", "/{path:^(?!js|ws).*$}"}, produces = MediaType.TEXT_HTML_VALUE)
+        /* Acepta:
+           - "/"
+           - "/foo"
+           - "/foo/bar/baz"  (cualquier profundidad)
+           Evita js|ws al inicio para no pisar recursos estáticos ni el endpoint WS.
+        */
+        @GetMapping(value = {
+                "/",
+                "/{x:^(?!js|ws).*$}",
+                "/{x:^(?!js|ws).*$}/**"
+        }, produces = MediaType.TEXT_HTML_VALUE)
         public String page(HttpServletRequest req,
                            @RequestHeader(value = "X-Partial", required = false) String partial) {
+            return render(req, partial);
+        }
 
-            HtmlComponent page = pageResolver.getPage(req.getRequestURI());
+        /** Lógica común de render. */
+        private String render(HttpServletRequest req, String partial) {
+            String path = req.getRequestURI();
+            HtmlComponent page = pageResolver.getPage(path);
             String html = page.render();
 
-            // Si es navegación interna, solo mandamos el fragmento
-            if (partial != null) return html;
+            if (partial != null) return html;   // fragmento para la SPA
 
-            // Si es carga inicial (sin X-Partial), mandamos layout completo
             return """
             <!DOCTYPE html>
             <html>
@@ -70,95 +74,93 @@ public class JReactiveApplication {
             </html>
             """.formatted(html);
         }
-        
-        @PostMapping(
-                value = "/call/{qualified:.+}",            // admite puntos y escapes
-                consumes = MediaType.APPLICATION_JSON_VALUE,
-                produces = MediaType.APPLICATION_JSON_VALUE
-        )
-        public String callMethod(
-                @PathVariable("qualified") String qualified,
-                @RequestBody Map<String, Object> body,
-                HttpServletRequest req) {
 
-            /* ── 1. reconstruir la página desde Referer ─────────────────────── */
-            String path = req.getHeader("Referer").replaceFirst("https?://[^/]+", "");
+        @PostMapping(
+                value     = "/call/{qualified:.+}",
+                consumes  = MediaType.APPLICATION_JSON_VALUE,
+                produces  = MediaType.APPLICATION_JSON_VALUE
+        )
+        public String callMethod(@PathVariable("qualified") String qualified,
+                                 @RequestBody Map<String, Object> body,
+                                 HttpServletRequest req) {
+
+            // 1) reconstruir la página desde el Referer (fallback "/")
+            String ref  = req.getHeader("Referer");
+            String path = (ref == null) ? "/" : ref.replaceFirst("https?://[^/]+", "");
             HtmlComponent page = pageResolver.getPage(path);
 
-            /* ── 2. localizar el método "CompId.metodo" ─────────────────────── */
+            // 2) localizar método "CompId.metodo"
             var callables = collectCallables(page);
             var entry     = callables.get(qualified);
             if (entry == null) {
                 return guard.errorJson("NOT_FOUND",
-                                       "Método no permitido: " + qualified);
+                        "Método no permitido: " + qualified);
             }
             Method target = entry.getKey();
             Object owner  = entry.getValue();
 
-            /* ── 3. deserializar argumentos ─────────────────────────────────── */
+            // 3) deserializar args (mezcla body + @Param del path)
             @SuppressWarnings("unchecked")
             List<Object> rawArgs = (List<Object>) body.getOrDefault("args", List.of());
             Parameter[] params   = target.getParameters();
             Object[] args        = new Object[params.length];
 
+            Map<String,String> routeParams = pageResolver.getParams(path);
+            if (routeParams == null) routeParams = Map.of();
+
             for (int i = 0; i < params.length; i++) {
-                Object raw = i < rawArgs.size() ? rawArgs.get(i) : null;
+                Parameter p = params[i];
+                Object raw  = i < rawArgs.size() ? rawArgs.get(i) : null;
+
+                Param ann = p.getAnnotation(Param.class);
+                if (ann != null) {
+                    raw = routeParams.get(ann.value());
+                }
+
                 JavaType type = objectMapper.getTypeFactory()
-                                            .constructType(params[i].getParameterizedType());
+                                            .constructType(p.getParameterizedType());
                 args[i] = objectMapper.convertValue(raw, type);
             }
 
-            /* ── 4‑a. rate‑limit por método ─────────────────────────────────── */
+            // 4-a) rate limit
             if (!guard.tryConsume(qualified)) {
                 return guard.errorJson("RATE_LIMIT",
-                                       "Demasiadas llamadas, inténtalo en un instante");
+                        "Demasiadas llamadas, inténtalo en un instante");
             }
 
-            /* ── 4‑b. Bean‑Validation de parámetros ─────────────────────────── */
+            // 4-b) Bean Validation
             try {
                 guard.validateParams(owner, target, args);
             } catch (IllegalArgumentException ex) {
                 return guard.errorJson("VALIDATION", ex.getMessage());
             }
 
-            /* ── 5. invocar y devolver resultado ────────────────────────────── */
+            // 5) invocar
             try {
                 Object result = target.invoke(owner, args);
-                return (result == null)
-                     ? ""
-                     : objectMapper.writeValueAsString(result);
+                return (result == null) ? "" : objectMapper.writeValueAsString(result);
             } catch (Exception e) {
                 e.printStackTrace();
                 return guard.errorJson("INVOKE_ERROR",
-                                       "Error al invocar " + qualified + ": " + e.getMessage());
+                        "Error al invocar " + qualified + ": " + e.getMessage());
             }
         }
 
-
-        
-        
+        /* Recolecta todos los métodos @Call del árbol de componentes */
         private Map<String, Map.Entry<Method, HtmlComponent>> collectCallables(HtmlComponent root) {
             Map<String, Map.Entry<Method, HtmlComponent>> map = new HashMap<>();
-            String compId = root.getId();  // puede ser tu ref o HelloLeaf#1
+            String compId = root.getId();
 
-            // 1) propios
+            // propios
             for (var e : root.getCallableMethods().entrySet()) {
                 String key = compId + "." + e.getKey();
                 map.put(key, Map.entry(e.getValue(), root));
             }
-            // 2) hijos recursivos
+            // hijos
             for (HtmlComponent child : root._children()) {
                 map.putAll(collectCallables(child));
             }
             return map;
         }
-
-
-
-
-
-
     }
-
-
 }

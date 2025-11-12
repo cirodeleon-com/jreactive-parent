@@ -99,6 +99,7 @@ final class ComponentEngine {
             		    if (reused.isPresent()) {
             		        leaf = reused.get();           // mantiene HelloLeaf#1
             		        pool.remove(reused.get());
+            		        leaf.setId(leaf.getId());
             		    } else {
             		        leaf = newInstance(ctx, className);   // primera vez
             		        leaf.setId(leaf.getId());             // ← congelar id
@@ -280,7 +281,8 @@ final class ComponentEngine {
         }
         m2.appendTail(sb);
         html = sb.toString();
-        
+    
+        /*
         String rootNs = ctx.getId() + ".";
 
      // aplica namespacing a TODOS los bindings en 'all'
@@ -307,9 +309,11 @@ final class ComponentEngine {
            "ref=\"" + rootNs + fullKey + "\""
          );
      }
-
+    */
 
         return new Rendered(html, all);
+        
+        
 
     }
     

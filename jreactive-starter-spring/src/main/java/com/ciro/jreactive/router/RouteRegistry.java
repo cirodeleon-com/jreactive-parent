@@ -1,37 +1,87 @@
 package com.ciro.jreactive.router;
 
-import java.util.HashMap;
-import java.util.Map;
-import java.util.Optional;
-import java.util.function.Supplier;
+import com.ciro.jreactive.HtmlComponent;
 import org.springframework.context.ApplicationContext;
 import org.springframework.stereotype.Component;
-import com.ciro.jreactive.HtmlComponent;
 
-@Component                       // se detecta al arrancar Spring
+import java.util.*;
+import java.util.function.Supplier;
+
+/**
+ * Registra rutas anotadas con {@link Route} y permite resolver
+ * paths dinámicos como "/users/{id}" devolviendo:
+ *  - una NUEVA instancia del componente
+ *  - los valores de los parámetros extraídos del path
+ */
+@Component
 public class RouteRegistry {
-    private final Map<String, Supplier<HtmlComponent>> routes = new HashMap<>();
+
+    /** Entrada interna: template original, regex compilado y factory */
+    private static final class Entry {
+        final String template;
+        final PathPattern pattern;
+        final Supplier<HtmlComponent> factory;
+
+        Entry(String template, Supplier<HtmlComponent> factory) {
+            this.template = template;
+            this.pattern  = PathPattern.compile(template);
+            this.factory  = factory;
+        }
+    }
+
+    /** Resultado público: componente + params del path */
+    public static record Result(HtmlComponent component, Map<String, String> params) {}
+
+    private final List<Entry> routes = new ArrayList<>();
 
     public RouteRegistry(ApplicationContext ctx) {
-        // escanea todos los beans HtmlComponent
-        ctx.getBeansOfType(HtmlComponent.class).values().forEach(comp -> {
-            Route ann = comp.getClass().getAnnotation(Route.class);
-            if (ann != null) routes.put(ann.path(), () -> {
-                try { return comp.getClass().getDeclaredConstructor().newInstance(); }
-                catch (Exception e) { throw new RuntimeException(e); }
-            });
+        // Escanea todos los HtmlComponent registrados como beans
+        ctx.getBeansOfType(HtmlComponent.class).values().forEach(bean -> {
+            Route ann = bean.getClass().getAnnotation(Route.class);
+            if (ann == null) return;
+
+            Supplier<HtmlComponent> sup = () -> {
+                try {
+                    return bean.getClass().getDeclaredConstructor().newInstance();
+                } catch (Exception e) {
+                    throw new RuntimeException("No puedo instanciar " + bean.getClass(), e);
+                }
+            };
+            routes.add(new Entry(ann.path(), sup));
         });
-    }
-    public HtmlComponent resolve(String path) {
-        return Optional.ofNullable(routes.get(path))
-                       .orElse(routes.get("/"))      // fallback a Home
-                       .get();
-    }
-    
-    public HtmlComponent resolveWithInstance(String path) {
-        Supplier<HtmlComponent> factory = Optional.ofNullable(routes.get(path))
-                                                   .orElse(routes.get("/"));
-        return factory.get();
+
+        // Asegura que exista "/"
+        boolean hasRoot = routes.stream().anyMatch(e -> "/".equals(e.template));
+        if (!hasRoot) {
+            throw new IllegalStateException("Debe existir al menos una ruta @Route(path=\"/\")");
+        }
     }
 
+    /**
+     * Versión antigua: sólo devuelve el componente.
+     * Si el path tiene parámetros, éstos se ignoran.
+     * (Se mantiene por compatibilidad si lo usas en otro lado)
+     */
+    public HtmlComponent resolve(String path) {
+        return resolveWithInstance(path).component();
+    }
+
+    /**
+     * Devuelve SIEMPRE una nueva instancia + mapa de parámetros extraídos.
+     * Si no hace match ninguna ruta, cae en "/".
+     */
+    public Result resolveWithInstance(String path) {
+        for (Entry e : routes) {
+            Map<String, String> params = e.pattern.match(path);
+            if (params != null) {
+                return new Result(e.factory.get(), params);
+            }
+        }
+        // Fallback al root
+        Entry root = routes.stream()
+                           .filter(r -> "/".equals(r.template))
+                           .findFirst()
+                           .orElseThrow(); // imposible si validamos en ctor
+        return new Result(root.factory.get(), Map.of());
+    }
 }

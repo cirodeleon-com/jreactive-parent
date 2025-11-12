@@ -62,6 +62,7 @@ public class JReactiveSocketHandler extends TextWebSocketHandler {
     public void afterConnectionEstablished(WebSocketSession s) throws Exception {
         sessions.add(s);
         for (var e : bindings.entrySet()) {
+        	System.out.println("WS‑INIT  " + e.getKey() + " = " + e.getValue().get());
             if (s.isOpen()) {
                 s.sendMessage(jsonSingle(e.getKey(), e.getValue().get()));
             }
@@ -85,6 +86,7 @@ public class JReactiveSocketHandler extends TextWebSocketHandler {
 
     /* 4. servidor -> clientes */
     private void broadcast(String k, Object v) {
+    	System.out.println("WS‑BROADCAST " + k + " → " + v);
         if (!backpressureEnabled) {
             // modo simple: envía cada cambio inmediatamente
             sendImmediate(k, v);
@@ -192,7 +194,7 @@ public class JReactiveSocketHandler extends TextWebSocketHandler {
         return new TextMessage(mapper.writeValueAsString(payload));
     }
 
-    /* Recoger bindings de todo el árbol */
+    /* 
     private Map<String, ReactiveVar<?>> collect(ViewNode node) {
         Map<String, ReactiveVar<?>> map = new HashMap<>();
 
@@ -211,4 +213,29 @@ public class JReactiveSocketHandler extends TextWebSocketHandler {
         }
         return map;
     }
+    */
+    
+    /* Recoger bindings de todo el árbol */
+    private Map<String, ReactiveVar<?>> collect(ViewNode node) {
+        Map<String, ReactiveVar<?>> map = new HashMap<>();
+
+        // ⚠️ IMPORTANTE:
+        // Si es un ViewLeaf (HtmlComponent incluido), sus bindings()
+        // YA traen todo el árbol con nombres con namespace: hello.fruits, reloj.clock...
+        if (node instanceof ViewLeaf leaf) {
+            map.putAll(leaf.bindings());
+            return map;   // ← AQUÍ TERMINA, NO SE SIGUE RECORRIENDO HIJOS
+        }
+
+        // Sólo recorremos hijos en composites "puros"
+        if (node instanceof ViewComposite comp) {
+            for (ViewNode child : comp.children()) {
+                map.putAll(collect(child));
+            }
+        }
+
+        return map;
+    }
+
+
 }

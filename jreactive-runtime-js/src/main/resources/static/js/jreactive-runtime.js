@@ -5,6 +5,15 @@
   const bindings = new Map();            // clave → [nodos texto / inputs]
   const state    = Object.create(null);  // último valor conocido
   const $$       = sel => [...document.querySelectorAll(sel)];
+  // helpers de debug en ventana global
+window.__jrxState    = state;
+window.__jrxBindings = bindings;
+
+  
+  
+  let ws = null;
+  let currentPath = '/';
+  let firstMiss   = true;
   
   /* --- helper global para escapar &, <, >, ", ' y / --- */
 function escapeHtml(str) {
@@ -22,6 +31,8 @@ function escapeHtml(str) {
 /* ------------------------------------------------------------------
  * 1. Indexar nodos con {{variable[.path]}}  (incluye .size/.length)
  * ------------------------------------------------------------------ */
+
+/*
 const reG = /{{\s*([\w#.-]+)(?:\.(size|length))?\s*}}/g;
 const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
 
@@ -42,6 +53,7 @@ while ((node = walker.nextNode())) {
   /* ------------------------------------------------------------------
    * 2. Enlazar inputs cuyo name|id = variable
    * ------------------------------------------------------------------ */
+  /*
   $$('input,textarea,select').forEach(el => {
     const k = el.name || el.id;
     if (!k) return;
@@ -55,7 +67,7 @@ while ((node = walker.nextNode())) {
       ws.send(JSON.stringify({ k, v }));
     });
   });
-
+*/
 
 /* ----------------------------------------------------------
  *  Util: resuelve cualquier placeholder {{expr[.prop]}}
@@ -113,12 +125,12 @@ function resolveExpr(expr) {
 
 function renderText(node) {
   const re = /{{\s*([\w#.-]+)\s*}}/g;
-  node.textContent = node.__tpl.replace(
-  re,
-  (_, expr) => escapeHtml(resolveExpr(expr))
-);
-
+  node.textContent = node.__tpl.replace(re, (_, expr) => {
+    const v = resolveExpr(expr);
+    return v == null ? '' : String(v);
+  });
 }
+
 
 
 
@@ -396,62 +408,95 @@ function updateEachBlocks() {
 /* ==========================================================
  *  Conexión WS que se reinicia cuando cambias de página
  * ========================================================== */
-let ws;            // se rellena en connectWs()
-let currentPath;   // recuerda la ruta asociada al socket
+  // recuerda la ruta asociada al socket
 
 function connectWs(path) {
-  // 1) ¿ya existe y sigue abierto? → ciérralo limpio
+  // reinicia estado para la nueva página
+  firstMiss   = true;
+  currentPath = path;
+
   if (ws && ws.readyState === WebSocket.OPEN) {
     ws.close(1000, "route-change");
   }
 
-  // 2) Nuevo socket apuntando a la ruta solicitada
-  currentPath = path;
-  ws = new WebSocket(`ws://${location.host}/ws?path=${encodeURIComponent(path)}`);
-  
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  ws = new WebSocket(`${proto}://${location.host}/ws?path=${encodeURIComponent(path)}`);
+
   ws.onclose = e => {
-  if (e.code !== 1000) {                 // 1000 = cierre normal
-    setTimeout(() => connectWs(currentPath), 1000); // reintenta en 1 s
-  }
-};
+    if (e.code !== 1000) setTimeout(() => connectWs(currentPath), 1000);
+  };
+  /*
+  ws.onmessage = ({ data }) => {
+	
+	console.log('[WS RX]', data);  
+	  
+    const pkt = JSON.parse(data);
+    const batch = Array.isArray(pkt) ? pkt : [pkt];
 
-  // 3) Manejador de mensajes idéntico al de antes
-/* ------------------------------------------------------------------
- * 5-bis  WebSocket + 1ª hidratación segura
- * ------------------------------------------------------------------ */
-let firstMiss   = true;          // ← solo reindexa una vez
+    batch.forEach(({ k, v }) => {
+      state[k] = v;
+
+      let nodes = bindings.get(k);
+
+      if ((!nodes || !nodes.length) && firstMiss) {
+        reindexBindings();
+        setupEventBindings();
+        hydrateClickDirectives();
+        nodes = bindings.get(k);
+        firstMiss = false;
+      }
+
+      (nodes || []).forEach(el => {
+        if (el.nodeType === Node.TEXT_NODE)      renderText(el);
+        else if (el.type === 'checkbox' || el.type === 'radio') el.checked = !!v;
+        else                                      el.value = v ?? '';
+      });
+    });
+
+    updateIfBlocks();
+    updateEachBlocks();
+  };
+  */
 ws.onmessage = ({ data }) => {
-  const parsed = JSON.parse(data);          // ahora puede ser array
-  const packet = Array.isArray(parsed) ? parsed : [ parsed ];
-  // DEBUG — imprime lote recibido
-  //console.log('WS in', packet);
+  const pkt   = JSON.parse(data);
+  const batch = Array.isArray(pkt) ? pkt : [pkt];
 
+  console.log('[WS RX NORMALIZED]', batch);
 
-  /* 1) ---- aplica todos los cambios del lote -------------------- */
-  packet.forEach(({ k, v }) => {
+  batch.forEach(({ k, v }) => {
+    // 1) Actualizamos estado
     state[k] = v;
 
-    /* ¿hay nodos enlazados ya? */
+    // 2) Buscamos nodos enlazados a esa clave
     let nodes = bindings.get(k);
 
-    /* primera vez que vemos la clave ⇒ re-index + re-hook una vez */
-    if ((!nodes || !nodes.length) && firstMiss) {
+    // 2-bis) Si no hay, reindexamos e intentamos de nuevo
+    if (!nodes || !nodes.length) {
       reindexBindings();
-      setupEventBindings();
       hydrateClickDirectives();
-      nodes     = bindings.get(k);
-      firstMiss = false;
+      setupEventBindings();
+      nodes = bindings.get(k);
     }
 
-    /* pinta texto / inputs concretos */
+    // 2-ter) Si sigue sin haber, probamos con la parte simple (después del último ".")
+    if (!nodes || !nodes.length) {
+      const simple = k.split('.').at(-1);   // ej. "orders" de "FireTestLeaf#1.orders"
+      nodes = bindings.get(simple);
+    }
+
+    // 3) Pintamos
     (nodes || []).forEach(el => {
-      if (el.nodeType === Node.TEXT_NODE)  renderText(el);
-      else if (el.type === 'checkbox' || el.type === 'radio') el.checked = !!v;
-      else                                                   el.value   = v ?? '';
+      if (el.nodeType === Node.TEXT_NODE) {
+        renderText(el);
+      } else if (el.type === 'checkbox' || el.type === 'radio') {
+        el.checked = !!v;
+      } else {
+        el.value = v ?? '';
+      }
     });
   });
 
-  /* 2) ---- una sola pasada global tras agrupar ------------------ */
+  // 4) Actualiza if/each después de aplicar valores
   updateIfBlocks();
   updateEachBlocks();
 };
@@ -464,10 +509,13 @@ ws.onmessage = ({ data }) => {
 
 
 
+
   /* ------------------------------------------------------------------
    * 6. Primera pasada cuando el DOM está listo
    * ------------------------------------------------------------------ */
 document.addEventListener('DOMContentLoaded', () => {
+	
+  reindexBindings(); 	
   updateIfBlocks();
   updateEachBlocks();
   hydrateClickDirectives();
@@ -483,42 +531,39 @@ document.addEventListener('DOMContentLoaded', () => {
 
 
 async function loadRoute(path = location.pathname) {
-  const html = await fetch(path, { headers: { 'X-Partial': '1' }}).then(r => r.text());
-  const app = document.getElementById('app');
+  if (ws && ws.readyState === WebSocket.OPEN) ws.close(1000, "route-change");
+  ws = null;
 
-  // 1) Ocultar #app
+  bindings.clear();
+  for (const k in state) delete state[k];
+
+  const html = await fetch(path, { headers: { 'X-Partial': '1' } }).then(r => r.text());
+  const app  = document.getElementById('app');
+
   app.style.visibility = 'hidden';
-  
-  
-
-  // 2) Inyectar HTML y volver a enlazar
   app.innerHTML = html;
+
   reindexBindings();
-  // *** HIDRATACIÓN INMEDIATA de texto e inputs desde state ***
+
+  // hidrata con lo que haya (puede estar vacío, no pasa nada)
   bindings.forEach((nodes, key) => {
-    for (const el of nodes) {
-      if (el.nodeType === Node.TEXT_NODE) {
-        renderText(el);
-      } else if ('checked' in el) {
-        el.checked = !!state[key];
-      } else {
-        el.value = state[key] ?? '';
-      }
-    }
+    nodes.forEach(el => {
+      if (el.nodeType === Node.TEXT_NODE) renderText(el);
+      else if ('checked' in el)          el.checked = !!state[key];
+      else                               el.value   = state[key] ?? '';
+    });
   });
-  // *** luego procesas if/each y eventos ***
+
   updateIfBlocks();
   updateEachBlocks();
-  
   hydrateClickDirectives(app);
-  
   setupEventBindings();
-  
-  //connectWs(path);
 
-  // 3) Mostrar #app ya procesado
+  connectWs(path);
+
   app.style.visibility = '';
 }
+
 
 
 
@@ -531,46 +576,64 @@ document.addEventListener('click', e => {
   e.preventDefault();
   history.pushState({}, '', a.href);
   loadRoute(a.pathname);
+  //connectWs(a.pathname);
 });
 
-window.addEventListener('popstate', () => loadRoute());
+window.addEventListener('popstate', () => {
+  const p = location.pathname;
+  loadRoute(p);
+  //connectWs(p);
+});
 
 function reindexBindings() {
   bindings.clear();
 
-  // Paso 1: indexar nodos con {{variable}}
+  const app = document.getElementById('app') || document.body;
+
   const reG = /{{\s*([\w#.-]+)\s*}}/g;
-  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+  const walker = document.createTreeWalker(app, NodeFilter.SHOW_TEXT);
 
   let node;
   while ((node = walker.nextNode())) {
-    if (reG.test(node.textContent)) {
-      node.__tpl = node.textContent;
-      reG.lastIndex = 0;
-      for (const m of node.__tpl.matchAll(reG)) {
-         const expr   = m[1];                     // p.e.  ClockLeaf#3.greet
-         const root   = expr.split('.')[0];       //       ClockLeaf#3
-         const simple = expr.split('.').at(-1);   //       greet
+    // 👇 Usamos el template original si existe, NO el texto ya renderizado
+    const tpl = node.__tpl || node.textContent;
+    if (!reG.test(tpl)) continue;
 
-         [expr, root, simple].forEach(key => {
-             (bindings.get(key) || bindings.set(key, []).get(key)).push(node);
-         });
-      }
+    node.__tpl = tpl;
+    reG.lastIndex = 0;
+
+    for (const m of tpl.matchAll(reG)) {
+      const expr   = m[1];                    // ej. "reloj.clock" o "orders.size"
+      const parts  = expr.split('.');
+      const root   = parts[0];                // "reloj" / "orders"
+      const simple = parts[parts.length - 1]; // "clock" / "size"
+
+      // Indexamos con varias claves para ser flexibles
+      [expr, root, simple].forEach(key => {
+        (bindings.get(key) || bindings.set(key, []).get(key)).push(node);
+      });
     }
   }
 
-  // Paso 2: inputs con name o id que coincidan con la variable
+  // Inputs: name / id = clave
   $$('input,textarea,select').forEach(el => {
     const k = el.name || el.id;
     if (!k) return;
+
     (bindings.get(k) || bindings.set(k, []).get(k)).push(el);
+
+    if (el._jrxBound) return;
+    el._jrxBound = true;
 
     const evt = (el.type === 'checkbox' || el.type === 'radio') ? 'change' : 'input';
     el.addEventListener(evt, () => {
+      if (!ws || ws.readyState !== WebSocket.OPEN) return;
       const v = (el.type === 'checkbox' || el.type === 'radio') ? el.checked : el.value;
       ws.send(JSON.stringify({ k, v }));
     });
   });
+
+  console.log('[BINDINGS NOW]', [...bindings.keys()]);
 }
 
 
@@ -679,26 +742,17 @@ function buildValue(root) {
  * ------------------------------------------------------------------ */
 function setupEventBindings() {
   $$('[data-call]').forEach(el => {
-
-    /* ① ¿ya tenía listener? ──> salir */
     if (el._jrxBound) return;
-
-    /* ② marca para la próxima vez */
     el._jrxBound = true;
 
-    /* ③ primer y único addEventListener */
     el.addEventListener(el.dataset.event || 'click', async () => {
-
-      /* --- 1. Preparar el array 'args' en el orden declarado -------- */
       const paramList = (el.dataset.param || '')
-                           .split(',')
-                           .map(p => p.trim())
-                           .filter(Boolean);
+        .split(',')
+        .map(p => p.trim())
+        .filter(Boolean);
 
-      const args = [];
-      paramList.forEach(root => args.push(buildValue(root)));
+      const args = paramList.map(buildValue);
 
-      /* --- 2. Enviar al backend ------------------------------------ */
       const qualified = encodeURIComponent(el.dataset.call);
       await fetch('/call/' + qualified, {
         method: 'POST',
@@ -706,11 +760,12 @@ function setupEventBindings() {
           'X-Requested-With': 'JReactive',
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify({ args })     // siempre { "args": [...] }
+        body: JSON.stringify({ args })
       });
     });
   });
 }
+
 
 
 

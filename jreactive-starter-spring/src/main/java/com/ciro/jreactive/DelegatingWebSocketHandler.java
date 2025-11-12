@@ -56,6 +56,13 @@ public class DelegatingWebSocketHandler implements WebSocketHandler {
     public void afterConnectionClosed(WebSocketSession session, CloseStatus status) throws Exception {
         var delegate = (WebSocketHandler) session.getAttributes().get("delegate");
         if (delegate != null) delegate.afterConnectionClosed(session, status);
+        
+        String path = (String) session.getAttributes().get("path");
+
+        // Sólo hacemos evict cuando cerramos por cambio de ruta
+        if (path != null && "route-change".equals(status.getReason())) {
+            pageResolver.evict(path);
+        }
     }
 
     @Override

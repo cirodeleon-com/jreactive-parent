@@ -7,7 +7,7 @@ import static com.ciro.jreactive.Type.$;
 
 public class ClockLeaf extends HtmlComponent {
 
-	@Bind public String greet = "Hello";
+	@Bind public Type<String> greet = $("Hello");
 	@Bind public Type<String> clock = $("--:--:--");
 
     public ClockLeaf() {
