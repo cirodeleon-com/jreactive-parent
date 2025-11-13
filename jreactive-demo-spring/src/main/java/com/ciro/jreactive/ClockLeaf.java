@@ -9,15 +9,29 @@ public class ClockLeaf extends HtmlComponent {
 
 	@Bind public Type<String> greet = $("Hello");
 	@Bind public Type<String> clock = $("--:--:--");
+	
+	private Timer timer;
 
     public ClockLeaf() {
     	System.out.println("🕒 Instanciado ClockLeaf con id: " + this.getId());
-    	new Timer(true).scheduleAtFixedRate(new TimerTask() {
+    }
+    
+    @Override
+    protected void onMount() {
+        timer = new java.util.Timer(true);
+        timer.scheduleAtFixedRate(new java.util.TimerTask() {
             @Override public void run() {
-                clock.set(LocalTime.now().withNano(0).toString());  // 🔥 actualiza
-               
+                clock.set(java.time.LocalTime.now().withNano(0).toString());
             }
         }, 1000, 1000);
+    }
+
+    @Override
+    protected void onUnmount() {
+        if (timer != null) {
+            timer.cancel();                    // ← liberar recursos al unmount
+            timer = null;
+        }
     }
 
     @Override

@@ -73,6 +73,12 @@ public class JReactiveSocketHandler extends TextWebSocketHandler {
     @Override
     public void afterConnectionClosed(WebSocketSession s, CloseStatus status) {
         sessions.remove(s);
+        if (sessions.isEmpty()) {
+            // nadie escuchando → opcional limpiar la cola
+            queue.clear();
+            queueSize.set(0);
+            // flushScheduled se irá a false cuando dispare flushQueue o puedes dejarlo
+        }   
     }
 
     /* 3. cliente -> servidor */
@@ -193,27 +199,6 @@ public class JReactiveSocketHandler extends TextWebSocketHandler {
         payload.put("v", v);
         return new TextMessage(mapper.writeValueAsString(payload));
     }
-
-    /* 
-    private Map<String, ReactiveVar<?>> collect(ViewNode node) {
-        Map<String, ReactiveVar<?>> map = new HashMap<>();
-
-        if (node instanceof ViewLeaf leaf) {
-            map.putAll(leaf.bindings());
-        }
-        if (node instanceof HtmlComponent hc) {
-            for (HtmlComponent child : hc._children()) {
-                map.putAll(collect(child));
-            }
-        }
-        if (node instanceof ViewComposite comp) {
-            for (ViewNode child : comp.children()) {
-                map.putAll(collect(child));
-            }
-        }
-        return map;
-    }
-    */
     
     /* Recoger bindings de todo el árbol */
     private Map<String, ReactiveVar<?>> collect(ViewNode node) {

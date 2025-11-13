@@ -27,48 +27,6 @@ function escapeHtml(str) {
     .replaceAll('/', '&#x2F;');
 }
 
-
-/* ------------------------------------------------------------------
- * 1. Indexar nodos con {{variable[.path]}}  (incluye .size/.length)
- * ------------------------------------------------------------------ */
-
-/*
-const reG = /{{\s*([\w#.-]+)(?:\.(size|length))?\s*}}/g;
-const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
-
-let node;
-while ((node = walker.nextNode())) {
-  if (reG.test(node.textContent)) {
-    node.__tpl = node.textContent;
-    reG.lastIndex = 0;
-    for (const m of node.__tpl.matchAll(reG)) {
-      const expr = m[1];                   // p.e. "orders.size" ó "persona.nombre"
-      const root = expr.split('.')[0];     //   → "orders" / "persona"
-      (bindings.get(root) || bindings.set(root, []).get(root)).push(node);
-    }
-  }
-}
-
-
-  /* ------------------------------------------------------------------
-   * 2. Enlazar inputs cuyo name|id = variable
-   * ------------------------------------------------------------------ */
-  /*
-  $$('input,textarea,select').forEach(el => {
-    const k = el.name || el.id;
-    if (!k) return;
-    (bindings.get(k) || bindings.set(k, []).get(k)).push(el);
-
-    const evt = (el.type === 'checkbox' || el.type === 'radio') ? 'change'
-                                                                : 'input';
-    el.addEventListener(evt, () => {
-      const v = (el.type === 'checkbox' || el.type === 'radio') ? el.checked
-                                                                : el.value;
-      ws.send(JSON.stringify({ k, v }));
-    });
-  });
-*/
-
 /* ----------------------------------------------------------
  *  Util: resuelve cualquier placeholder {{expr[.prop]}}
  * ---------------------------------------------------------*/
@@ -425,38 +383,7 @@ function connectWs(path) {
   ws.onclose = e => {
     if (e.code !== 1000) setTimeout(() => connectWs(currentPath), 1000);
   };
-  /*
-  ws.onmessage = ({ data }) => {
-	
-	console.log('[WS RX]', data);  
-	  
-    const pkt = JSON.parse(data);
-    const batch = Array.isArray(pkt) ? pkt : [pkt];
 
-    batch.forEach(({ k, v }) => {
-      state[k] = v;
-
-      let nodes = bindings.get(k);
-
-      if ((!nodes || !nodes.length) && firstMiss) {
-        reindexBindings();
-        setupEventBindings();
-        hydrateClickDirectives();
-        nodes = bindings.get(k);
-        firstMiss = false;
-      }
-
-      (nodes || []).forEach(el => {
-        if (el.nodeType === Node.TEXT_NODE)      renderText(el);
-        else if (el.type === 'checkbox' || el.type === 'radio') el.checked = !!v;
-        else                                      el.value = v ?? '';
-      });
-    });
-
-    updateIfBlocks();
-    updateEachBlocks();
-  };
-  */
 ws.onmessage = ({ data }) => {
   const pkt   = JSON.parse(data);
   const batch = Array.isArray(pkt) ? pkt : [pkt];

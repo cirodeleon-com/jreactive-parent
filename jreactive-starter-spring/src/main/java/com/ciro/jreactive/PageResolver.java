@@ -44,7 +44,10 @@ public class PageResolver {
 
     /** Opcional: limpiar cache si quieres forzar re-instalación de páginas dinámicas */
     public void evict(String path) {
-        instances.remove(path);
+    	 HtmlComponent inst =instances.remove(path);
         paramsByPath.remove(path);
+        if (inst != null) {
+            inst._unmountRecursive();              // ← UNMOUNT aquí (en cascada)
+        }
     }
 }

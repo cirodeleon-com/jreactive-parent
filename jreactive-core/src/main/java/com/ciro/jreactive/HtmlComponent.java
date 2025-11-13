@@ -6,16 +6,66 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicReference;
 
 public abstract class HtmlComponent extends ViewLeaf {
 
     private Map<String, ReactiveVar<?>> map;      // se crea on-demand
     private ComponentEngine.Rendered cached;
     private final List<HtmlComponent> _children = new ArrayList<>();
+    private final AtomicReference<ComponentState> _state =
+            new AtomicReference<>(ComponentState.UNMOUNTED);
+    
     void _addChild(HtmlComponent child) { _children.add(child); }
     List<HtmlComponent> _children()     { return _children; }
      // para IDs automáticos
     
+
+    /** Hook: se llama una vez cuando el componente pasa a MOUNTED */
+    protected void onMount() {
+        // por defecto nada; las subclases sobreescriben si necesitan
+    }
+
+    /** Hook: se llama una vez cuando el componente pasa a UNMOUNTED */
+    protected void onUnmount() {
+        // por defecto nada
+    }
+    
+    /** Monta este componente (si aún no lo está) y luego sus hijos */
+    public void _mountRecursive() {
+        // primero este componente
+        if (_state.compareAndSet(ComponentState.UNMOUNTED, ComponentState.MOUNTED)) {
+            onMount();
+        }
+        // luego los hijos
+        for (HtmlComponent child : _children) {
+            child._mountRecursive();
+        }
+    }
+
+    /** Desmonta en cascada: hijos primero, luego este componente */
+    public void _unmountRecursive() {
+        // primero los hijos
+        for (HtmlComponent child : _children) {
+            child._unmountRecursive();
+        }
+        // luego este
+        if (_state.compareAndSet(ComponentState.MOUNTED, ComponentState.UNMOUNTED)) {
+            onUnmount();
+            cleanupBindings();
+        }
+    }
+
+    /** Solo por si quieres inspeccionar el estado en debug */
+    ComponentState _state() {
+        return _state.get();
+    }
+    
+    private void cleanupBindings() {
+        // selfBindings() se asegura de construir `map` si aún no existe
+        Map<String, ReactiveVar<?>> binds = selfBindings();
+        binds.values().forEach(rx -> rx.clearListeners());
+    }
 
 
     /* --------------------- API ViewLeaf -------------------- */
@@ -54,6 +104,8 @@ public abstract class HtmlComponent extends ViewLeaf {
                         (raw instanceof ReactiveVar<?> r) ? r :
                         (raw instanceof Type<?> v)        ? v.rx() :
                                                             new ReactiveVar<>(raw);
+                
+                rx.setActiveGuard(() -> _state() == ComponentState.MOUNTED);
 
                 String key = ann.value().isBlank() ? f.getName() : ann.value();
                 map.put(key, rx);

@@ -311,9 +311,11 @@ final class ComponentEngine {
      }
     */
 
-        return new Rendered(html, all);
+        Rendered rendered = new Rendered(html, all);
         
-        
+        ctx._mountRecursive();
+
+        return rendered;
 
     }
     
