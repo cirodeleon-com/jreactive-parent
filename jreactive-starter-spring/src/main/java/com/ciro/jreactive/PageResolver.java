@@ -11,41 +11,46 @@ public class PageResolver {
 
     private final RouteRegistry registry;
 
-    /** Instancias cacheadas por path concreto ("/users/42") */
-    private final Map<String, HtmlComponent> instances = new ConcurrentHashMap<>();
+    /** Clave compuesta: sesión + path concreto ("/users/42") */
+    private record PageKey(String sessionId, String path) {}
 
-    /** Parámetros extraídos del path, también por path concreto */
-    private final Map<String, Map<String,String>> paramsByPath = new ConcurrentHashMap<>();
+    /** Instancias cacheadas por (sessionId, path) */
+    private final Map<PageKey, HtmlComponent> instances = new ConcurrentHashMap<>();
+
+    /** Parámetros extraídos del path, también por (sessionId, path) */
+    private final Map<PageKey, Map<String,String>> paramsByPage = new ConcurrentHashMap<>();
 
     public PageResolver(RouteRegistry registry) {
         this.registry = registry;
     }
 
-    /** Devuelve (o crea) la página asociada al path y le inyecta los @Param */
-    public HtmlComponent getPage(String path) {
-        return instances.computeIfAbsent(path, p -> {
-            RouteRegistry.Result res = registry.resolveWithInstance(p);
+    /** Devuelve (o crea) la página asociada al path y sesión, e inyecta los @Param */
+    public HtmlComponent getPage(String sessionId, String path) {
+        PageKey key = new PageKey(sessionId, path);
+        return instances.computeIfAbsent(key, p -> {
+            RouteRegistry.Result res = registry.resolveWithInstance(path);
             HtmlComponent comp = res.component();
             comp._injectParams(res.params());          // método package-private en HtmlComponent
-            paramsByPath.put(p, res.params());
+            paramsByPage.put(p, res.params());
             return comp;
         });
     }
 
-    /** Obtén los parámetros de ruta ya parseados (útil para @Call, etc.) */
-    public Map<String,String> getParams(String path) {
-        return paramsByPath.getOrDefault(path, Map.of());
+    /** Obtén los parámetros de ruta ya parseados para esa sesión+path (útil para @Call, etc.) */
+    public Map<String,String> getParams(String sessionId, String path) {
+        return paramsByPage.getOrDefault(new PageKey(sessionId, path), Map.of());
     }
 
-    /** Atajo para la home */
-    public HtmlComponent getHomePageInstance() {
-        return getPage("/");
+    /** Atajo para la home de una sesión concreta */
+    public HtmlComponent getHomePageInstance(String sessionId) {
+        return getPage(sessionId, "/");
     }
 
-    /** Opcional: limpiar cache si quieres forzar re-instalación de páginas dinámicas */
-    public void evict(String path) {
-    	 HtmlComponent inst =instances.remove(path);
-        paramsByPath.remove(path);
+    /** Limpia cache SOLO para la sesión + path concretos (ej. route-change) */
+    public void evict(String sessionId, String path) {
+        PageKey key = new PageKey(sessionId, path);
+        HtmlComponent inst = instances.remove(key);
+        paramsByPage.remove(key);
         if (inst != null) {
             inst._unmountRecursive();              // ← UNMOUNT aquí (en cascada)
         }

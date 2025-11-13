@@ -54,9 +54,12 @@ public class JReactiveApplication {
         }
 
         /** Lógica común de render. */
+        /** Lógica común de render. */
         private String render(HttpServletRequest req, String partial) {
             String path = req.getRequestURI();
-            HtmlComponent page = pageResolver.getPage(path);
+            String sessionId = req.getSession(true).getId();
+
+            HtmlComponent page = pageResolver.getPage(sessionId, path);
             String html = page.render();
 
             if (partial != null) return html;   // fragmento para la SPA
@@ -75,6 +78,7 @@ public class JReactiveApplication {
             """.formatted(html);
         }
 
+
         @PostMapping(
                 value     = "/call/{qualified:.+}",
                 consumes  = MediaType.APPLICATION_JSON_VALUE,
@@ -87,7 +91,10 @@ public class JReactiveApplication {
             // 1) reconstruir la página desde el Referer (fallback "/")
             String ref  = req.getHeader("Referer");
             String path = (ref == null) ? "/" : ref.replaceFirst("https?://[^/]+", "");
-            HtmlComponent page = pageResolver.getPage(path);
+            
+            String sessionId = req.getSession(true).getId();
+            
+            HtmlComponent page = pageResolver.getPage(sessionId, path);
 
             // 2) localizar método "CompId.metodo"
             var callables = collectCallables(page);
@@ -105,7 +112,7 @@ public class JReactiveApplication {
             Parameter[] params   = target.getParameters();
             Object[] args        = new Object[params.length];
 
-            Map<String,String> routeParams = pageResolver.getParams(path);
+            Map<String,String> routeParams = pageResolver.getParams(sessionId,path);
             if (routeParams == null) routeParams = Map.of();
 
             for (int i = 0; i < params.length; i++) {
@@ -122,11 +129,14 @@ public class JReactiveApplication {
                 args[i] = objectMapper.convertValue(raw, type);
             }
 
-            // 4-a) rate limit
-            if (!guard.tryConsume(qualified)) {
+            // 4-a) rate limit (por sesión + método)
+            String rateKey = sessionId + ":" + qualified;
+            if (!guard.tryConsume(rateKey)) {
                 return guard.errorJson("RATE_LIMIT",
                         "Demasiadas llamadas, inténtalo en un instante");
             }
+
+            
 
             // 4-b) Bean Validation
             try {

@@ -622,43 +622,56 @@ function parseValue(el) {
  *  buildValue  – ahora prioriza LO QUE HAY EN EL FORMULARIO
  *                 y sólo si no existe, recurre al estado
  * ────────────────────────────────────────────────────────────── */
-function buildValue(root) {
+function buildValue(nsRoot) {
 
-  /* 1) -------------  Campos de formulario -------------------- */
-  // 1-A) anidados / arrays   (address.street,  items[0].name …)
+  // 0) root lógico = última parte (ej. "HelloLeaf#1.order" → "order")
+  const logicalRoot = nsRoot.split('.').at(-1);
+
+  /* 1) --------- Campos de formulario (anidados / arrays) ---------- */
   const many = $$(
-    `[name^="${root}."], [name^="${root}["],` +      /* empieza con root */
-    `[name*=".${root}."], [name$=".${root}"]`        /* o termina en .root */
+    `[name^="${nsRoot}."], [name^="${nsRoot}["],` +      /* empieza con nsRoot */
+    `[name*=".${nsRoot}."], [name$=".${nsRoot}"]`        /* o termina en .nsRoot */
   );
 
   if (many.length) {
     const wrapper = {};
+
     many.forEach(f => {
-      const fullPath = f.name.slice(f.name.indexOf(root)); // corta antes de root
+      // buscamos la parte a partir de logicalRoot → "order.items[0].name"
+      const idx = f.name.indexOf(logicalRoot);
+      const fullPath = idx >= 0 ? f.name.slice(idx) : f.name;
       setNestedProperty(wrapper, fullPath, parseValue(f));
     });
-    return wrapper[root];                                  // ← ¡lo que pidió @click!
+
+    // devolvemos exactamente wrapper.order (lo que esperaba el @Call)
+    return wrapper[logicalRoot];
   }
 
-  // 1-B) input simple  <input name="root">
-  const single = document.querySelector(`[name="${root}"]`);
+  /* 1-B) input simple  <input name="HelloLeaf#1.newFruit"> */
+  const single = document.querySelector(`[name="${nsRoot}"]`);
   if (single) return parseValue(single);
 
-  /* 2) -------------  Valor reactivo en el estado ------------- */
-  if (state[root] !== undefined) return structuredClone(state[root]);
-  const nsKey = Object.keys(state).find(k => k.endsWith('.' + root));
-  if (nsKey) return structuredClone(state[nsKey]);
+  /* 2) --------- Valor reactivo en el estado ------------------------ */
+  if (state[nsRoot] !== undefined) {
+    return structuredClone(state[nsRoot]);
+  }
 
-  /* 3) -------------  Literal JS en @click="{…}" -------------- */
-  try { return eval(`(${root})`); } catch (_) {}
+  // intentar por nombre lógico: algo que termine en ".order"
+  const nsKey = Object.keys(state).find(k => k.endsWith('.' + logicalRoot));
+  if (nsKey) {
+    return structuredClone(state[nsKey]);
+  }
 
-  /* 4) -------------  Números / booleanos --------------------- */
-  if (/^-?\d+(\.\d+)?$/.test(root)) return Number(root);
-  if (root === 'true')  return true;
-  if (root === 'false') return false;
+  /* 3) --------- Literal JS en @click="{…}" ------------------------- */
+  try { return eval(`(${nsRoot})`); } catch (_) {}
 
-  /* 5) -------------  Fallback: string tal cual --------------- */
-  return root;
+  /* 4) --------- Números / booleanos simples ------------------------ */
+  if (/^-?\d+(\.\d+)?$/.test(nsRoot)) return Number(nsRoot);
+  if (nsRoot === 'true')  return true;
+  if (nsRoot === 'false') return false;
+
+  /* 5) --------- Fallback: string tal cual -------------------------- */
+  return nsRoot;
 }
 
 
