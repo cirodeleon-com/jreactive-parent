@@ -145,15 +145,25 @@ public class JReactiveApplication {
                 return guard.errorJson("VALIDATION", ex.getMessage());
             }
 
-            // 5) invocar
+         // 5) invocar
             try {
                 Object result = target.invoke(owner, args);
-                return (result == null) ? "" : objectMapper.writeValueAsString(result);
+
+                Map<String,Object> envelope = new HashMap<>();
+                envelope.put("ok", true);
+                if (result != null) {
+                    envelope.put("result", result);
+                }
+                return objectMapper.writeValueAsString(envelope);
+
             } catch (Exception e) {
                 e.printStackTrace();
-                return guard.errorJson("INVOKE_ERROR",
-                        "Error al invocar " + qualified + ": " + e.getMessage());
+                return guard.errorJson(
+                        "INVOKE_ERROR",
+                        "Error al invocar " + qualified + ": " + e.getMessage()
+                );
             }
+
         }
 
         /* Recolecta todos los métodos @Call del árbol de componentes */

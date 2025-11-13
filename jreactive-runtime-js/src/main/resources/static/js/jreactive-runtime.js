@@ -685,26 +685,95 @@ function setupEventBindings() {
     if (el._jrxBound) return;
     el._jrxBound = true;
 
-    el.addEventListener(el.dataset.event || 'click', async () => {
+    const eventType = el.dataset.event || 'click';
+
+    el.addEventListener(eventType, async ev => {
+      // Opcional: evitar submit/recarga por defecto
+      if (ev && typeof ev.preventDefault === 'function') {
+        ev.preventDefault();
+      }
+
       const paramList = (el.dataset.param || '')
         .split(',')
         .map(p => p.trim())
         .filter(Boolean);
 
       const args = paramList.map(buildValue);
+      const qualified = el.dataset.call;  // sin encode todavía
 
-      const qualified = encodeURIComponent(el.dataset.call);
-      await fetch('/call/' + qualified, {
-        method: 'POST',
-        headers: {
-          'X-Requested-With': 'JReactive',
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ args })
-      });
+      let ok     = true;
+      let code   = null;
+      let error  = null;
+      let payload = null;
+
+      try {
+        const res  = await fetch('/call/' + encodeURIComponent(qualified), {
+          method: 'POST',
+          headers: {
+            'X-Requested-With': 'JReactive',
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ args })
+        });
+
+        const text = await res.text();
+        if (text) {
+          try {
+            payload = JSON.parse(text);
+          } catch (_) {
+            // Por si algún día devuelves texto plano
+            payload = text;
+          }
+        }
+
+        // Si HTTP no es 2xx, ya lo marcamos como error
+        if (!res.ok) {
+          ok = false;
+          error = res.statusText || ('HTTP ' + res.status);
+        }
+
+        // Si el backend envía nuestro envelope estándar
+        if (payload && typeof payload === 'object') {
+          if ('ok' in payload) {
+            ok = !!payload.ok;
+          }
+          if (!ok && 'error' in payload) {
+            error = payload.error;
+          }
+          if ('code' in payload) {
+            code = payload.code;
+          }
+        }
+
+      } catch (e) {
+        ok    = false;
+        error = e && e.message ? e.message : String(e);
+      }
+
+      const detail = {
+        element: el,
+        qualified,
+        args,
+        ok,
+        code,
+        error,
+        payload
+      };
+
+      // Evento genérico siempre
+      window.dispatchEvent(new CustomEvent('jrx:call', { detail }));
+
+      if (ok) {
+        window.dispatchEvent(new CustomEvent('jrx:call:success', { detail }));
+      } else {
+        window.dispatchEvent(new CustomEvent('jrx:call:error', { detail }));
+        // fallback mínimo para debug
+        console.error('[JReactive @Call error]', detail);
+      }
     });
   });
 }
+
 
 
 
@@ -750,6 +819,7 @@ function hydrateClickDirectives(root=document) {
   el.removeAttribute('@click');
 });
 }
+
 
 
 

@@ -50,8 +50,18 @@ public final class CallGuard {
     }
 
     public String errorJson(String code, String msg) {
-        try { return mapper.writeValueAsString(Map.of("error", msg, "code", code)); }
-        catch (Exception e) { return "{\"error\":\""+msg+"\",\"code\":\""+code+"\"}"; }
+        try {
+            return mapper.writeValueAsString(
+                Map.of(
+                    "ok",   false,
+                    "error", msg,
+                    "code",  code
+                )
+            );
+        } catch (Exception e) {
+            return "{\"ok\":false,\"error\":\"" + msg + "\",\"code\":\"" + code + "\"}";
+        }
     }
+
 }
 
