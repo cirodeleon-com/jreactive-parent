@@ -88,13 +88,25 @@ public class JReactiveApplication {
                                  @RequestBody Map<String, Object> body,
                                  HttpServletRequest req) {
 
-            // 1) reconstruir la página desde el Referer (fallback "/")
-            String ref  = req.getHeader("Referer");
-            String path = (ref == null) ? "/" : ref.replaceFirst("https?://[^/]+", "");
-            
-            String sessionId = req.getSession(true).getId();
-            
-            HtmlComponent page = pageResolver.getPage(sessionId, path);
+
+        	// 1) reconstruir la página desde el Referer (fallback "/")
+        	String ref  = req.getHeader("Referer");
+        	String path = (ref == null) ? "/" : ref.replaceFirst("https?://[^/]+", "");
+
+        	// 🔹 Normalizar: quitar query (?...) y hash (#...)
+        	int q = path.indexOf('?');
+        	if (q != -1) {
+        	    path = path.substring(0, q);
+        	}
+        	int hash = path.indexOf('#');
+        	if (hash != -1) {
+        	    path = path.substring(0, hash);
+        	}
+
+        	String sessionId = req.getSession(true).getId();
+
+        	HtmlComponent page = pageResolver.getPage(sessionId, path);
+
 
             // 2) localizar método "CompId.metodo"
             var callables = collectCallables(page);
