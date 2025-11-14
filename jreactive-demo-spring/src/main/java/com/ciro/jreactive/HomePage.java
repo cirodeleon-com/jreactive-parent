@@ -19,10 +19,11 @@ public class HomePage extends HtmlComponent {
 	      <div class="page">
 	        <a href="/two" data-router>Ir a otra página</a>
 	        <a href="/users/10" data-router>Ir a user página</a>
+	        <a href="/newStateTest" data-router>Ir a newStateTest página</a>
 	        <HelloLeaf />
 	        <HelloLeaf ref="hello"/>
 	        <ClockLeaf ref="reloj" :greet="hello.newFruit" /> 
-			<FireTestLeaf/>  
+			<FireTestLeaf/>   
 	      </div>
 	      """;
 	}

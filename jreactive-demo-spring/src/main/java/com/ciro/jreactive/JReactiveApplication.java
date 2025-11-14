@@ -178,21 +178,26 @@ public class JReactiveApplication {
 
         }
 
-        /* Recolecta todos los métodos @Call del árbol de componentes */
         private Map<String, Map.Entry<Method, HtmlComponent>> collectCallables(HtmlComponent root) {
             Map<String, Map.Entry<Method, HtmlComponent>> map = new HashMap<>();
             String compId = root.getId();
 
-            // propios
             for (var e : root.getCallableMethods().entrySet()) {
-                String key = compId + "." + e.getKey();
-                map.put(key, Map.entry(e.getValue(), root));
+                String methodName = e.getKey();
+                Method m          = e.getValue();
+
+                // 1) Clave completa (para hijos: HelloLeaf#1.addFruit)
+                map.put(compId + "." + methodName, Map.entry(m, root));
+
+                // 2) Clave corta (para la página raíz: addItem, resetList, changeTitle)
+                map.put(methodName, Map.entry(m, root));
             }
-            // hijos
+
             for (HtmlComponent child : root._children()) {
                 map.putAll(collectCallables(child));
             }
             return map;
         }
+
     }
 }

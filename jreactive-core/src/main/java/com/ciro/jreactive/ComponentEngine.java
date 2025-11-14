@@ -168,18 +168,38 @@ final class ComponentEngine {
                 /* Prefix para {{var}}, name="var", data-if/each="var" */
                 for (String key : leaf.bindings().keySet()) {
                     String esc = Pattern.quote(key);
-                    child = child
-                        .replaceAll("\\{\\{\\s*" + esc + "\\s*}}",
-                                    "{{" + ns + key + "}}")
-                        .replaceAll("name\\s*=\\s*\"" + esc + "\"",
-                                    "name=\"" + ns + key + "\"")
-                        .replaceAll("data-if\\s*=\\s*\"" + esc + "\"",
-                                    "data-if=\"" + ns + key + "\"")
-                        .replaceAll("data-each\\s*=\\s*\"" + esc + ":",
-                                    "data-each=\"" + ns + key + ":")
-                        .replaceAll("data-param\\s*=\\s*\"" + esc + "\"", "data-param=\"" + ns + key + "\"")
-                        ;
+
+                    // 1️⃣  {{ key }}  y  {{ key.algo.loquesea }}
+                    child = child.replaceAll(
+                        "\\{\\{\\s*" + esc + "([^}]*)}}",
+                        "{{" + ns + key + "$1}}"
+                    );
+
+                    // 2️⃣ name="key"
+                    child = child.replaceAll(
+                        "name\\s*=\\s*\"" + esc + "\"",
+                        "name=\"" + ns + key + "\""
+                    );
+
+                    // 3️⃣ data-if="key"
+                    child = child.replaceAll(
+                        "data-if\\s*=\\s*\"" + esc + "\"",
+                        "data-if=\"" + ns + key + "\""
+                    );
+
+                    // 4️⃣ data-each="key:alias"
+                    child = child.replaceAll(
+                        "data-each\\s*=\\s*\"" + esc + ":",
+                        "data-each=\"" + ns + key + ":"
+                    );
+
+                    // 5️⃣ data-param="key"
+                    child = child.replaceAll(
+                        "data-param\\s*=\\s*\"" + esc + "\"",
+                        "data-param=\"" + ns + key + "\""
+                    );
                 }
+
                 
                 if (refAlias != null) {
                     // elimina  ref="alias"  solo en la PRIMERA ocurrencia del hijo
@@ -282,34 +302,7 @@ final class ComponentEngine {
         m2.appendTail(sb);
         html = sb.toString();
     
-        /*
-        String rootNs = ctx.getId() + ".";
-
-     // aplica namespacing a TODOS los bindings en 'all'
-     for (String fullKey : all.keySet()) {
-         // el nombre simple es la parte después del último '.'
-         String simple = fullKey.substring(fullKey.lastIndexOf('.') + 1);
-         String esc    = Pattern.quote(simple);
-
-         // name="foo" → name="ComponentId.foo"
-         html = html.replaceAll(
-           "\\bname\\s*=\\s*\"" + esc + "\"",
-           "name=\"" + rootNs + fullKey + "\""
-         );
-
-         // data-param="foo" → data-param="ComponentId.foo"
-         html = html.replaceAll(
-           "\\bdata-param\\s*=\\s*\"" + esc + "\"",
-           "data-param=\"" + rootNs + fullKey + "\""
-         );
-
-         // ref="foo" → ref="ComponentId.foo"
-         html = html.replaceAll(
-           "\\bref\\s*=\\s*\"" + esc + "\"",
-           "ref=\"" + rootNs + fullKey + "\""
-         );
-     }
-    */
+       
 
         Rendered rendered = new Rendered(html, all);
         

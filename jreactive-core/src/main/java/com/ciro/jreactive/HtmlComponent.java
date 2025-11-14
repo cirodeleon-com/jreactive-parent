@@ -92,29 +92,49 @@ public abstract class HtmlComponent extends ViewLeaf {
 
     private void buildBindings() {
         map = new HashMap<>();
-        for (Field f : getClass().getDeclaredFields()) {
-            Bind ann = f.getAnnotation(Bind.class);
-            if (ann == null) continue;
 
-            f.setAccessible(true);
-            try {
-                Object raw = f.get(this);
+        Class<?> c = getClass();
+        while (c != null && c != Object.class) {
+            for (Field f : c.getDeclaredFields()) {
+                Bind bindAnn   = f.getAnnotation(Bind.class);
+                State stateAnn = f.getAnnotation(State.class);
 
-                ReactiveVar<?> rx =
-                        (raw instanceof ReactiveVar<?> r) ? r :
-                        (raw instanceof Type<?> v)        ? v.rx() :
-                                                            new ReactiveVar<>(raw);
-                
-                rx.setActiveGuard(() -> _state() == ComponentState.MOUNTED);
+                if (bindAnn == null && stateAnn == null) continue;
 
-                String key = ann.value().isBlank() ? f.getName() : ann.value();
-                map.put(key, rx);
+                f.setAccessible(true);
+                try {
+                    Object raw = f.get(this);
 
-            } catch (IllegalAccessException e) {
-                throw new RuntimeException(e);
+                    ReactiveVar<?> rx;
+                    if (bindAnn != null) {
+                        // comportamiento actual de @Bind
+                        rx =
+                            (raw instanceof ReactiveVar<?> r) ? r :
+                            (raw instanceof Type<?> v)        ? v.rx() :
+                                                                 new ReactiveVar<>(raw);
+
+                        String key = bindAnn.value().isBlank() ? f.getName() : bindAnn.value();
+                        rx.setActiveGuard(() -> _state() == ComponentState.MOUNTED);
+                        map.put(key, rx);
+                    }
+
+                    if (stateAnn != null) {
+                        // @State siempre envuelve el valor tal cual en un ReactiveVar
+                        ReactiveVar<Object> srx = new ReactiveVar<>(raw);
+                        srx.setActiveGuard(() -> _state() == ComponentState.MOUNTED);
+
+                        String key = stateAnn.value().isBlank() ? f.getName() : stateAnn.value();
+                        map.put(key, srx);
+                    }
+
+                } catch (IllegalAccessException e) {
+                    throw new RuntimeException(e);
+                }
             }
+            c = c.getSuperclass();
         }
     }
+
     
     
     public Map<String, Method> getCallableMethods() {
@@ -177,6 +197,43 @@ public abstract class HtmlComponent extends ViewLeaf {
         catch (Exception ignore) {}
         return raw;
     }
+    
+    @SuppressWarnings("unchecked")
+    protected void updateState(String fieldName) {
+        try {
+            // 1) localizar el Field real
+            Class<?> c = getClass();
+            Field found = null;
+            while (c != null && c != Object.class) {
+                for (Field f : c.getDeclaredFields()) {
+                    if (f.getName().equals(fieldName) && f.getAnnotation(State.class) != null) {
+                        found = f;
+                        break;
+                    }
+                }
+                if (found != null) break;
+                c = c.getSuperclass();
+            }
+            if (found == null) {
+                throw new IllegalArgumentException("No @State field named '" + fieldName + "' in " + getClass());
+            }
+
+            found.setAccessible(true);
+            Object currentValue = found.get(this);
+
+            ReactiveVar<Object> rx = (ReactiveVar<Object>) selfBindings().get(fieldName);
+            if (rx == null) {
+                throw new IllegalStateException("No ReactiveVar for @State '" + fieldName + "'");
+            }
+
+            // 2) dispara la notificación
+            rx.set(currentValue);
+
+        } catch (Exception e) {
+            throw new RuntimeException("Error updating @State '" + fieldName + "'", e);
+        }
+    }
+
 
 }
 

@@ -120,6 +120,13 @@ public final class TemplateProcessor extends AbstractProcessor {
             .map(Object::toString)
             .collect(Collectors.toSet());
         
+        Set<String> states = cls.getEnclosedElements().stream()
+        	    .filter(f -> f.getKind() == ElementKind.FIELD)
+        	    .filter(f -> f.getAnnotation(com.ciro.jreactive.State.class) != null)
+        	    .map(Element::getSimpleName)
+        	    .map(Object::toString)
+        	    .collect(Collectors.toSet());
+        
         /* ---- Incluye también Bindings de sub-componentes vivos -------------
          *   • Cualquier {{Componente/>}} se resolverá a Componente#n.<bind>
          *   • Sólo necesitamos el "root" (antes del punto) para la verificación
@@ -131,26 +138,41 @@ public final class TemplateProcessor extends AbstractProcessor {
             .collect(Collectors.toSet());
 
         /* Unión de roots del propio componente + hijos conocidos */
-        Set<String> allRoots = Stream.concat(binds.stream(), childRoots.stream())
-                                     .collect(Collectors.toSet());
+        /* Unión de roots del propio componente + hijos conocidos */
+        Set<String> allRoots = Stream.concat(
+                Stream.concat(binds.stream(), states.stream()),
+                childRoots.stream()
+        ).collect(Collectors.toSet());
+
 
 
         // 6. Validar que cada {{var}} esté en @Bind
         for (String v : vars) {
-            String simple = v.contains(".")
-                          ? v.substring(v.lastIndexOf('.') + 1)
-                          : v;
-            if ("this".equals(simple)) continue;  // ignorar {{this}}
-            if ("size".equals(simple) || "length".equals(simple)) continue;
-            if (!binds.contains(simple)) {
+            // v puede ser: "name", "user", "user.name", "user.address.city"
+            if ("this".equals(v)) continue;
+
+            String[] parts = v.split("\\.");
+            String root = parts[0];
+            String last = parts[parts.length - 1];
+
+            // tamaños / helpers
+            if ("size".equals(last) || "length".equals(last)) continue;
+
+            boolean ok =
+                binds.contains(v)      ||   // {{orders}} donde orders es @Bind
+                binds.contains(last)   ||   // compat antiguo ({{greet}})
+                states.contains(root);      // {{user.*}} donde user es @State
+
+            if (!ok) {
                 processingEnv.getMessager().printMessage(
                     Diagnostic.Kind.ERROR,
-                    "Variable '{{" + simple + "}}' no declarada con @Bind en "
+                    "Variable '{{" + v + "}}' no declarada con @Bind o @State en "
                       + cls.getSimpleName(),
                     tpl
                 );
             }
         }
+
         
      // --- 4·bis  Valida props enlazados ----------------------------------
         Matcher p = PROP_BIND_PATTERN.matcher(bodySrc);

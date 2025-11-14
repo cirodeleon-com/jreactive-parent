@@ -34,31 +34,52 @@ function escapeHtml(str) {
  *  Resuelve expresiones con “.”  +  size / length
  * --------------------------------------------------------- */
 function resolveExpr(expr) {
-  // Util: escapa solo si es string (números, booleanos y null salen tal cual)
   const safe = v => (typeof v === 'string' ? escapeHtml(v) : v ?? '');
 
-  /* 0) — clave exacta ------------------------------------------------ */
+  // match exacto
   if (expr in state) return safe(state[expr]);
 
-  /* 1) — navegación por puntos -------------------------------------- */
-  const parts    = expr.split('.');
-  const rootKey  = parts[0];
+  const parts = expr.split('.');
+  if (parts.length === 0) return '';
 
-  /* 1-A)  equivale a ClockLeaf#3.greet  →  greet                    */
-  let stateKey = rootKey in state
-               ? rootKey
-               : Object.keys(state).find(k => k.endsWith('.' + rootKey));
+  // 1) Buscar la clave de estado MÁS LARGA que sea prefijo
+  //    ej. expr = "FireTestLeaf#5.orders.size"
+  //        stateKey = "FireTestLeaf#5.orders"
+  let stateKey = null;
+  let idxStart = 0;
+
+  for (let i = parts.length; i > 0; i--) {
+    const candidate = parts.slice(0, i).join('.');
+    if (candidate in state) {
+      stateKey = candidate;
+      idxStart = i;
+      break;
+    }
+  }
+
+  // 2) Fallback de compatibilidad (root / sufijo)
+  if (!stateKey) {
+    const rootKey = parts[0];
+    if (rootKey in state) {
+      stateKey = rootKey;
+      idxStart = 1;
+    } else {
+      const found = Object.keys(state).find(k => k.endsWith('.' + rootKey));
+      if (found) {
+        stateKey = found;
+        idxStart = 1;
+      }
+    }
+  }
 
   if (!stateKey) return '';
 
   let value = state[stateKey];
 
-  /* 1-B)  profundiza en la ruta ------------------------------------- */
-  for (let i = 1; i < parts.length; i++) {
+  for (let i = idxStart; i < parts.length; i++) {
     const p = parts[i];
-    if (value == null) return '';
 
-    /* tamaños -------------------------------------------------------- */
+    // tamaños
     if (p === 'size' || p === 'length') {
       if (Array.isArray(value) || typeof value === 'string') return value.length;
       if (value && typeof value === 'object') {
@@ -69,11 +90,13 @@ function resolveExpr(expr) {
       return '0';
     }
 
-    /* navegación normal --------------------------------------------- */
-    value = value?.[p];
+    value = value == null ? undefined : value[p];
   }
+
   return safe(value);
 }
+
+
 
 
 
@@ -290,11 +313,12 @@ function updateEachBlocks() {
     //  listKey = Object.keys(state).find(k => k.endsWith('.' + rawKey)) || rawKey;
     //}
     
-    const [listKey, alias] = tpl.dataset.each.split(':');
-    
-    
-    
-    const data = Array.isArray(state[listKey]) ? state[listKey] : [];
+    const [listExpr, alias] = tpl.dataset.each.split(':');
+
+// puede ser "FireTestLeaf#1.orders" o "user.orders"
+    let raw = resolveExpr(listExpr);
+    const data = Array.isArray(raw) ? raw : [];
+
 
     /* 2 · sentinelas & mapas ---------------------------------------- */
     if (!tpl._start) {
@@ -530,16 +554,32 @@ function reindexBindings() {
     reG.lastIndex = 0;
 
     for (const m of tpl.matchAll(reG)) {
-      const expr   = m[1];                    // ej. "reloj.clock" o "orders.size"
-      const parts  = expr.split('.');
-      const root   = parts[0];                // "reloj" / "orders"
-      const simple = parts[parts.length - 1]; // "clock" / "size"
+  const expr   = m[1];                    // ej. "FireTestLeaf#5.orders.size"
+  const parts  = expr.split('.');
+  const root   = parts[0];
+  const simple = parts[parts.length - 1];
 
-      // Indexamos con varias claves para ser flexibles
-      [expr, root, simple].forEach(key => {
-        (bindings.get(key) || bindings.set(key, []).get(key)).push(node);
-      });
+  const keys = new Set();
+
+  // expresión completa
+  keys.add(expr);
+  // raíz y último segmento
+  keys.add(root);
+  keys.add(simple);
+
+  // 🔥 prefijos: "FireTestLeaf#5", "FireTestLeaf#5.orders"
+  if (parts.length > 1) {
+    for (let i = 1; i < parts.length; i++) {
+      const prefix = parts.slice(0, i + 1).join('.');
+      keys.add(prefix);
     }
+  }
+
+  keys.forEach(key => {
+    (bindings.get(key) || bindings.set(key, []).get(key)).push(node);
+  });
+}
+
   }
 
   // Inputs: name / id = clave
@@ -784,41 +824,39 @@ function setupEventBindings() {
  * Convierte todos los  @click="método(arg1,arg2)"
  *            → data-call / data-param una sola pasada
  * ───────────────────────────────────────────────────────── */
-function hydrateClickDirectives(root=document) {
-  /*
+function hydrateClickDirectives(root = document) {
   root.querySelectorAll('[\\@click]').forEach(el => {
-    const value = el.getAttribute('@click');           // ej. addFruit(newFruit)
-    const m     = value.match(/^(\w+)\s*\((.*)\)$/);
-    if (!m) return;                                    // formato no reconocido
+    if (el._jrxClickHydrated) return;
+    el._jrxClickHydrated = true;
 
-    const [, method, raw] = m;
-    const params = raw
-        .split(',')
-        .map(p => p.trim().replace(/^['"]|['"]$/g, '')) // quita comillas
-        .filter(Boolean)
-        .join(',');
+    const value = el.getAttribute('@click');
+    if (!value) return;
 
-    el.setAttribute('data-call',  method);
-    el.setAttribute('data-event', 'click');
-    if (params) el.setAttribute('data-param', params);
+    let compId = null;
+    let method = null;
+    let rawArgs = "";
+
+    // 1) Forma completa: Componente#1.metodo(arg1,arg2)
+    let m = value.match(/^([\w#.-]+)\.([\w]+)\((.*)\)$/);
+    if (m) {
+      compId  = m[1];
+      method  = m[2];
+      rawArgs = m[3].trim();
+    } else {
+      // 2) Forma corta: metodo(arg1,arg2)  (páginas raíz como NewStateTestPage)
+      m = value.match(/^([\w]+)\((.*)\)$/);
+      if (!m) return; // formato raro, lo ignoramos
+      method  = m[1];
+      rawArgs = m[2].trim();
+    }
+
+    const qualified = compId ? `${compId}.${method}` : method;
+    el.setAttribute('data-call', qualified);
+    if (rawArgs) el.setAttribute('data-param', rawArgs);
     el.removeAttribute('@click');
   });
-  */
- root.querySelectorAll('[\\@click]').forEach(el => {
-  const value = el.getAttribute('@click');
-  // captura "componente.metodo(par1,par2)"
-  const m = value.match(/^([\w#-]+)\.([\w]+)\((.*)\)$/);
-  if (!m) return;
-  const compId   = m[1];            // ej. "hello" o "HelloLeaf#1"
-  const method   = m[2];            // ej. "addFruit"
-  const rawArgs  = m[3].trim();     // ej. "hello.newFruit" o ""
-  // define data-call como "compId.metodo"
-  el.setAttribute('data-call', `${compId}.${method}`);
-  // si hay args, los pasamos como data-param
-  if (rawArgs) el.setAttribute('data-param', rawArgs);
-  el.removeAttribute('@click');
-});
 }
+
 
 
 
