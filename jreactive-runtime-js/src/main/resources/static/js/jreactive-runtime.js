@@ -495,6 +495,8 @@ async function loadRoute(path = location.pathname) {
 
   app.style.visibility = 'hidden';
   app.innerHTML = html;
+  
+  executeInlineScripts(app);
 
   reindexBindings();
 
@@ -961,6 +963,29 @@ function applyValidationErrors(violations) {
     if (!input.title) {
       input.title = msg;
     }
+  });
+}
+
+
+function executeInlineScripts(root) {
+  root.querySelectorAll('script').forEach(oldScript => {
+    const newScript = document.createElement('script');
+
+    if (oldScript.src) {
+      // scripts con src (poco probable en tus templates, pero soportado)
+      newScript.src = oldScript.src;
+    } else {
+      // scripts inline
+      newScript.textContent = oldScript.textContent;
+    }
+
+    // opcional: copiar tipo o atributos si los usaras
+    if (oldScript.type) {
+      newScript.type = oldScript.type;
+    }
+
+    document.head.appendChild(newScript);
+    oldScript.remove();
   });
 }
 
