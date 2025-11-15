@@ -159,18 +159,20 @@ public final class TemplateProcessor extends AbstractProcessor {
             if ("size".equals(last) || "length".equals(last)) continue;
 
             boolean ok =
-                binds.contains(v)      ||   // {{orders}} donde orders es @Bind
-                binds.contains(last)   ||   // compat antiguo ({{greet}})
-                states.contains(root);      // {{user.*}} donde user es @State
+            	    binds.contains(v)      ||   // {{orders}} donde orders es @Bind
+            	    binds.contains(last)   ||   // compat antiguo ({{greet}})
+            	    states.contains(root)  ||   // {{user.*}} donde user es @State
+            	    "store".equals(root);       // ✅ root mágico global
 
-            if (!ok) {
-                processingEnv.getMessager().printMessage(
-                    Diagnostic.Kind.ERROR,
-                    "Variable '{{" + v + "}}' no declarada con @Bind o @State en "
-                      + cls.getSimpleName(),
-                    tpl
-                );
-            }
+            	if (!ok) {
+            	    processingEnv.getMessager().printMessage(
+            	        Diagnostic.Kind.ERROR,
+            	        "Variable '{{" + v + "}}' no declarada con @Bind, @State o store.* en "
+            	          + cls.getSimpleName(),
+            	        tpl
+            	    );
+            	}
+
         }
 
         
@@ -182,8 +184,10 @@ public final class TemplateProcessor extends AbstractProcessor {
                                               : expr;
 
             boolean ok = allRoots.contains(root)      // @Bind propio o hijo
-                      || root.equals("this");         // alias genérico
+                    || root.equals("this")          // alias genérico
+                    || root.equals("store");        // ✅ store.* permitido en props
 
+            
             if (!ok) {
                 processingEnv.getMessager().printMessage(
                     Diagnostic.Kind.ERROR,

@@ -9,6 +9,42 @@
 window.__jrxState    = state;
 window.__jrxBindings = bindings;
 
+const globalState     = Object.create(null);   // estado global logical: user, theme, etc.
+const storeListeners  = new Map();  
+
+const Store = {
+  set(key, value) {
+    globalState[key] = value;
+
+    const fullKey = `store.${key}`;
+
+    // Reutilizamos la misma mecánica que el WS
+    applyStateForKey(fullKey, value);
+
+    const listeners = storeListeners.get(key);
+    if (listeners) listeners.forEach(fn => {
+      try { fn(value); } catch (e) { console.error(e); }
+    });
+  },
+
+  get(key) {
+    return globalState[key];
+  },
+
+  bind(key, fn) {
+    if (!storeListeners.has(key)) {
+      storeListeners.set(key, []);
+    }
+    storeListeners.get(key).push(fn);
+
+    // Notifica inmediatamente si ya hay valor
+    if (globalState[key] !== undefined) {
+      try { fn(globalState[key]); } catch (e) { console.error(e); }
+    }
+  }
+};
+
+
   
   
   let ws = null;
@@ -408,53 +444,19 @@ function connectWs(path) {
     if (e.code !== 1000) setTimeout(() => connectWs(currentPath), 1000);
   };
 
-ws.onmessage = ({ data }) => {
-  const pkt   = JSON.parse(data);
-  const batch = Array.isArray(pkt) ? pkt : [pkt];
+  ws.onmessage = ({ data }) => {
+    const pkt   = JSON.parse(data);
+    const batch = Array.isArray(pkt) ? pkt : [pkt];
 
-  console.log('[WS RX NORMALIZED]', batch);
+    console.log('[WS RX NORMALIZED]', batch);
 
-  batch.forEach(({ k, v }) => {
-    // 1) Actualizamos estado
-    state[k] = v;
-
-    // 2) Buscamos nodos enlazados a esa clave
-    let nodes = bindings.get(k);
-
-    // 2-bis) Si no hay, reindexamos e intentamos de nuevo
-    if (!nodes || !nodes.length) {
-      reindexBindings();
-      hydrateClickDirectives();
-      setupEventBindings();
-      nodes = bindings.get(k);
-    }
-
-    // 2-ter) Si sigue sin haber, probamos con la parte simple (después del último ".")
-    if (!nodes || !nodes.length) {
-      const simple = k.split('.').at(-1);   // ej. "orders" de "FireTestLeaf#1.orders"
-      nodes = bindings.get(simple);
-    }
-
-    // 3) Pintamos
-    (nodes || []).forEach(el => {
-      if (el.nodeType === Node.TEXT_NODE) {
-        renderText(el);
-      } else if (el.type === 'checkbox' || el.type === 'radio') {
-        el.checked = !!v;
-      } else {
-        el.value = v ?? '';
-      }
+    batch.forEach(({ k, v }) => {
+      // 👇 ahora delegamos todo a la función helper
+      applyStateForKey(k, v);
     });
-  });
-
-  // 4) Actualiza if/each después de aplicar valores
-  updateIfBlocks();
-  updateEachBlocks();
-};
-
-
-
+  };
 }
+
 
 
 
@@ -857,8 +859,62 @@ function hydrateClickDirectives(root = document) {
   });
 }
 
+function applyStateForKey(k, v) {
+  // 1) Actualizamos estado principal
+  state[k] = v;
+
+  // 🧠 Si es algo tipo "StoreTestPage#1.store",
+  //     replicamos sus hijos como store.ui, store.user, ...
+  const parts = k.split('.');
+  const last  = parts.at(-1);
+
+  if (last === 'store' && v && typeof v === 'object') {
+    Object.entries(v).forEach(([childKey, childVal]) => {
+      // Ej: "store.ui", "store.user"
+      const globalKey = `store.${childKey}`;
+      applyStateForKey(globalKey, childVal);
+    });
+  }
+
+  // 2) Buscamos nodos enlazados a esa clave
+  let nodes = bindings.get(k);
+
+  // 2-bis) Si no hay, reindexamos e intentamos de nuevo
+  if (!nodes || !nodes.length) {
+    reindexBindings();
+    hydrateClickDirectives();
+    setupEventBindings();
+    nodes = bindings.get(k);
+  }
+
+  // 2-ter) Si sigue sin haber, probamos con la parte simple (después del último ".")
+  if (!nodes || !nodes.length) {
+    const simple = k.split('.').at(-1);   // ej. "orders" de "FireTestLeaf#1.orders"
+    nodes = bindings.get(simple);
+  }
+
+  // 3) Pintamos
+  (nodes || []).forEach(el => {
+    if (el.nodeType === Node.TEXT_NODE) {
+      renderText(el);
+    } else if (el.type === 'checkbox' || el.type === 'radio') {
+      el.checked = !!v;
+    } else {
+      el.value = v ?? '';
+    }
+  });
+
+  // 4) Actualiza if/each después de aplicar valores
+  updateIfBlocks();
+  updateEachBlocks();
+}
 
 
+
+
+
+window.JRX = window.JRX || {};
+window.JRX.Store = Store;
 
 
 
