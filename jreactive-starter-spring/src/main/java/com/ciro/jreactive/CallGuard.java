@@ -3,6 +3,8 @@ package com.ciro.jreactive;
 import java.time.Duration;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.Set;
+import org.springframework.stereotype.Component;
 
 import jakarta.validation.ConstraintViolation;
 import jakarta.validation.Validator;
@@ -17,6 +19,7 @@ import io.github.bucket4j.Bucket;
 
 
 /** Guarda los @Call:  Bean Validation + rate‑limit por método. */
+@Component
 public final class CallGuard {
 
     private static final int RATE = 60;                   // 10 peticiones / seg
@@ -31,14 +34,19 @@ public final class CallGuard {
         this.mapper    = mapper;
     }
 
-    public void validateParams(Object target, java.lang.reflect.Method m, Object[] args) {
-        var viol = validator.forExecutables()
-                            .validateParameters(target, m, args);
-        if (!viol.isEmpty()) {
-            ConstraintViolation<?> v = viol.iterator().next();
-            throw new IllegalArgumentException(v.getMessage());
-        }
+    public Set<ConstraintViolation<Object>> validateParams(
+            Object target,
+            java.lang.reflect.Method m,
+            Object[] args
+    ) {
+        @SuppressWarnings("unchecked")
+        Set<ConstraintViolation<Object>> viol =
+                (Set<ConstraintViolation<Object>>) (Set<?>)
+                        validator.forExecutables().validateParameters(target, m, args);
+
+        return viol; // JReactiveApplication decidirá qué hacer con ellas
     }
+
 
     /* true si todavía está dentro del límite */
     public boolean tryConsume(String key) {
@@ -48,6 +56,14 @@ public final class CallGuard {
                       .build());
         return b.tryConsume(1);
     }
+    
+    /** De "register.form.name" → "form.name" (para el front) */
+    private static String extractFieldPath(String propertyPath) {
+        if (propertyPath == null) return "";
+        int dot = propertyPath.indexOf('.');
+        return (dot < 0) ? propertyPath : propertyPath.substring(dot + 1);
+    }
+
 
     public String errorJson(String code, String msg) {
         try {
@@ -62,6 +78,42 @@ public final class CallGuard {
             return "{\"ok\":false,\"error\":\"" + msg + "\",\"code\":\"" + code + "\"}";
         }
     }
+    
+    public String validationJson(Set<ConstraintViolation<Object>> violations) {
+        // Mensaje global (el primero)
+        String global = violations.stream()
+            .findFirst()
+            .map(ConstraintViolation::getMessage)
+            .orElse("Datos inválidos");
+
+        // Lista detallada para el front
+        var list = violations.stream()
+            .map(v -> Map.of(
+                "param",      v.getPropertyPath().toString(), // "register.form.name"
+                "path",       extractFieldPath(v.getPropertyPath().toString()), // "form.name"
+                "message",    v.getMessage(),
+                "constraint", v.getConstraintDescriptor()
+                               .getAnnotation()
+                               .annotationType()
+                               .getSimpleName()
+            ))
+            .toList();
+
+        try {
+            return mapper.writeValueAsString(
+                Map.of(
+                    "ok",         false,
+                    "code",       "VALIDATION",
+                    "error",      global,
+                    "violations", list
+                )
+            );
+        } catch (Exception e) {
+            // Si algo falla serializando, al menos devolvemos un error simple
+            return errorJson("VALIDATION", global);
+        }
+    }
+
 
 }
 

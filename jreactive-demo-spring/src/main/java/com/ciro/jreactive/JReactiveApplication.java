@@ -151,10 +151,10 @@ public class JReactiveApplication {
             
 
             // 4-b) Bean Validation
-            try {
-                guard.validateParams(owner, target, args);
-            } catch (IllegalArgumentException ex) {
-                return guard.errorJson("VALIDATION", ex.getMessage());
+            var violations = guard.validateParams(owner, target, args);
+            if (!violations.isEmpty()) {
+                // devolvemos JSON estándar de validación
+                return guard.validationJson(violations);
             }
 
          // 5) invocar

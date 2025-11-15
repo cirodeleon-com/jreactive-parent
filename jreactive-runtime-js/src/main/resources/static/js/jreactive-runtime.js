@@ -734,6 +734,8 @@ function setupEventBindings() {
       if (ev && typeof ev.preventDefault === 'function') {
         ev.preventDefault();
       }
+      
+      clearValidationErrors();
 
       const paramList = (el.dataset.param || '')
         .split(',')
@@ -801,6 +803,11 @@ function setupEventBindings() {
         error,
         payload
       };
+
+      if (!ok && code === 'VALIDATION' &&
+         payload && Array.isArray(payload.violations)) {
+         applyValidationErrors(payload.violations);
+      }
 
       // Evento genérico siempre
       window.dispatchEvent(new CustomEvent('jrx:call', { detail }));
@@ -909,6 +916,53 @@ function applyStateForKey(k, v) {
   updateEachBlocks();
 }
 
+/* ──────────────────────────────────────────────────────────────
+ *  Helpers de validación (Bean Validation → inputs HTML)
+ * ────────────────────────────────────────────────────────────── */
+
+/** Limpia errores previos marcados por JReactive */
+function clearValidationErrors() {
+  $$('input,textarea,select').forEach(el => {
+    if (!el.dataset.jrxError) return;
+
+    el.classList.remove('jrx-error');
+    delete el.dataset.jrxError;
+
+    if (typeof el.setCustomValidity === 'function') {
+      el.setCustomValidity('');
+    }
+  });
+}
+
+/** Aplica errores de Bean Validation sobre los inputs */
+function applyValidationErrors(violations) {
+  if (!Array.isArray(violations)) return;
+
+  violations.forEach(v => {
+    //const name = v.param || v.path;
+    const name = v.path || v.param;
+    if (!name) return;
+
+    const msg = v.message || 'Dato inválido';
+
+    const input = document.querySelector(`[name="${name}"]`);
+    if (!input) return;
+
+    input.dataset.jrxError = 'true';
+    input.classList.add('jrx-error');
+
+    if (typeof input.setCustomValidity === 'function') {
+      input.setCustomValidity(msg);
+      // opcional: muestra el tooltip nativo del navegador
+      input.reportValidity();
+    }
+
+    // si no tiene title, lo usamos como hint
+    if (!input.title) {
+      input.title = msg;
+    }
+  });
+}
 
 
 

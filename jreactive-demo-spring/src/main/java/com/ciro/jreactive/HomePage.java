@@ -21,6 +21,7 @@ public class HomePage extends HtmlComponent {
 	        <a href="/users/10" data-router>Ir a user página</a>
 	        <a href="/newStateTest" data-router>Ir a newStateTest página</a>
 	        <a href="/store-test" data-router>Ir a globalStateTest página</a>
+	        <a href="/signup" data-router>Ir a signup página</a>
 	        <HelloLeaf />
 	        <HelloLeaf ref="hello"/>
 	        <ClockLeaf ref="reloj" :greet="hello.newFruit" /> 
