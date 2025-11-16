@@ -257,58 +257,47 @@ final class ComponentEngine {
 
         /* 2-C) CONVERSIÓN {{#if}} / {{#each}} → <template …> ---------*/
         String html = out.toString();
-        
-        html = IF_ELSE_BLOCK.matcher(out.toString())
-        	      .replaceAll("<template data-if=\"$1\">$2</template><template data-else=\"$1\">$3</template>");
 
+        // Bloques {{#if ...}} ... {{else}} ... {{/if}}
+        html = IF_ELSE_BLOCK.matcher(html)
+                .replaceAll(
+                    "<template data-if=\"$1\">$2</template>" +
+                    "<template data-else=\"$1\">$3</template>"
+                );
 
+        // Bloques {{#if ...}} ... {{/if}} simples
         html = IF_BLOCK.matcher(html)
                 .replaceAll("<template data-if=\"$1\">$2</template>");
 
         /* 2-D) CONVERSIÓN {{#each key [as alias]}} → <template data-each="key:alias"> */
-
-     // 2-D) CONVERSIÓN {{#each key [as alias]}} → <template data-each="key:alias">
         Matcher m2 = EACH_BLOCK.matcher(html);
         StringBuffer sb = new StringBuffer();
         while (m2.find()) {
-            String rawKey = m2.group(1);            // "fruits"
-            String alias  = m2.group(2) != null
-                            ? m2.group(2)
-                            : "this";              // "fruit"
-            String body   = m2.group(3);
+            // Ejemplos:
+            //   {{#each orders as ord}}        → listExpr = "orders", alias = "ord"
+            //   {{#each state.items as it}}    → listExpr = "state.items", alias = "it"
+            String listExpr = m2.group(1).trim();
+            String alias    = (m2.group(2) != null)
+                                ? m2.group(2).trim()
+                                : "this";   // alias por defecto
 
-            // 1) Intentamos extraer el namespace inspeccionando los {{alias}} del body
-            Pattern pAlias = Pattern.compile("\\{\\{\\s*([\\w#.-]+)\\." + alias + "\\s*\\}\\}");
-            Matcher mAlias = pAlias.matcher(body);
-
-            String listKey;
-            if (mAlias.find()) {
-                // ej. mAlias.group(1) == "hello" o "HelloLeaf#1"
-                listKey = mAlias.group(1) + "." + rawKey;
-            } else {
-                // fallback — en caso de que no encontremos alias (poco probable)
-                listKey = all.keySet().stream()
-                             .filter(k -> k.endsWith("." + rawKey))
-                             .findAny()
-                             .orElse(rawKey);
-            }
+            String body     = m2.group(3);
 
             String tpl = String.format(
                 "<template data-each=\"%s:%s\">%s</template>",
-                listKey, alias, body
+                listExpr, alias, body
             );
             m2.appendReplacement(sb, Matcher.quoteReplacement(tpl));
         }
         m2.appendTail(sb);
         html = sb.toString();
-    
-       
 
         Rendered rendered = new Rendered(html, all);
-        
+
         ctx._mountRecursive();
 
         return rendered;
+
 
     }
     

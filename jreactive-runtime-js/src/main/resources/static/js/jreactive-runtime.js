@@ -334,27 +334,19 @@ function resolveInContext(expr, alias, item) {
 
 
 /* ------------------------------------------------------------------
- *  #each con diff incremental (keyed) + soporte data-if / data-else
+ *  #each con diff incremental (keyed) + soporte anidado con alias
  * ------------------------------------------------------------------ */
 function updateEachBlocks() {
   document.querySelectorAll('template[data-each]').forEach(tpl => {
 
     /* 1 · clave de la lista y alias ---------------------------------- */
-    //const [rawKey, rawAlias] = tpl.dataset.each.split(':').map(s => s.trim());
-    //const alias = rawAlias || 'this';
+    const [listExprRaw, aliasRaw] = tpl.dataset.each.split(':');
+    const listExpr = listExprRaw ? listExprRaw.trim() : '';
+    const alias    = aliasRaw ? aliasRaw.trim() : 'this';
 
-    // Resuelve llave real (namespaced)
-    //let listKey = rawKey;
-    //if (!(listKey in state)) {
-    //  listKey = Object.keys(state).find(k => k.endsWith('.' + rawKey)) || rawKey;
-    //}
-    
-    const [listExpr, alias] = tpl.dataset.each.split(':');
-
-// puede ser "FireTestLeaf#1.orders" o "user.orders"
+    // Puede ser "FireTestLeaf#1.orders" o "user.orders" o "ord.items"
     let raw = resolveExpr(listExpr);
     const data = Array.isArray(raw) ? raw : [];
-
 
     /* 2 · sentinelas & mapas ---------------------------------------- */
     if (!tpl._start) {
@@ -374,10 +366,75 @@ function updateEachBlocks() {
 
       /* 3-a) si no existía, renderiza nodos */
       if (!entry) {
-        const html  = renderTemplate(tpl.innerHTML, item, idx, alias); // helper
-        const nodes = htmlToNodes(html);                               // helper
+        const html  = renderTemplate(tpl.innerHTML, item, idx, alias);
+        const nodes = htmlToNodes(html);        // [Node, Node, ...]
 
-        /* ---- evalúa data-if / data-else en contexto del alias ---- */
+        /* ---- 3-a-1) #each anidados que usan el alias padre -------- */
+        nodes.forEach(n => {
+          if (n.nodeType !== 1) return; // no es ELEMENT_NODE
+
+          n.querySelectorAll?.('template[data-each]').forEach(innerTpl => {
+            const cfg = (innerTpl.dataset.each || '').split(':');
+            const innerListExprRaw = (cfg[0] || '').trim();
+            const innerAliasRaw    = (cfg[1] || '').trim();
+            const innerAlias       = innerAliasRaw || 'this';
+
+            // Solo procesamos los que hacen referencia al alias padre:
+            //   ord.items
+            //   ord.algo
+            if (!innerListExprRaw ||
+                (innerListExprRaw !== alias &&
+                 !innerListExprRaw.startsWith(alias + '.'))) {
+              // este #each NO depende del alias padre → lo dejamos
+              return;
+            }
+
+            const innerData = resolveListInContext(innerListExprRaw, alias, item);
+            const innerFrag = document.createDocumentFragment();
+
+            innerData.forEach((childItem, childIdx) => {
+              const innerHtml  = renderTemplate(innerTpl.innerHTML, childItem, childIdx, innerAlias);
+              const innerNodes = htmlToNodes(innerHtml);
+
+              // #if / #else internos que usan el alias del hijo (it, item, etc.)
+              innerNodes.forEach(nn => {
+                if (nn.nodeType !== 1) return;
+                nn.querySelectorAll?.('template[data-if], template[data-else]')
+                  .forEach(t => {
+                    const cond   = t.dataset.if || t.dataset.else;
+                    const isElse = t.hasAttribute('data-else');
+
+                    let show;
+                    if (cond === innerAlias) {
+                      show = !!childItem;
+                    } else if (cond && cond.startsWith(innerAlias + '.')) {
+                      const path = cond.split('.').slice(1);
+                      let v = childItem;
+                      for (const key2 of path) {
+                        if (v == null) break;
+                        v = v[key2];
+                      }
+                      show = !!v;
+                    } else {
+                      // puede ser cond con el alias padre o global
+                      show = resolveInContext(cond, alias, item);
+                    }
+
+                    if ((show && !isElse) || (!show && isElse)) mount(t);
+                    else                                         unmount(t);
+                    t.remove();
+                  });
+              });
+
+              innerFrag.append(...innerNodes);
+            });
+
+            // Reemplazamos el <template data-each="ord.items:it"> por sus ítems
+            innerTpl.replaceWith(innerFrag);
+          });
+        });
+
+        /* ---- 3-a-2) evalúa data-if / data-else en contexto del alias padre ---- */
         nodes.forEach(n => {
           if (n.nodeType === 1) {   // ELEMENT_NODE
             n.querySelectorAll?.('template[data-if], template[data-else]')
@@ -987,6 +1044,42 @@ function executeInlineScripts(root) {
     document.head.appendChild(newScript);
     oldScript.remove();
   });
+}
+
+function resolveInContext(expr, alias, item) {
+  // a) alias solo  →  truthy si item es truthy
+  if (expr === alias) return !!item;
+
+  // b) alias.prop1.prop2
+  if (expr.startsWith(alias + '.')) {
+    const path = expr.split('.').slice(1);
+    return !!path.reduce((acc, k) => acc?.[k], item);
+  }
+  // c) fallback global (usa state como antes)
+  return evalCond(expr);
+}
+
+// Resuelve data-each en contexto del alias de un #each padre
+function resolveListInContext(listExpr, alias, item) {
+  // 1) data-each="alias"  → el propio item, si es array
+  if (listExpr === alias) {
+    return Array.isArray(item) ? item : [];
+  }
+
+  // 2) data-each="alias.algo.otro" → navegar el objeto item
+  if (listExpr.startsWith(alias + '.')) {
+    const path = listExpr.split('.').slice(1); // quitamos "alias"
+    let val = item;
+    for (const k of path) {
+      if (val == null) break;
+      val = val[k];
+    }
+    return Array.isArray(val) ? val : [];
+  }
+
+  // 3) fallback: lo resolvemos contra el estado global como antes
+  const globalVal = resolveExpr(listExpr);
+  return Array.isArray(globalVal) ? globalVal : [];
 }
 
 
