@@ -156,24 +156,47 @@ public class PageController {
         }
     }
 
-    private Map<String, Map.Entry<Method, HtmlComponent>> collectCallables(HtmlComponent root) {
+    /**
+     * Recoge todos los métodos @Call visibles para una página.
+     *
+     * Regla:
+     *  - La página raíz expone:
+     *      • "PageId.metodo"  (siempre)
+     *      • "metodo"         (nombre corto, sólo en la raíz)
+     *  - Los componentes hijos SÓLO exponen:
+     *      • "CompId.metodo"
+     *
+     * Así evitamos colisiones de nombres cortos entre hijos.
+     */
+    private Map<String, Map.Entry<Method, HtmlComponent>> collectCallables(HtmlComponent rootPage) {
         Map<String, Map.Entry<Method, HtmlComponent>> map = new HashMap<>();
-        String compId = root.getId();
+        collectCallables(rootPage, rootPage, map);
+        return map;
+    }
 
-        for (var e : root.getCallableMethods().entrySet()) {
+    private void collectCallables(HtmlComponent rootPage,
+                                  HtmlComponent current,
+                                  Map<String, Map.Entry<Method, HtmlComponent>> map) {
+
+        String compId = current.getId();
+
+        for (var e : current.getCallableMethods().entrySet()) {
             String methodName = e.getKey();
             Method m          = e.getValue();
 
-            // 1) Clave completa (para hijos: HelloLeaf#1.addFruit)
-            map.put(compId + "." + methodName, Map.entry(m, root));
+            // 1) Clave completa SIEMPRE (HelloLeaf#1.addFruit, NewStateTestPage#1.addItem, etc.)
+            map.put(compId + "." + methodName, Map.entry(m, current));
 
-            // 2) Clave corta (para la página raíz: addItem, resetList, changeTitle)
-            map.put(methodName, Map.entry(m, root));
+            // 2) Clave corta SOLO si es la página raíz
+            if (current == rootPage) {
+                map.put(methodName, Map.entry(m, current));
+            }
         }
 
-        for (HtmlComponent child : root._children()) {
-            map.putAll(collectCallables(child));
+        // Recorremos hijos recursivamente, pero SIN registrar nombres cortos
+        for (HtmlComponent child : current._children()) {
+            collectCallables(rootPage, child, map);
         }
-        return map;
     }
+
 }
