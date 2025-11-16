@@ -198,6 +198,7 @@ public abstract class HtmlComponent extends ViewLeaf {
         return raw;
     }
     
+
     @SuppressWarnings("unchecked")
     protected void updateState(String fieldName) {
         try {
@@ -221,9 +222,19 @@ public abstract class HtmlComponent extends ViewLeaf {
             found.setAccessible(true);
             Object currentValue = found.get(this);
 
-            ReactiveVar<Object> rx = (ReactiveVar<Object>) selfBindings().get(fieldName);
+            // 🔥 aquí viene el cambio importante:
+            State stateAnn = found.getAnnotation(State.class);
+            if (stateAnn == null) {
+                throw new IllegalStateException("Field '" + fieldName + "' is not annotated with @State");
+            }
+
+            String bindingKey = stateAnn.value().isBlank()
+                    ? found.getName()
+                    : stateAnn.value();
+
+            ReactiveVar<Object> rx = (ReactiveVar<Object>) selfBindings().get(bindingKey);
             if (rx == null) {
-                throw new IllegalStateException("No ReactiveVar for @State '" + fieldName + "'");
+                throw new IllegalStateException("No ReactiveVar for @State '" + bindingKey + "'");
             }
 
             // 2) dispara la notificación
@@ -233,7 +244,7 @@ public abstract class HtmlComponent extends ViewLeaf {
             throw new RuntimeException("Error updating @State '" + fieldName + "'", e);
         }
     }
-    
+
     
     
 

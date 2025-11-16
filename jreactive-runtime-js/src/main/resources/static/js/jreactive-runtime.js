@@ -69,55 +69,45 @@ function escapeHtml(str) {
 /* ---------------------------------------------------------
  *  Resuelve expresiones con “.”  +  size / length
  * --------------------------------------------------------- */
+
 function resolveExpr(expr) {
   const safe = v => (typeof v === 'string' ? escapeHtml(v) : v ?? '');
+  if (!expr) return '';
 
-  // match exacto
+  // 1) Si la expresión completa existe en el estado → devuélvela directo
   if (expr in state) return safe(state[expr]);
 
   const parts = expr.split('.');
   if (parts.length === 0) return '';
 
-  // 1) Buscar la clave de estado MÁS LARGA que sea prefijo
-  //    ej. expr = "FireTestLeaf#5.orders.size"
-  //        stateKey = "FireTestLeaf#5.orders"
-  let stateKey = null;
-  let idxStart = 0;
+  // 2) Buscar la clave de estado MÁS LARGA que sea prefijo exacto
+  //    ej. "HelloLeaf#1.orders.size"  → baseKey = "HelloLeaf#1.orders"
+  let baseKey = null;
+  let propsStartIdx = parts.length;
 
   for (let i = parts.length; i > 0; i--) {
     const candidate = parts.slice(0, i).join('.');
     if (candidate in state) {
-      stateKey = candidate;
-      idxStart = i;
+      baseKey       = candidate;
+      propsStartIdx = i;
       break;
     }
   }
 
-  // 2) Fallback de compatibilidad (root / sufijo)
-  if (!stateKey) {
-    const rootKey = parts[0];
-    if (rootKey in state) {
-      stateKey = rootKey;
-      idxStart = 1;
-    } else {
-      const found = Object.keys(state).find(k => k.endsWith('.' + rootKey));
-      if (found) {
-        stateKey = found;
-        idxStart = 1;
-      }
-    }
-  }
+  // Si no hay ninguna clave en el estado que sea prefijo exacto → vacío
+  if (!baseKey) return '';
 
-  if (!stateKey) return '';
+  let value = state[baseKey];
 
-  let value = state[stateKey];
-
-  for (let i = idxStart; i < parts.length; i++) {
+  // 3) Navegar propiedades restantes + size/length
+  for (let i = propsStartIdx; i < parts.length; i++) {
     const p = parts[i];
 
-    // tamaños
+    // tamaños especiales: .size / .length
     if (p === 'size' || p === 'length') {
-      if (Array.isArray(value) || typeof value === 'string') return value.length;
+      if (Array.isArray(value) || typeof value === 'string') {
+        return value.length;
+      }
       if (value && typeof value === 'object') {
         if (typeof value.length === 'number')   return value.length;
         if (typeof value.size   === 'number')   return value.size;
@@ -131,7 +121,6 @@ function resolveExpr(expr) {
 
   return safe(value);
 }
-
 
 
 
@@ -925,27 +914,10 @@ function hydrateClickDirectives(root = document) {
   });
 }
 
-function applyStateForKey(k, v) {
-  // 1) Actualizamos estado principal
-  state[k] = v;
-
-  // 🧠 Si es algo tipo "StoreTestPage#1.store",
-  //     replicamos sus hijos como store.ui, store.user, ...
-  const parts = k.split('.');
-  const last  = parts.at(-1);
-
-  if (last === 'store' && v && typeof v === 'object') {
-    Object.entries(v).forEach(([childKey, childVal]) => {
-      // Ej: "store.ui", "store.user"
-      const globalKey = `store.${childKey}`;
-      applyStateForKey(globalKey, childVal);
-    });
-  }
-
-  // 2) Buscamos nodos enlazados a esa clave
+function updateDomForKey(k, v) {
   let nodes = bindings.get(k);
 
-  // 2-bis) Si no hay, reindexamos e intentamos de nuevo
+  // Si no hay nodos enlazados, reindexamos una vez:
   if (!nodes || !nodes.length) {
     reindexBindings();
     hydrateClickDirectives();
@@ -953,13 +925,14 @@ function applyStateForKey(k, v) {
     nodes = bindings.get(k);
   }
 
-  // 2-ter) Si sigue sin haber, probamos con la parte simple (después del último ".")
+  // Si sigue sin haber, probamos con la parte simple (después del último ".")
   if (!nodes || !nodes.length) {
-    const simple = k.split('.').at(-1);   // ej. "orders" de "FireTestLeaf#1.orders"
-    nodes = bindings.get(simple);
+    const simple = k.split('.').at(-1);
+    if (simple !== k) {
+      nodes = bindings.get(simple);
+    }
   }
 
-  // 3) Pintamos
   (nodes || []).forEach(el => {
     if (el.nodeType === Node.TEXT_NODE) {
       renderText(el);
@@ -969,11 +942,41 @@ function applyStateForKey(k, v) {
       el.value = v ?? '';
     }
   });
+}
 
-  // 4) Actualiza if/each después de aplicar valores
+
+function applyStateForKey(k, v) {
+  // 1) Actualizamos estado principal
+  state[k] = v;
+
+  const parts = k.split('.');
+  const last  = parts.at(-1);
+
+  // 2) Alias corto universal para cualquier @State:
+  //    "HelloLeaf#1.orders"  →  state["orders"] = v
+  if (parts.length > 1) {
+    state[last] = v;
+  }
+
+  // 3) Caso especial store: "StoreTestPage#1.store" → store.ui, store.user...
+  if (last === 'store' && v && typeof v === 'object') {
+    Object.entries(v).forEach(([childKey, childVal]) => {
+      const globalKey = `store.${childKey}`;
+      applyStateForKey(globalKey, childVal);
+    });
+  }
+
+  // 4) Actualizar DOM para la clave completa y su alias corto
+  updateDomForKey(k, v);
+  if (parts.length > 1) {
+    updateDomForKey(last, v);
+  }
+
+  // 5) Re-evaluar if / each
   updateIfBlocks();
   updateEachBlocks();
 }
+
 
 /* ──────────────────────────────────────────────────────────────
  *  Helpers de validación (Bean Validation → inputs HTML)
@@ -1044,19 +1047,6 @@ function executeInlineScripts(root) {
     document.head.appendChild(newScript);
     oldScript.remove();
   });
-}
-
-function resolveInContext(expr, alias, item) {
-  // a) alias solo  →  truthy si item es truthy
-  if (expr === alias) return !!item;
-
-  // b) alias.prop1.prop2
-  if (expr.startsWith(alias + '.')) {
-    const path = expr.split('.').slice(1);
-    return !!path.reduce((acc, k) => acc?.[k], item);
-  }
-  // c) fallback global (usa state como antes)
-  return evalCond(expr);
 }
 
 // Resuelve data-each en contexto del alias de un #each padre
