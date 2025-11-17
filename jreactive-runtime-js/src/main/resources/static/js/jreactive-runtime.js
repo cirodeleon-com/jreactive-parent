@@ -517,7 +517,7 @@ document.addEventListener('DOMContentLoaded', () => {
   reindexBindings(); 	
   updateIfBlocks();
   updateEachBlocks();
-  hydrateClickDirectives();
+  hydrateEventDirectives();
   setupEventBindings();
   connectWs(window.location.pathname);
 });
@@ -557,7 +557,7 @@ async function loadRoute(path = location.pathname) {
 
   updateIfBlocks();
   updateEachBlocks();
-  hydrateClickDirectives(app);
+  hydrateEventDirectives(app);
   setupEventBindings();
 
   connectWs(path);
@@ -632,23 +632,39 @@ function reindexBindings() {
 
   }
 
-  // Inputs: name / id = clave
   $$('input,textarea,select').forEach(el => {
     const k = el.name || el.id;
     if (!k) return;
 
     (bindings.get(k) || bindings.set(k, []).get(k)).push(el);
 
-    if (el._jrxBound) return;
-    el._jrxBound = true;
+    // 🔹 Flag SOLO para el binding de input → WS
+    if (el._jrxInputBound) return;
+    el._jrxInputBound = true;
 
-    const evt = (el.type === 'checkbox' || el.type === 'radio') ? 'change' : 'input';
+    let evt;
+    if (el.type === 'checkbox' || el.type === 'radio' || el.type === 'file') {
+      evt = 'change';
+    } else {
+      evt = 'input';
+    }
+
     el.addEventListener(evt, () => {
       if (!ws || ws.readyState !== WebSocket.OPEN) return;
+
+      // ⚠️ Archivos grandes NO se mandan por WS en tiempo real.
+      if (el.type === 'file') {
+        const file = el.files && el.files[0];
+        const info = file ? file.name : null;
+        ws.send(JSON.stringify({ k, v: info }));
+        return;
+      }
+
       const v = (el.type === 'checkbox' || el.type === 'radio') ? el.checked : el.value;
       ws.send(JSON.stringify({ k, v }));
     });
   });
+
 
   console.log('[BINDINGS NOW]', [...bindings.keys()]);
 }
@@ -690,29 +706,33 @@ function setNestedProperty(obj, path, value) {
 function parseValue(el) {
   if (!el) return null;
 
-  /* checkbox / radio → boolean */
-  if (el.type === 'checkbox' || el.type === 'radio')
-      return !!el.checked;
-
-  /* number → Number o null si está vacío */
-  if (el.type === 'number')
-      return el.value === '' ? null : Number(el.value);
-
-  /* select[multiple] → array de option.value seleccionados */
-  if (el instanceof HTMLSelectElement && el.multiple) {
-      return [...el.selectedOptions].map(o => o.value);
+  // checkbox / radio → boolean
+  if (el.type === 'checkbox' || el.type === 'radio') {
+    return !!el.checked;
   }
 
-  /* resto → texto tal cual (string) */
+  // number → Number o null si está vacío
+  if (el.type === 'number') {
+    return el.value === '' ? null : Number(el.value);
+  }
+
+  // select[multiple] → array de option.value seleccionados
+  if (el instanceof HTMLSelectElement && el.multiple) {
+    return [...el.selectedOptions].map(o => o.value);
+  }
+
+  // resto → string tal cual
   return el.value;
 }
+
+
 
 
 /* ──────────────────────────────────────────────────────────────
  *  buildValue  – ahora prioriza LO QUE HAY EN EL FORMULARIO
  *                 y sólo si no existe, recurre al estado
  * ────────────────────────────────────────────────────────────── */
-function buildValue(nsRoot) {
+async function buildValue(nsRoot) {
 
   // 0) root lógico = última parte (ej. "HelloLeaf#1.order" → "order")
   const logicalRoot = nsRoot.split('.').at(-1);
@@ -726,12 +746,22 @@ function buildValue(nsRoot) {
   if (many.length) {
     const wrapper = {};
 
-    many.forEach(f => {
+    // 👇 importante: for..of para poder usar await adentro
+    for (const f of many) {
       // buscamos la parte a partir de logicalRoot → "order.items[0].name"
       const idx = f.name.indexOf(logicalRoot);
       const fullPath = idx >= 0 ? f.name.slice(idx) : f.name;
-      setNestedProperty(wrapper, fullPath, parseValue(f));
-    });
+
+      let value;
+      if (f.type === 'file') {
+        // aquí convertimos a JrxFile o array de JrxFile
+        value = await fileInputToJrx(f);
+      } else {
+        value = parseValue(f);
+      }
+
+      setNestedProperty(wrapper, fullPath, value);
+    }
 
     // devolvemos exactamente wrapper.order (lo que esperaba el @Call)
     return wrapper[logicalRoot];
@@ -739,17 +769,22 @@ function buildValue(nsRoot) {
 
   /* 1-B) input simple  <input name="HelloLeaf#1.newFruit"> */
   const single = document.querySelector(`[name="${nsRoot}"]`);
-  if (single) return parseValue(single);
+  if (single) {
+    if (single.type === 'file') {
+      return await fileInputToJrx(single);
+    }
+    return parseValue(single);
+  }
 
   /* 2) --------- Valor reactivo en el estado ------------------------ */
   if (state[nsRoot] !== undefined) {
-    return structuredClone(state[nsRoot]);
+    return deepClone(state[nsRoot]);
   }
 
   // intentar por nombre lógico: algo que termine en ".order"
   const nsKey = Object.keys(state).find(k => k.endsWith('.' + logicalRoot));
   if (nsKey) {
-    return structuredClone(state[nsKey]);
+    return deepClone(state[nsKey]);
   }
 
   /* 3) --------- Literal JS en @click="{…}" ------------------------- */
@@ -765,6 +800,43 @@ function buildValue(nsRoot) {
 }
 
 
+// Lee un File como base64 (sin el prefijo data:...)
+function readFileAsBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result || '';
+      const commaIdx = result.indexOf(',');
+      // nos quedamos solo con la parte base64 pura
+      const base64 = commaIdx >= 0 ? result.slice(commaIdx + 1) : result;
+      resolve(base64);
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+/**
+ * Convierte un <input type="file"> en:
+ *  - un objeto { filename, contentType, size, base64 } si es single
+ *  - un array de esos objetos si es multiple
+ */
+async function fileInputToJrx(el) {
+  const files = [...(el.files || [])];
+  if (!files.length) return null;
+
+  const mapped = await Promise.all(
+    files.map(async f => ({
+      name:    f.name,
+      contentType: f.type || 'application/octet-stream',
+      size:        f.size,
+      base64:      await readFileAsBase64(f)
+    }))
+  );
+
+  return el.multiple ? mapped : mapped[0] ?? null;
+}
+
 
 
 /* ------------------------------------------------------------------
@@ -772,8 +844,9 @@ function buildValue(nsRoot) {
  * ------------------------------------------------------------------ */
 function setupEventBindings() {
   $$('[data-call]').forEach(el => {
-    if (el._jrxBound) return;
-    el._jrxBound = true;
+    // 🔹 Flag separada SOLO para @Call
+    if (el._jrxCallBound) return;
+    el._jrxCallBound = true;
 
     const eventType = el.dataset.event || 'click';
 
@@ -782,7 +855,7 @@ function setupEventBindings() {
       if (ev && typeof ev.preventDefault === 'function') {
         ev.preventDefault();
       }
-      
+
       clearValidationErrors();
 
       const paramList = (el.dataset.param || '')
@@ -790,12 +863,17 @@ function setupEventBindings() {
         .map(p => p.trim())
         .filter(Boolean);
 
-      const args = paramList.map(buildValue);
-      const qualified = el.dataset.call;  // sin encode todavía
+      // 👇 ahora esperamos cada buildValue, por si hay archivos
+      const args = [];
+      for (const p of paramList) {
+        args.push(await buildValue(p));
+      }
 
-      let ok     = true;
-      let code   = null;
-      let error  = null;
+      const qualified = el.dataset.call;
+
+      let ok      = true;
+      let code    = null;
+      let error   = null;
       let payload = null;
 
       try {
@@ -820,7 +898,7 @@ function setupEventBindings() {
 
         // Si HTTP no es 2xx, ya lo marcamos como error
         if (!res.ok) {
-          ok = false;
+          ok    = false;
           error = res.statusText || ('HTTP ' + res.status);
         }
 
@@ -853,8 +931,8 @@ function setupEventBindings() {
       };
 
       if (!ok && code === 'VALIDATION' &&
-         payload && Array.isArray(payload.violations)) {
-         applyValidationErrors(payload.violations);
+          payload && Array.isArray(payload.violations)) {
+        applyValidationErrors(payload.violations);
       }
 
       // Evento genérico siempre
@@ -864,7 +942,6 @@ function setupEventBindings() {
         window.dispatchEvent(new CustomEvent('jrx:call:success', { detail }));
       } else {
         window.dispatchEvent(new CustomEvent('jrx:call:error', { detail }));
-        // fallback mínimo para debug
         console.error('[JReactive @Call error]', detail);
       }
     });
@@ -881,38 +958,58 @@ function setupEventBindings() {
  * Convierte todos los  @click="método(arg1,arg2)"
  *            → data-call / data-param una sola pasada
  * ───────────────────────────────────────────────────────── */
-function hydrateClickDirectives(root = document) {
-  root.querySelectorAll('[\\@click]').forEach(el => {
-    if (el._jrxClickHydrated) return;
-    el._jrxClickHydrated = true;
+/* ─────────────────────────────────────────────────────────
+ * Convierte directivas @click, @change, @input, @submit
+ *            → data-call / data-param / data-event
+ * ───────────────────────────────────────────────────────── */
+function hydrateEventDirectives(root = document) {
+  const EVENT_DIRECTIVES = ['click', 'change', 'input', 'submit'];
 
-    const value = el.getAttribute('@click');
-    if (!value) return;
+  EVENT_DIRECTIVES.forEach(evtName => {
+    const attr = '@' + evtName;
 
-    let compId = null;
-    let method = null;
-    let rawArgs = "";
+    root.querySelectorAll(`[\\${attr}]`).forEach(el => {
+      if (el._jrxEventHydrated) return;
+      el._jrxEventHydrated = true;
 
-    // 1) Forma completa: Componente#1.metodo(arg1,arg2)
-    let m = value.match(/^([\w#.-]+)\.([\w]+)\((.*)\)$/);
-    if (m) {
-      compId  = m[1];
-      method  = m[2];
-      rawArgs = m[3].trim();
-    } else {
-      // 2) Forma corta: metodo(arg1,arg2)  (páginas raíz como NewStateTestPage)
-      m = value.match(/^([\w]+)\((.*)\)$/);
-      if (!m) return; // formato raro, lo ignoramos
-      method  = m[1];
-      rawArgs = m[2].trim();
-    }
+      const value = el.getAttribute(attr);
+      if (!value) return;
 
-    const qualified = compId ? `${compId}.${method}` : method;
-    el.setAttribute('data-call', qualified);
-    if (rawArgs) el.setAttribute('data-param', rawArgs);
-    el.removeAttribute('@click');
+      let compId = null;
+      let method = null;
+      let rawArgs = '';
+
+      // 1) Forma completa: Componente#1.metodo(arg1,arg2)
+      let m = value.match(/^([\w#.-]+)\.([\w]+)\((.*)\)$/);
+      if (m) {
+        compId  = m[1];
+        method  = m[2];
+        rawArgs = m[3].trim();
+      } else {
+        // 2) Forma corta: metodo(arg1,arg2)
+        m = value.match(/^([\w]+)\((.*)\)$/);
+        if (!m) return; // formato raro, lo ignoramos
+        method  = m[1];
+        rawArgs = m[2].trim();
+      }
+
+      const qualified = compId ? `${compId}.${method}` : method;
+      el.setAttribute('data-call', qualified);
+
+      if (rawArgs) {
+        el.setAttribute('data-param', rawArgs);
+      }
+
+      // Si el dev no explicitó data-event, usamos el del atributo (@click, @change, etc.)
+      if (!el.dataset.event) {
+        el.dataset.event = evtName;
+      }
+
+      el.removeAttribute(attr);
+    });
   });
 }
+
 
 function updateDomForKey(k, v) {
   let nodes = bindings.get(k);
@@ -920,7 +1017,7 @@ function updateDomForKey(k, v) {
   // Si no hay nodos enlazados, reindexamos una vez:
   if (!nodes || !nodes.length) {
     reindexBindings();
-    hydrateClickDirectives();
+    hydrateEventDirectives();
     setupEventBindings();
     nodes = bindings.get(k);
   }
@@ -1071,6 +1168,14 @@ function resolveListInContext(listExpr, alias, item) {
   const globalVal = resolveExpr(listExpr);
   return Array.isArray(globalVal) ? globalVal : [];
 }
+
+function deepClone(obj) {
+  if (typeof structuredClone === 'function') {
+    return structuredClone(obj);
+  }
+  return JSON.parse(JSON.stringify(obj));
+}
+
 
 
 

@@ -131,18 +131,32 @@ public final class TemplateProcessor extends AbstractProcessor {
          *   • Cualquier {{Componente/>}} se resolverá a Componente#n.<bind>
          *   • Sólo necesitamos el "root" (antes del punto) para la verificación
          */
+     // 5. Roots de clases hijas (componentes internos)
         Set<String> childRoots = cls.getEnclosedElements().stream()
             .filter(e -> e.getKind() == ElementKind.CLASS)
             .map(Element::getSimpleName)
             .map(Object::toString)
             .collect(Collectors.toSet());
 
-        /* Unión de roots del propio componente + hijos conocidos */
-        /* Unión de roots del propio componente + hijos conocidos */
-        Set<String> allRoots = Stream.concat(
-                Stream.concat(binds.stream(), states.stream()),
-                childRoots.stream()
-        ).collect(Collectors.toSet());
+        // 6. Roots de alias ref="alias"
+        Matcher r  = REF_ALIAS_PATTERN.matcher(bodySrc);
+        Set<String> refs = new HashSet<>();
+        while (r.find()) {
+            String alias = r.group(1);
+            if (!refs.add(alias)) {
+                processingEnv.getMessager().printMessage(
+                    Diagnostic.Kind.ERROR,
+                    "Alias 'ref=\"" + alias + "\"' duplicado en el mismo template",
+                    tpl
+                );
+            }
+        }
+
+        // 7. Unión de todos los posibles “roots” válidos
+        Set<String> allRoots = Stream.of(binds, states, childRoots, refs)
+            .flatMap(Set::stream)
+            .collect(Collectors.toSet());
+
 
 
 
@@ -162,7 +176,8 @@ public final class TemplateProcessor extends AbstractProcessor {
             	    binds.contains(v)      ||   // {{orders}} donde orders es @Bind
             	    binds.contains(last)   ||   // compat antiguo ({{greet}})
             	    states.contains(root)  ||   // {{user.*}} donde user es @State
-            	    "store".equals(root);       // ✅ root mágico global
+            	    "store".equals(root)   ||
+            	    refs.contains(root);       // ✅ root mágico global
 
             	if (!ok) {
             	    processingEnv.getMessager().printMessage(
@@ -200,18 +215,7 @@ public final class TemplateProcessor extends AbstractProcessor {
         
         
      // --- 5  Rechaza alias ref duplicados --------------------------------
-        Matcher r  = REF_ALIAS_PATTERN.matcher(bodySrc);
-        Set<String> refs = new HashSet<>();
-        while (r.find()) {
-            String alias = r.group(1);
-            if (!refs.add(alias)) {
-                processingEnv.getMessager().printMessage(
-                    Diagnostic.Kind.ERROR,
-                    "Alias 'ref=\"" + alias + "\"' duplicado en el mismo template",
-                    tpl
-                );
-            }
-        }
+
 
 
     }
