@@ -16,11 +16,5 @@ public class WsResourcesConfig {
         return Executors.newSingleThreadScheduledExecutor();
     }
     
-    @Bean
-    CallGuard callGuard(jakarta.validation.Validator validator,
-                        ObjectMapper mapper) {
-        return new CallGuard(validator, mapper);
-    }
-
 }
 

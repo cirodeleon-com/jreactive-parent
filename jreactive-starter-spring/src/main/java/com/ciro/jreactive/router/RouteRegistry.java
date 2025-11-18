@@ -1,6 +1,7 @@
 package com.ciro.jreactive.router;
 
 import com.ciro.jreactive.HtmlComponent;
+import org.springframework.beans.factory.config.AutowireCapableBeanFactory;
 import org.springframework.context.ApplicationContext;
 import org.springframework.stereotype.Component;
 
@@ -10,7 +11,7 @@ import java.util.function.Supplier;
 /**
  * Registra rutas anotadas con {@link Route} y permite resolver
  * paths dinámicos como "/users/{id}" devolviendo:
- *  - una NUEVA instancia del componente
+ *  - una NUEVA instancia del componente (creada por Spring)
  *  - los valores de los parámetros extraídos del path
  */
 @Component
@@ -35,18 +36,18 @@ public class RouteRegistry {
     private final List<Entry> routes = new ArrayList<>();
 
     public RouteRegistry(ApplicationContext ctx) {
+        AutowireCapableBeanFactory beanFactory = ctx.getAutowireCapableBeanFactory();
+
         // Escanea todos los HtmlComponent registrados como beans
         ctx.getBeansOfType(HtmlComponent.class).values().forEach(bean -> {
             Route ann = bean.getClass().getAnnotation(Route.class);
             if (ann == null) return;
 
-            Supplier<HtmlComponent> sup = () -> {
-                try {
-                    return bean.getClass().getDeclaredConstructor().newInstance();
-                } catch (Exception e) {
-                    throw new RuntimeException("No puedo instanciar " + bean.getClass(), e);
-                }
-            };
+            Class<? extends HtmlComponent> clazz = bean.getClass();
+
+            // ✅ Cada instancia se crea a través de Spring (DI, @Autowired, @Value, etc.)
+            Supplier<HtmlComponent> sup = () -> beanFactory.createBean(clazz);
+
             routes.add(new Entry(ann.path(), sup));
         });
 

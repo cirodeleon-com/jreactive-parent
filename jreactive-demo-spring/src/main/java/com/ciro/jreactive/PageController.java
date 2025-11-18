@@ -70,6 +70,8 @@ public class PageController {
     public String callMethod(@PathVariable("qualified") String qualified,
                              @RequestBody Map<String, Object> body,
                              HttpServletRequest req) {
+    	
+    	 System.out.println("➡️ JRX CALL qualified=" + qualified + " body=" + body);
 
         // 1) reconstruir la página desde el Referer (fallback "/")
         String ref  = req.getHeader("Referer");

@@ -11,6 +11,9 @@ public class UploadTestPage extends HtmlComponent {
 
     @State
     JrxFile state = new JrxFile("","",0,"");
+    
+    @State
+    int clickCount = 0;
 
     
 
@@ -22,13 +25,15 @@ public class UploadTestPage extends HtmlComponent {
            
               <input type="file"
                    name="file"
-                   @change="handleUpload(file)" />
+                   @change="handleUpload(file)"
+                   @click="trackClick(file)" />
               
             
 
             <p>Último archivo: {{state.name}}</p>
             <p>Tamaño: {{state.size}}</p>
             <p>Content: {{state.base64}}</p>
+            <p><strong>Clicks en el input:</strong> {{clickCount}}</p>
             """;
     }
 
@@ -39,5 +44,13 @@ public class UploadTestPage extends HtmlComponent {
         }
         state = new JrxFile(file.name(),file.contentType(),file.size(),file.base64());
         updateState("state");  // dispara el re-render de {{state.*}}
+    }
+    
+    @Call
+    public void trackClick(JrxFile file) {
+        // el parámetro "file" aquí te puede llegar null la primera vez,
+        // pero no lo necesitamos; solo contamos clicks
+        clickCount++;
+        updateState("clickCount");
     }
 }

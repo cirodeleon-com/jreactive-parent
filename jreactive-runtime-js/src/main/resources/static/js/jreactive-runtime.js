@@ -843,16 +843,140 @@ async function fileInputToJrx(el) {
  *  NUEVA setupEventBindings (llamado desde DOMContentLoaded)
  * ------------------------------------------------------------------ */
 function setupEventBindings() {
-  $$('[data-call]').forEach(el => {
-    // 🔹 Flag separada SOLO para @Call
-    if (el._jrxCallBound) return;
-    el._jrxCallBound = true;
+  const EVENT_DIRECTIVES = ['click', 'change', 'input', 'submit'];
+
+  // 1) Soporte nuevo: varios eventos por elemento (data-callClick, data-callChange, etc.)
+  EVENT_DIRECTIVES.forEach(evtName => {
+    const capEvt = evtName.charAt(0).toUpperCase() + evtName.slice(1);
+
+    // atributo real en HTML: data-call-click → dataset.callClick
+    const selector = `[data-call-${evtName}]`;
+
+    $$(selector).forEach(el => {
+      const flag = `_jrxCallBound_${evtName}`;
+      if (el[flag]) return;
+      el[flag] = true;
+
+      const qualified = el.dataset[`call${capEvt}`];
+      const rawParams = el.dataset[`param${capEvt}`] || '';
+
+      const paramList = rawParams
+        .split(',')
+        .map(p => p.trim())
+        .filter(Boolean);
+
+      el.addEventListener(evtName, async ev => {
+        // 🔥 NO bloquear el click en <input type="file">
+        const isFileClick =
+          evtName === 'click' &&
+          ev.target instanceof HTMLInputElement &&
+          ev.target.type === 'file';
+
+        // Opcional: evitar submit/recarga por defecto
+        if (!isFileClick && ev && typeof ev.preventDefault === 'function') {
+          ev.preventDefault();
+        }
+
+        clearValidationErrors();
+
+        // 👇 Igual que antes: construir args con buildValue (soporta archivos)
+        const args = [];
+        for (const p of paramList) {
+          args.push(await buildValue(p));
+        }
+
+        let ok      = true;
+        let code    = null;
+        let error   = null;
+        let payload = null;
+
+        try {
+          const res  = await fetch('/call/' + encodeURIComponent(qualified), {
+            method: 'POST',
+            headers: {
+              'X-Requested-With': 'JReactive',
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ args })
+          });
+
+          const text = await res.text();
+          if (text) {
+            try {
+              payload = JSON.parse(text);
+            } catch (_) {
+              // Por si algún día devuelves texto plano
+              payload = text;
+            }
+          }
+
+          // Si HTTP no es 2xx, ya lo marcamos como error
+          if (!res.ok) {
+            ok    = false;
+            error = res.statusText || ('HTTP ' + res.status);
+          }
+
+          // Envelope estándar
+          if (payload && typeof payload === 'object') {
+            if ('ok' in payload) {
+              ok = !!payload.ok;
+            }
+            if (!ok && 'error' in payload) {
+              error = payload.error;
+            }
+            if ('code' in payload) {
+              code = payload.code;
+            }
+          }
+
+        } catch (e) {
+          ok    = false;
+          error = e && e.message ? e.message : String(e);
+        }
+
+        const detail = {
+          element: el,
+          qualified,
+          args,
+          ok,
+          code,
+          error,
+          payload
+        };
+
+        if (!ok && code === 'VALIDATION' &&
+            payload && Array.isArray(payload.violations)) {
+          applyValidationErrors(payload.violations);
+        }
+
+        // Evento genérico siempre
+        window.dispatchEvent(new CustomEvent('jrx:call', { detail }));
+
+        if (ok) {
+          window.dispatchEvent(new CustomEvent('jrx:call:success', { detail }));
+        } else {
+          window.dispatchEvent(new CustomEvent('jrx:call:error', { detail }));
+          console.error('[JReactive @Call error]', detail);
+        }
+      });
+
+    });
+  });
+
+  // 2) Soporte legacy (por si algún día tuvieras data-call + data-event a mano)
+    $$('[data-call]').forEach(el => {
+    if (el._jrxCallBoundLegacy) return;
+    el._jrxCallBoundLegacy = true;
 
     const eventType = el.dataset.event || 'click';
 
     el.addEventListener(eventType, async ev => {
-      // Opcional: evitar submit/recarga por defecto
-      if (ev && typeof ev.preventDefault === 'function') {
+      const isFileClick =
+        eventType === 'click' &&
+        ev.target instanceof HTMLInputElement &&
+        ev.target.type === 'file';
+
+      if (!isFileClick && ev && typeof ev.preventDefault === 'function') {
         ev.preventDefault();
       }
 
@@ -863,7 +987,6 @@ function setupEventBindings() {
         .map(p => p.trim())
         .filter(Boolean);
 
-      // 👇 ahora esperamos cada buildValue, por si hay archivos
       const args = [];
       for (const p of paramList) {
         args.push(await buildValue(p));
@@ -891,18 +1014,15 @@ function setupEventBindings() {
           try {
             payload = JSON.parse(text);
           } catch (_) {
-            // Por si algún día devuelves texto plano
             payload = text;
           }
         }
 
-        // Si HTTP no es 2xx, ya lo marcamos como error
         if (!res.ok) {
           ok    = false;
           error = res.statusText || ('HTTP ' + res.status);
         }
 
-        // Si el backend envía nuestro envelope estándar
         if (payload && typeof payload === 'object') {
           if ('ok' in payload) {
             ok = !!payload.ok;
@@ -935,7 +1055,6 @@ function setupEventBindings() {
         applyValidationErrors(payload.violations);
       }
 
-      // Evento genérico siempre
       window.dispatchEvent(new CustomEvent('jrx:call', { detail }));
 
       if (ok) {
@@ -946,9 +1065,8 @@ function setupEventBindings() {
       }
     });
   });
+
 }
-
-
 
 
 
@@ -965,18 +1083,26 @@ function setupEventBindings() {
 function hydrateEventDirectives(root = document) {
   const EVENT_DIRECTIVES = ['click', 'change', 'input', 'submit'];
 
-  EVENT_DIRECTIVES.forEach(evtName => {
-    const attr = '@' + evtName;
+  // Recorremos TODOS los elementos dentro de root
+  const all = (root === document ? document.body : root).querySelectorAll('*');
 
-    root.querySelectorAll(`[\\${attr}]`).forEach(el => {
-      if (el._jrxEventHydrated) return;
-      el._jrxEventHydrated = true;
+  all.forEach(el => {
+    // Set para evitar re-hidratar el mismo evento en el mismo elemento
+    const hydratedSet = el._jrxHydratedEvents || (el._jrxHydratedEvents = new Set());
+
+    EVENT_DIRECTIVES.forEach(evtName => {
+      const attr = '@' + evtName; // "@click", "@change", etc.
+
+      // Si no tiene ese atributo o ya lo hidratamos, saltamos
+      if (!el.hasAttribute(attr) || hydratedSet.has(evtName)) {
+        return;
+      }
 
       const value = el.getAttribute(attr);
       if (!value) return;
 
-      let compId = null;
-      let method = null;
+      let compId  = null;
+      let method  = null;
       let rawArgs = '';
 
       // 1) Forma completa: Componente#1.metodo(arg1,arg2)
@@ -994,21 +1120,22 @@ function hydrateEventDirectives(root = document) {
       }
 
       const qualified = compId ? `${compId}.${method}` : method;
-      el.setAttribute('data-call', qualified);
+      const capEvt    = evtName.charAt(0).toUpperCase() + evtName.slice(1);
 
+      // Creamos los data-* específicos por evento
+      //  click  → data-call-click / data-param-click
+      //  change → data-call-change / data-param-change
+      el.dataset[`call${capEvt}`] = qualified;
       if (rawArgs) {
-        el.setAttribute('data-param', rawArgs);
+        el.dataset[`param${capEvt}`] = rawArgs;
       }
 
-      // Si el dev no explicitó data-event, usamos el del atributo (@click, @change, etc.)
-      if (!el.dataset.event) {
-        el.dataset.event = evtName;
-      }
-
+      hydratedSet.add(evtName);
       el.removeAttribute(attr);
     });
   });
 }
+
 
 
 function updateDomForKey(k, v) {
