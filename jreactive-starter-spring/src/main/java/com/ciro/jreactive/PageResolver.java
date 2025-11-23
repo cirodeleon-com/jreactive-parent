@@ -55,4 +55,26 @@ public class PageResolver {
             inst._unmountRecursive();              // ← UNMOUNT aquí (en cascada)
         }
     }
+
+    /**
+     * Limpia TODAS las páginas asociadas a una sesión HTTP concreta.
+     * Se usa cuando la sesión se destruye (expira / logout, etc.).
+     */
+    public void evictAll(String sessionId) {
+        instances.entrySet().removeIf(entry -> {
+            PageKey key  = entry.getKey();
+            HtmlComponent inst = entry.getValue();
+
+            if (!key.sessionId().equals(sessionId)) {
+                return false; // dejamos esta entrada
+            }
+
+            // Eliminamos también parámetros y hacemos unmount del árbol
+            paramsByPage.remove(key);
+            if (inst != null) {
+                inst._unmountRecursive();
+            }
+            return true; // removeIf → borra esta entry
+        });
+    }
 }

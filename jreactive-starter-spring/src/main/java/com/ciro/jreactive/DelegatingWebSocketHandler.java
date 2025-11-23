@@ -71,7 +71,7 @@ public class DelegatingWebSocketHandler implements WebSocketHandler {
 
         // Sólo hacemos evict cuando cerramos por cambio de ruta,
         // y SOLO para esa sesión concreta
-        if (path != null && sessionId != null /* && "route-change".equals(status.getReason())*/) {
+        if (path != null && sessionId != null  && "route-change".equals(status.getReason())) {
             pageResolver.evict(sessionId, path);
         }
     }

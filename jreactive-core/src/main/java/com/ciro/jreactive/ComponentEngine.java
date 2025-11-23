@@ -6,41 +6,34 @@ import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.Optional;
 
-
 /** Resuelve etiquetas <Componente/> y convierte {{#if}} / {{#each}}. */
 final class ComponentEngine {
 
     /*─────────────────────────── 1. PATTERNS ───────────────────────────*/
-    //private static final Pattern TAG =
-    //    Pattern.compile("<\\s*([A-Z][A-Za-z0-9_]*)\\s*/>", Pattern.MULTILINE);
-    
- // Sustituye la línea que tenías por esta
+
+    // Captura el nombre del componente y todo lo que hay entre el nombre y "/>"
+    // Ej: <JInput field="x" :label="Nombre" />
     private static final Pattern TAG =
         Pattern.compile("<\\s*([A-Z][A-Za-z0-9_]*)([^/>]*)/>", Pattern.MULTILINE);
-
 
     private static final Pattern IF_BLOCK =
         Pattern.compile("\\{\\{#if\\s+([^}]+)}}([\\s\\S]*?)\\{\\{/if}}",
                         Pattern.MULTILINE);
-    
+
     /** {{#if cond}}true{{else}}false{{/if}} */
     private static final Pattern IF_ELSE_BLOCK =
         Pattern.compile(
           "\\{\\{#if\\s+([^}]+)}}([\\s\\S]*?)\\{\\{else}}([\\s\\S]*?)\\{\\{/if}}",
-          Pattern.MULTILINE);
+          Pattern.MULTILINE
+        );
 
-
- // 1) Captura opcionalmente "as alias"
- // 1) Captura opcional “as alias”
-    /** Captura '{{#each key [as alias]}}...{{/each}}' */
     /** Captura '{{#each key [as alias]}}...{{/each}}', permitiendo espacios antes de '}}' */
     private static final Pattern EACH_BLOCK =
         Pattern.compile(
           "\\{\\{#each\\s+([\\w#.-]+)(?:\\s+as\\s+(\\w+))?\\s*\\}\\}([\\s\\S]*?)\\{\\{\\/each\\s*\\}\\}",
           Pattern.MULTILINE
         );
-
-
+    
 
 
 
@@ -50,15 +43,18 @@ final class ComponentEngine {
 
     /*─────────────────────────── 2. RENDER ────────────────────────────*/
     static Rendered render(HtmlComponent ctx) {
-    	
-    	//ctx._children().clear();
-    	List<HtmlComponent> pool = new ArrayList<>(ctx._children()); // <<< MOD
-        ctx._children().clear(); 
 
-        /* 2-A) Procesar subcomponentes <ClockLeaf/> … -----------------*/
+        // Reutilización de hijos (para evitar re-instanciarlos siempre)
+        List<HtmlComponent> pool = new ArrayList<>(ctx._children());
+        ctx._children().clear();
+
+        /* 2-A) Procesar subcomponentes <ClockLeaf/>, <JInput/>, etc. --- */
         StringBuilder out = new StringBuilder();
         Map<String,ReactiveVar<?>> all = new HashMap<>();
+        
 
+        
+        // funcionalidad anterior solo con tag de cierre
         Matcher m = TAG.matcher(ctx.template());
         int cursor = 0;
 
@@ -66,106 +62,92 @@ final class ComponentEngine {
             out.append(ctx.template(), cursor, m.start());
 
             try {
-            	String className = m.group(1);
-            	
-            	// ─── Captura de atributos del tag  (ej.  ref="hello"  :greet="expr") ───
-            	String rawAttrs = m.group(2);                 // texto “ crudo ” entre el nombre y "/>"
-            	Map<String,String> attrMap = parseProps(rawAttrs);
-            	String refAlias  = attrMap.get("ref");        // null si no existe
+                String className = m.group(1);
 
+                // Texto "crudo" de atributos entre el nombre del componente y "/>"
+                String rawAttrs = m.group(2);
+                Map<String,String> attrMap = parseProps(rawAttrs);
+                String refAlias  = attrMap.get("ref");        // null si no existe
 
-            	/* ── A) Instancia / reutiliza según ref ───────────────────────────── */
-            	ViewLeaf leaf;
-
-            	if (refAlias != null) {
-            	    /* ---------- caso con ref explícito ---------- */
-            		leaf = pool.stream()
-            	               .filter(c -> refAlias.equals(c.getId()))
-            	               .map(c -> (ViewLeaf) c)
-            	               .findFirst()
-            	               .orElseGet(() -> {
-            	                   ViewLeaf f = newInstance(ctx, className);
-            	                   f.setId(refAlias);
-            	                   return f;
-            	               });
-
-            	    pool.removeIf(c -> c == leaf);
-            	} else {
-            	    /* ---------- SIN ref → intenta reutilizar ---------- */
-            		Optional<HtmlComponent> reused = pool.stream()
-            		        .filter(c -> c.getClass().getSimpleName().equals(className))
-            		        .findFirst();
-
-            		    if (reused.isPresent()) {
-            		        leaf = reused.get();           // mantiene HelloLeaf#1
-            		        pool.remove(reused.get());
-            		        leaf.setId(leaf.getId());
-            		    } else {
-            		        leaf = newInstance(ctx, className);   // primera vez
-            		        leaf.setId(leaf.getId());             // ← congelar id
-            		    }
-            	}
-
-            	/* vuelve a añadir el hijo en la posición correcta */
-            	if (leaf instanceof HtmlComponent hc) ctx._addChild(hc);
-
-
-            	
-
+             // 🔥 Capturamos un posible @click en el tag del componente
+                String delegatedClick = extractClickHandler(rawAttrs);
 
                 
-            	/* -----------------------------------------------------------
-            	 *  A)  Props  (literales y bindings de 1 nivel)
-            	 *      – ahora busca también en 'all' y deja el puente reactivo
-            	 * ----------------------------------------------------------- */
-            	Map<String,String> rawProps = parseProps(m.group(2));      // atributos del tag
-            	final Map<String,ReactiveVar<?>> allRx = all;              // acceso dentro lambda
+                /* ── A) Instancia / reutiliza según ref ───────────────────── */
+                ViewLeaf leaf;
 
-            	if (leaf instanceof HtmlComponent hc) {
-            	    Map<String,ReactiveVar<?>> childBinds = hc.selfBindings(); // asegura mapa
+                if (refAlias != null) {
+                    // Caso con ref explícito
+                    leaf = pool.stream()
+                               .filter(c -> refAlias.equals(c.getId()))
+                               .map(c -> (ViewLeaf) c)
+                               .findFirst()
+                               .orElseGet(() -> {
+                                   ViewLeaf f = newInstance(ctx, className);
+                                   f.setId(refAlias);
+                                   return f;
+                               });
 
-            	    rawProps.forEach((attr, val) -> {
-            	        boolean binding = attr.startsWith(":");         // :greet="expr"
-            	        String  prop    = binding ? attr.substring(1)   // greet
-            	                                  : attr;               // greet
+                    pool.removeIf(c -> c == leaf);
+                } else {
+                    // SIN ref → intenta reutilizar por clase
+                    Optional<HtmlComponent> reused = pool.stream()
+                        .filter(c -> c.getClass().getSimpleName().equals(className))
+                        .findFirst();
 
-            	        @SuppressWarnings("unchecked")
-            	        var target = (ReactiveVar<Object>) childBinds.get(prop);
-            	        if (target == null) return;                     // el hijo no declara @Bind
+                    if (reused.isPresent()) {
+                        leaf = (ViewLeaf) reused.get();   // mantiene id
+                        pool.remove(reused.get());
+                        leaf.setId(leaf.getId());
+                    } else {
+                        leaf = newInstance(ctx, className);   // primera vez
+                        leaf.setId(leaf.getId());             // congela id actual
+                    }
+                }
 
-            	        ReactiveVar<?> parentRx = null;
-            	        if (binding) {
-            	            /* ❶ intenta primero en los @Bind propios, luego en los hijos ya renderizados */
-            	            parentRx = ctx.selfBindings().get(val);
-            	            if (parentRx == null) parentRx = allRx.get(val);
-            	        }
+                // Vuelve a añadir el hijo en el árbol del padre
+                if (leaf instanceof HtmlComponent hc) ctx._addChild(hc);
 
-            	        Object value = (binding && parentRx != null) ? parentRx.get() : val;
-            	        target.set(value);
+                /* ── B) Props: literales y bindings de 1 nivel ───────────── */
+                Map<String,String> rawProps = parseProps(rawAttrs);
+                final Map<String,ReactiveVar<?>> allRx = all;
 
-            	        /* ❷ puente reactivo: si cambia el padre, actualiza el hijo */
-            	        if (binding && parentRx != null) {
-            	            parentRx.onChange(x -> target.set(x));
-            	        }
-            	    });
-            	}
-            	/* ───────────── FIN BLOQUE PROPS ───────────── */
+                if (leaf instanceof HtmlComponent hc) {
+                    Map<String,ReactiveVar<?>> childBinds = hc.selfBindings(); // asegura mapa
 
+                    rawProps.forEach((attr, val) -> {
+                        boolean binding = attr.startsWith(":");   // :greet="expr"
+                        String  prop    = binding ? attr.substring(1)
+                                                  : attr;
 
+                        @SuppressWarnings("unchecked")
+                        var target = (ReactiveVar<Object>) childBinds.get(prop);
+                        if (target == null) return;               // el hijo no declara @Bind
 
+                        ReactiveVar<?> parentRx = null;
+                        if (binding) {
+                            // intenta primero en los @Bind propios del padre
+                            parentRx = ctx.selfBindings().get(val);
+                            if (parentRx == null) parentRx = allRx.get(val);
+                        }
 
-                //String ns = leaf.getId() + ".";
-            	String ns = leaf.getId() + ".";
+                        Object value = (binding && parentRx != null) ? parentRx.get() : val;
+                        target.set(value);
 
+                        // puente reactivo: si cambia el padre, actualiza el hijo
+                        if (binding && parentRx != null) {
+                            parentRx.onChange(x -> target.set(x));
+                        }
+                    });
+                }
 
+                /* ── C) Render del hijo + namespacing ────────────────────── */
+                String ns = leaf.getId() + ".";
                 System.out.println("🔗 Renderizando componente con namespace: " + ns);
-
-
-                
 
                 String child = leaf.render();           // HTML del hijo
 
-                /* Prefix para {{var}}, name="var", data-if/each="var" */
+                // Prefix para {{var}}, name="var", data-if/each="var", data-param="var"
                 for (String key : leaf.bindings().keySet()) {
                     String esc = Pattern.quote(key);
 
@@ -200,49 +182,86 @@ final class ComponentEngine {
                     );
                 }
 
+                /* ── D) Interpolación de atributos estáticos -----------------
+                 *     placeholder="{{ns.key}}" → placeholder="valor"
+                 *     autocomplete="{{ns.key}}" → autocomplete="email", etc.
+                 */
+                for (var e : leaf.bindings().entrySet()) {
+                    String key        = e.getKey();
+                    ReactiveVar<?> rx = e.getValue();
+                    Object valObj     = rx.get();
+                    String val        = (valObj == null) ? "" : String.valueOf(valObj);
+
+                    String expr    = "{{" + ns + key + "}}";
+                    // buscamos EXACTAMENTE el placeholder dentro de un atributo: =" {{ns.key}} "
+                    String pattern = "=\"\\s*" + Pattern.quote(expr) + "\\s*\"";
+                    String replace = "=\"" + Matcher.quoteReplacement(val) + "\"";
+
+                    child = child.replaceAll(pattern, replace);
+                }
                 
+             // --- D2) Interpolación de texto puro: <option>{{ns.key}}</option> ---
+                for (var e : leaf.bindings().entrySet()) {
+                    String key        = e.getKey();
+                    ReactiveVar<?> rx = e.getValue();
+                    Object valObj     = rx.get();
+                    String val        = (valObj == null) ? "" : String.valueOf(valObj);
+
+                    String expr    = "{{" + ns + key + "}}";
+
+                    // 1) Atributos que son exactamente la expresión
+                    String attrPattern = "=\"\\s*" + Pattern.quote(expr) + "\\s*\"";
+                    String attrReplace = "=\"" + Matcher.quoteReplacement(val) + "\"";
+                    child = child.replaceAll(attrPattern, attrReplace);
+
+                    // 2) Nodos de texto cuyo contenido ES solo la expresión
+                    //    ej: <option> {{JSelect#34.placeholder}} </option>
+                    String textPattern = ">\\s*" + Pattern.quote(expr) + "\\s*<";
+                    String textReplace = ">" + Matcher.quoteReplacement(val) + "<";
+                    child = child.replaceAll(textPattern, textReplace);
+                }
+
+
+                /* ── E) Eliminar ref="alias" del HTML del hijo (solo 1ª vez) ─ */
                 if (refAlias != null) {
-                    // elimina  ref="alias"  solo en la PRIMERA ocurrencia del hijo
                     child = child.replaceFirst("\\s+ref=\""+Pattern.quote(refAlias)+"\"", "");
                 }
 
-                
-                
-                
-
-                //Pattern clickPat = Pattern.compile("@click=\"(\\w+)\\(([^)]*)\\)\"");
-                //Pattern clickPat = Pattern.compile("@click=\"([\\w#-]+)\\(([^)]*)\\)\"");
+                /* ── F) Namespacing de @click="method(args)" ----------------- */
                 Pattern clickPat = Pattern.compile("@click=['\"]([\\w#.-]+)\\(([^)]*)\\)['\"]");
-
                 Matcher clickM = clickPat.matcher(child);
                 StringBuffer sbClick = new StringBuffer();
                 while (clickM.find()) {
                     String method = clickM.group(1);
                     String args   = clickM.group(2).trim();
-                    // split on comma, prefix each with ns, rejoin
+
                     String namespacedArgs = Arrays.stream(args.split(","))
                         .map(String::trim)
                         .filter(s -> !s.isEmpty())
                         .map(a -> ns + a)
                         .collect(Collectors.joining(","));
+
                     String replacement = "@click=\"" + ns + method + "(" + namespacedArgs + ")\"";
                     clickM.appendReplacement(sbClick, Matcher.quoteReplacement(replacement));
                 }
                 clickM.appendTail(sbClick);
                 child = sbClick.toString();
+                
+             // 🔥 Reenvío del @click del padre al <button> del hijo
+                if (delegatedClick != null) {
+                    child = injectClickIntoRootButton(child, delegatedClick);
+                }
 
-                
-                
-                
+                /* ── G) Añadir HTML del hijo al resultado -------------------- */
                 out.append(child);
-                
+
                 if (refAlias != null) {
                     boolean dup = all.keySet().stream().anyMatch(k -> k.startsWith(ns));
                     if (dup)
                         throw new IllegalStateException("Duplicate ref alias '"+refAlias+"' inside parent component");
                 }
 
-                
+                // Acumula bindings del hijo namespaced
                 leaf.bindings().forEach((k,v)-> all.put(ns + k, v));
 
             } catch (Exception ex) {
@@ -255,7 +274,7 @@ final class ComponentEngine {
         /* 2-B) Bindings propios del componente padre -----------------*/
         all.putAll(ctx.selfBindings());
 
-        /* 2-C) CONVERSIÓN {{#if}} / {{#each}} → <template …> ---------*/
+        /* 2-C) Conversión {{#if}} / {{#each}} → <template …> ---------*/
         String html = out.toString();
 
         // Bloques {{#if ...}} ... {{else}} ... {{/if}}
@@ -269,17 +288,15 @@ final class ComponentEngine {
         html = IF_BLOCK.matcher(html)
                 .replaceAll("<template data-if=\"$1\">$2</template>");
 
-        /* 2-D) CONVERSIÓN {{#each key [as alias]}} → <template data-each="key:alias"> */
+        // Bloques {{#each key [as alias]}} → <template data-each="key:alias">
         Matcher m2 = EACH_BLOCK.matcher(html);
         StringBuffer sb = new StringBuffer();
         while (m2.find()) {
-            // Ejemplos:
-            //   {{#each orders as ord}}        → listExpr = "orders", alias = "ord"
-            //   {{#each state.items as it}}    → listExpr = "state.items", alias = "it"
             String listExpr = m2.group(1).trim();
-            String alias    = (m2.group(2) != null)
-                                ? m2.group(2).trim()
-                                : "this";   // alias por defecto
+            String alias = (m2.group(2) != null)
+                    ? m2.group(2).trim()
+                    : "this";
+
 
             String body     = m2.group(3);
 
@@ -294,25 +311,28 @@ final class ComponentEngine {
 
         Rendered rendered = new Rendered(html, all);
 
+        // Monta recursivamente este componente y sus hijos
         ctx._mountRecursive();
 
         return rendered;
-
-
     }
-    
+
     /** Convierte  foo="bar"  y  :foo="expr"  →  Map */
     private static Map<String,String> parseProps(String raw) {
         Map<String,String> map = new HashMap<>();
         if (raw == null) return map;
 
+        // Soporta nombres con o sin ":" al inicio (ej. field, :field)
         Matcher mm = Pattern.compile("(\\:?\\w+)\\s*=\\s*\"([^\"]*)\"").matcher(raw);
+        // Si en el futuro quieres soportar guiones: usar esta versión:
+        // Matcher mm = Pattern.compile("(:?[A-Za-z_][A-Za-z0-9_\\-]*)\\s*=\\s*\"([^\"]*)\"").matcher(raw);
+
         while (mm.find()) {
             map.put(mm.group(1), mm.group(2));
         }
         return map;
     }
-    
+
     /* ╭──────────────────────────────────────────────────────────────╮
      * │   Crea un componente por reflexión                           │
      * ╰──────────────────────────────────────────────────────────────╯ */
@@ -327,7 +347,32 @@ final class ComponentEngine {
         }
     }
 
+    
+    private static String extractClickHandler(String raw) {
+        if (raw == null) return null;
+        Matcher mm = Pattern.compile("@click\\s*=\\s*\"([^\"]*)\"").matcher(raw);
+        if (mm.find()) {
+            return mm.group(1); // ej. register(form)
+        }
+        return null;
+    }
 
+    /** Inyecta (o sustituye) un @click="..." en el primer <button ...> del hijo */
+    private static String injectClickIntoRootButton(String childHtml, String handler) {
+        if (handler == null || handler.isBlank()) return childHtml;
 
+        // 1) Quitar cualquier @click="..." que ya tenga el <button>
+        String withoutExisting = childHtml.replaceFirst("@click=['\"][^'\"]*['\"]", "");
+
+        // 2) Buscar el primer <button ...> e inyectar el nuevo @click
+        return withoutExisting.replaceFirst(
+            "<button(\\s*)",
+            "<button$1 @click=\"" + handler + "\" "
+        );
+    }
+
+    
     private ComponentEngine() {}   // util-class
+    
+    
 }

@@ -54,3 +54,6 @@ node_modules/
 .env
 
 # End of .gitignore
+
+# CodeContextualizer
+.codecontextualizerignore

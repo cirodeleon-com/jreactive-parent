@@ -6,14 +6,17 @@ import jakarta.validation.Valid;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
+
+import java.io.Serializable;
+
 import org.springframework.stereotype.Component;
 
 @Component
-@Route(path = "/signup")
-public class SignupPage extends HtmlComponent {
+@Route(path = "/signup2")
+public class SignupPage2 extends HtmlComponent {
 
     // 1) DTO con Bean Validation
-    public static class SignupForm {
+    public static class SignupForm implements Serializable {
 
         @NotBlank(message = "El nombre es obligatorio")
         public String name;
@@ -42,56 +45,52 @@ public class SignupPage extends HtmlComponent {
         state.lastMessage = "Usuario " + form.name + " registrado correctamente";
         updateState("state"); // empuja el nuevo estado al front
     }
-    
-    @Call
-    public void validar(@Valid SignupForm form) {
-        // Si la validación falla, NUNCA se entra aquí
-       
-    }
 
-    // 4) Plantilla: inputs con name="form.xxx" y click "register(form)"
     @Override
     protected String template() {
         return """
-            <section>
+            <section style="max-width: 420px; padding: 16px; font-family: system-ui;">
               <h1>Registro con Bean Validation</h1>
 
-              <div>
-                <label>
-                  Nombre:
-                  <input type="text"
-                  @input="validar(form)"
-                         name="form.name">
-                </label>
-              </div>
+              <form class="jrx-form">
+                <JInput
+                  :field="form.name"
+                  :label="Nombre"
+                  :type="text"
+                  :placeholder="Tu nombre"
+                  :required="true"
+                  :autocomplete="name"
+                />
 
-              <div>
-                <label>
-                  Correo:
-                  <input type="email"
-                  @input="validar(form)"
-                         name="form.email">
-                </label>
-              </div>
+                <JInput
+                  :field="form.email"
+                  :label="Correo"
+                  :type="email"
+                  :placeholder="correo@ejemplo.com"
+                  :required="true"
+                  :autocomplete="email"
+                />
 
-              <div>
-                <label>
-                  Contraseña:
-                  <input type="password"
-                  @input="validar(form)"
-                         name="form.password">
-                </label>
-              </div>
+                <JInput
+                  :field="form.password"
+                  :label="Contraseña"
+                  :type="password"
+                  :placeholder="Mínimo 8 caracteres"
+                  :required="true"
+                  :autocomplete="new-password"
+                />
 
-              <button type="button"
-                      @click="register(form)">
-                Registrarme
-              </button>
+                <JButton label="Registrarme" @click="register(form)" />
+              </form>
 
-              <p data-if="state.lastMessage">
-                {{state.lastMessage}}
-              </p>
+              <p>{{state.lastMessage}}</p>
             </section>
             """;
     }
+
+    
+
+
+
 }
+

@@ -40,8 +40,16 @@ public class PageController {
 
     /** Lógica común de render. */
     private String render(HttpServletRequest req, String partial) {
-        String path = req.getRequestURI();
+        String path      = req.getRequestURI();
         String sessionId = req.getSession(true).getId();
+
+        // 🔥 CLAVE:
+        // Si NO es un render parcial (es una carga completa / F5),
+        // tiramos la instancia previa de esta sesión+path para
+        // que se construya un árbol completamente nuevo.
+        if (partial == null) {
+            pageResolver.evict(sessionId, path);
+        }
 
         HtmlComponent page = pageResolver.getPage(sessionId, path);
         String html = page.render();
@@ -70,8 +78,8 @@ public class PageController {
     public String callMethod(@PathVariable("qualified") String qualified,
                              @RequestBody Map<String, Object> body,
                              HttpServletRequest req) {
-    	
-    	 System.out.println("➡️ JRX CALL qualified=" + qualified + " body=" + body);
+
+        System.out.println("➡️ JRX CALL qualified=" + qualified + " body=" + body);
 
         // 1) reconstruir la página desde el Referer (fallback "/")
         String ref  = req.getHeader("Referer");

@@ -946,7 +946,7 @@ function setupEventBindings() {
 
         if (!ok && code === 'VALIDATION' &&
             payload && Array.isArray(payload.violations)) {
-          applyValidationErrors(payload.violations);
+          applyValidationErrors(payload.violations, el);
         }
 
         // Evento genérico siempre
@@ -1052,7 +1052,7 @@ function setupEventBindings() {
 
       if (!ok && code === 'VALIDATION' &&
           payload && Array.isArray(payload.violations)) {
-        applyValidationErrors(payload.violations);
+        applyValidationErrors(payload.violations, el);
       }
 
       window.dispatchEvent(new CustomEvent('jrx:call', { detail }));
@@ -1205,6 +1205,54 @@ function applyStateForKey(k, v) {
 /* ──────────────────────────────────────────────────────────────
  *  Helpers de validación (Bean Validation → inputs HTML)
  * ────────────────────────────────────────────────────────────── */
+let jrxValidationStylesInjected = false;
+
+function ensureValidationStyles() {
+  if (jrxValidationStylesInjected) return;
+  jrxValidationStylesInjected = true;
+
+  const style = document.createElement('style');
+  style.id = 'jrx-validation-style';
+  style.textContent = `
+    .jrx-error-msg {
+      color: #b00020;
+      font-size: 0.8rem;
+      margin-top: 4px;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    input.jrx-error,
+    textarea.jrx-error,
+    select.jrx-error {
+      border-color: #b00020;
+      outline: none;
+    }
+  `;
+  document.head.appendChild(style);
+}
+
+
+function clearValidationErrors() {
+  $$('input,textarea,select').forEach(el => {
+    if (!el.dataset.jrxError) return;
+
+    el.classList.remove('jrx-error');
+    delete el.dataset.jrxError;
+
+    if (typeof el.setCustomValidity === 'function') {
+      el.setCustomValidity('');
+    }
+
+    if (el._jrxErrorContainer) {
+      el._jrxErrorContainer.remove();
+      delete el._jrxErrorContainer;
+    }
+  });
+
+  // Por si hay contenedores huérfanos
+  $$('.jrx-error-msg').forEach(el => el.remove());
+}
+
 
 /** Limpia errores previos marcados por JReactive */
 function clearValidationErrors() {
@@ -1217,20 +1265,44 @@ function clearValidationErrors() {
     if (typeof el.setCustomValidity === 'function') {
       el.setCustomValidity('');
     }
+
+    // Quitar contenedor de mensajes si existe
+    if (el._jrxErrorContainer) {
+      el._jrxErrorContainer.remove();
+      delete el._jrxErrorContainer;
+    }
   });
+
+  // Por si quedó algún contenedor huérfano
+  $$('.jrx-error-msg').forEach(el => el.remove());
 }
 
-/** Aplica errores de Bean Validation sobre los inputs */
-function applyValidationErrors(violations) {
+/** Aplica errores de Bean Validation debajo de cada input
+ *  y usa 'el' como fallback si el backend manda errores sin campo
+ */
+function applyValidationErrors(violations, el) {
   if (!Array.isArray(violations)) return;
 
+  // Inyecta el CSS global de validación (una sola vez)
+  ensureValidationStyles();
+
+  const byField      = new Map(); // name -> [msgs]
+  const globalErrors = [];        // mensajes sin path
+
   violations.forEach(v => {
-    //const name = v.param || v.path;
     const name = v.path || v.param;
-    if (!name) return;
+    const msg  = v.message || 'Dato inválido';
 
-    const msg = v.message || 'Dato inválido';
+    if (name) {
+      if (!byField.has(name)) byField.set(name, []);
+      byField.get(name).push(msg);
+    } else {
+      globalErrors.push(msg);
+    }
+  });
 
+  /** Pintar errores campo por campo */
+  byField.forEach((messages, name) => {
     const input = document.querySelector(`[name="${name}"]`);
     if (!input) return;
 
@@ -1238,17 +1310,55 @@ function applyValidationErrors(violations) {
     input.classList.add('jrx-error');
 
     if (typeof input.setCustomValidity === 'function') {
-      input.setCustomValidity(msg);
-      // opcional: muestra el tooltip nativo del navegador
-      input.reportValidity();
+      input.setCustomValidity(messages[0]);
     }
 
-    // si no tiene title, lo usamos como hint
-    if (!input.title) {
-      input.title = msg;
+    let container = input._jrxErrorContainer;
+    if (!container) {
+      container = document.createElement('div');
+      container.className = 'jrx-error-msg';
+      input.insertAdjacentElement('afterend', container);
+      input._jrxErrorContainer = container;
+    }
+
+    container.innerHTML = '';
+
+    if (messages.length === 1) {
+      const span = document.createElement('span');
+      span.textContent = messages[0];
+      container.appendChild(span);
+    } else {
+      const ul = document.createElement('ul');
+      ul.style.paddingLeft = '18px';
+      ul.style.margin = '2px 0 0';
+      messages.forEach(m => {
+        const li = document.createElement('li');
+        li.textContent = m;
+        ul.appendChild(li);
+      });
+      container.appendChild(ul);
     }
   });
+
+  /** Fallback para errores sin campo → debajo del elemento que disparó el @Call */
+  if (globalErrors.length && el) {
+    let container = el._jrxErrorContainer;
+    if (!container) {
+      container = document.createElement('div');
+      container.className = 'jrx-error-msg';
+      el.insertAdjacentElement('afterend', container);
+      el._jrxErrorContainer = container;
+    }
+
+    container.innerHTML = '';
+    globalErrors.forEach(msg => {
+      const div = document.createElement('div');
+      div.textContent = msg;
+      container.appendChild(div);
+    });
+  }
 }
+
 
 
 function executeInlineScripts(root) {
