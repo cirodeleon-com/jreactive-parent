@@ -1,4 +1,3 @@
-/* === File: jreactive-demo-spring\src\main\java\com\ciro\jreactive\SignupPage2.java === */
 package com.ciro.jreactive;
 
 import com.ciro.jreactive.annotations.Call;
