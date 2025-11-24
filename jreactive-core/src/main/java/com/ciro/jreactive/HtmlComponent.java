@@ -16,6 +16,22 @@ public abstract class HtmlComponent extends ViewLeaf {
     private final AtomicReference<ComponentState> _state =
             new AtomicReference<>(ComponentState.UNMOUNTED);
     
+    /** Contenido raw que va entre <MiComp> ... </MiComp> */
+    private String slotHtml = "";
+
+    // Solo el motor debe usar esto
+    void _setSlotHtml(String html) {
+        this.slotHtml = (html == null) ? "" : html;
+    }
+
+    /**
+     * Para que los componentes contenedores (JForm, layouts, etc.)
+     * puedan incrustar el contenido interno.
+     */
+    protected String slot() {
+        return slotHtml;
+    }
+    
     void _addChild(HtmlComponent child) { _children.add(child); }
     List<HtmlComponent> _children()     { return _children; }
      // para IDs automáticos

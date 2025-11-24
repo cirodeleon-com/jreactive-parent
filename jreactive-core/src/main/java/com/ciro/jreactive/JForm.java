@@ -2,18 +2,6 @@ package com.ciro.jreactive;
 
 import static com.ciro.jreactive.Type.$;
 
-/**
- * Componente base de formulario para JReactive.
- *
- * Uso esperado:
- *
- *   <JForm @submit="register(form)">
- *      <JInput ... />
- *      <JButton ... />
- *   </JForm>
- *
- * El @submit se traduce a un @click interno del form.
- */
 public class JForm extends HtmlComponent {
 
     /** Método que se ejecutará cuando el formulario se envíe. */
@@ -26,9 +14,7 @@ public class JForm extends HtmlComponent {
 
     /** Layout principal (vertical, horizontal). */
     @Bind
-    public Type<String> layout = $("vertical"); // futuro: row/column
-
-    public JForm() {}
+    public Type<String> layout = $("vertical");
 
     @Override
     protected String template() {
@@ -40,7 +26,7 @@ public class JForm extends HtmlComponent {
               {{/if}}
 
               <div class="jrx-form-body layout-{{layout}}">
-                {{children}}
+            """ + slot() + """
               </div>
 
               {{#if submit}}
@@ -54,4 +40,3 @@ public class JForm extends HtmlComponent {
             """;
     }
 }
-

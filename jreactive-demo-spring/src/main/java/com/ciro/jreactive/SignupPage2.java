@@ -1,3 +1,4 @@
+/* === File: jreactive-demo-spring\src\main\java\com\ciro\jreactive\SignupPage2.java === */
 package com.ciro.jreactive;
 
 import com.ciro.jreactive.annotations.Call;
@@ -6,44 +7,43 @@ import jakarta.validation.Valid;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
+import org.springframework.stereotype.Component;
 
 import java.io.Serializable;
-
-import org.springframework.stereotype.Component;
 
 @Component
 @Route(path = "/signup2")
 public class SignupPage2 extends HtmlComponent {
 
-    // 1) DTO con Bean Validation
     public static class SignupForm implements Serializable {
-
-        @NotBlank(message = "El nombre es obligatorio")
-        public String name;
-
-        @NotBlank(message = "El correo es obligatorio")
-        @Email(message = "El correo no tiene un formato válido")
-        public String email;
-
-        @NotBlank(message = "La contraseña es obligatoria")
-        @Size(min = 8, message = "La contraseña debe tener al menos 8 caracteres")
-        public String password;
+        @NotBlank public String name;
+        @NotBlank @Email public String email;
+        @NotBlank @Size(min = 8) public String password;
+        public boolean acceptTerms;
     }
 
-    // 2) Estado de la página (para mostrar mensajes)
     public static class PageState {
         public String lastMessage;
     }
 
     @State
+    SignupForm form = new SignupForm();
+
+    @State
     PageState state = new PageState();
 
-    // 3) Método @Call con @Valid: si falla, CallGuard devuelve JSON de VALIDATION
+    // Estado reactivo para el checkbox (si lo quieres controlar desde el back)
+    @State
+    Boolean acceptTerms = false;
+
     @Call
     public void register(@Valid SignupForm form) {
-        // Si la validación falla, NUNCA se entra aquí
-        state.lastMessage = "Usuario " + form.name + " registrado correctamente";
-        updateState("state"); // empuja el nuevo estado al front
+        if (!form.acceptTerms) {
+            state.lastMessage = "Debes aceptar los términos";
+        } else {
+            state.lastMessage = "Usuario " + form.name + " registrado correctamente";
+        }
+        updateState("state");
     }
 
     @Override
@@ -52,7 +52,7 @@ public class SignupPage2 extends HtmlComponent {
             <section style="max-width: 420px; padding: 16px; font-family: system-ui;">
               <h1>Registro con Bean Validation</h1>
 
-              <form class="jrx-form">
+              <JForm @click="register(form)">
                 <JInput
                   :field="form.name"
                   :label="Nombre"
@@ -80,17 +80,17 @@ public class SignupPage2 extends HtmlComponent {
                   :autocomplete="new-password"
                 />
 
-                <JButton label="Registrarme" @click="register(form)" />
-              </form>
+                <JCheckBox
+                  field="form.acceptTerms"
+                  :checked="acceptTerms"
+                  :required="true"
+                  label="Acepto los términos y condiciones"
+                />
+              </JForm>
 
               <p>{{state.lastMessage}}</p>
             </section>
             """;
     }
-
-    
-
-
-
 }
 
