@@ -51,7 +51,7 @@ public class SignupPage2 extends HtmlComponent {
             <section style="max-width: 420px; padding: 16px; font-family: system-ui;">
               <h1>Registro con Bean Validation</h1>
 
-              <JForm @click="register(form)">
+              <JForm @submit="register(form)">
                 <JInput
                   :field="form.name"
                   :label="Nombre"

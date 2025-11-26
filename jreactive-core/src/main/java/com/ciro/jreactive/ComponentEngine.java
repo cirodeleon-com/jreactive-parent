@@ -191,8 +191,8 @@ final class ComponentEngine {
             Map<String,String> attrMap = parseProps(rawAttrs);
             String refAlias  = attrMap.get("ref");        // null si no existe
 
-            // 🔥 Capturamos un posible @click en el tag del componente
-            String delegatedClick = extractClickHandler(rawAttrs);
+         // 🔥 Capturamos un posible @submit/@click/@change/@input en el tag del componente
+            String delegatedHandler = extractPrimaryHandler(rawAttrs);
 
             /* ── A) Instancia / reutiliza según ref ───────────────────── */
             ViewLeaf leaf;
@@ -243,11 +243,11 @@ final class ComponentEngine {
                 
                // 🔥 Si el tag tenía @click="algo" y el hijo tiene un @Bind "submit",
                //              usamos ese valor para que {{#if submit}} sea true y para el @click interno.
-              if (delegatedClick != null) {
+              if (delegatedHandler != null) {
                  @SuppressWarnings("unchecked")
                  ReactiveVar<Object> submitRx = (ReactiveVar<Object>) childBinds.get("submit");
                  if (submitRx != null) {
-                     submitRx.set(delegatedClick);   // ahora {{submit}} tiene "register(form)"
+                     submitRx.set(delegatedHandler);   // ahora {{submit}} tiene "register(form)"
                  }
              }
 
@@ -358,29 +358,35 @@ final class ComponentEngine {
                 child = child.replaceFirst("\\s+ref=\""+Pattern.quote(refAlias)+"\"", "");
             }
 
-            /* ── F) Namespacing de @click="method(args)" ----------------- */
-            Pattern clickPat = Pattern.compile("@click=['\"]([\\w#.-]+)\\(([^)]*)\\)['\"]");
-            Matcher clickM = clickPat.matcher(child);
-            StringBuffer sbClick = new StringBuffer();
-            while (clickM.find()) {
-                String method = clickM.group(1);
-                String args   = clickM.group(2).trim();
+            /* ── F) Namespacing de @event="method(args)" para todos los eventos ----------------- */
+            Pattern evtPat = Pattern.compile("@(?<evt>click|submit|change|input)=[\"'](?<method>[\\w#.-]+)\\((?<args>[^)]*)\\)[\"']");
+            Matcher evtM = evtPat.matcher(child);
+            StringBuffer sbEvt = new StringBuffer();
+            while (evtM.find()) {
+                String evt     = evtM.group("evt");     // click / submit / change / input
+                String method  = evtM.group("method");
+                String args    = evtM.group("args").trim();
 
+                // Namespacing de args: a → ns+a
                 String namespacedArgs = Arrays.stream(args.split(","))
                         .map(String::trim)
                         .filter(s -> !s.isEmpty())
                         .map(a -> ns + a)
                         .collect(Collectors.joining(","));
 
-                String replacement = "@click=\"" + ns + method + "(" + namespacedArgs + ")\"";
-                clickM.appendReplacement(sbClick, Matcher.quoteReplacement(replacement));
+                String replacement = String.format(
+                        "@%s=\"%s.%s(%s)\"",
+                        evt, ns.substring(0, ns.length()-1), method, namespacedArgs
+                );
+                evtM.appendReplacement(sbEvt, Matcher.quoteReplacement(replacement));
             }
-            clickM.appendTail(sbClick);
-            child = sbClick.toString();
+            evtM.appendTail(sbEvt);
+            child = sbEvt.toString();
+
 
             // 🔥 Reenvío del @click del padre al <button> del hijo
-            if (delegatedClick != null) {
-                child = injectClickIntoRootButton(child, delegatedClick);
+            if (delegatedHandler != null) {
+                child = injectClickIntoRootButton(child, delegatedHandler);
             }
 
             // Comprobación de alias duplicado
@@ -416,14 +422,48 @@ final class ComponentEngine {
     }
 
     
-    private static String extractClickHandler(String raw) {
+    /** 
+     * Extrae el "handler principal" desde los atributos del tag del componente.
+     *
+     * Soporta:
+     *   @submit="..."
+     *   @click="..."
+     *   @change="..."
+     *   @input="..."
+     *
+     * Y aplica prioridad:
+     *   submit > click > change > input
+     */
+    private static String extractPrimaryHandler(String raw) {
         if (raw == null) return null;
-        Matcher mm = Pattern.compile("@click\\s*=\\s*\"([^\"]*)\"").matcher(raw);
-        if (mm.find()) {
-            return mm.group(1); // ej. register(form)
+
+        String submit = null;
+        String click  = null;
+        String change = null;
+        String input  = null;
+
+        Matcher mm = Pattern.compile("@(submit|click|change|input)\\s*=\\s*\"([^\"]*)\"")
+                            .matcher(raw);
+
+        while (mm.find()) {
+            String evt  = mm.group(1);
+            String expr = mm.group(2);
+
+            switch (evt) {
+                case "submit" -> submit = expr;
+                case "click"  -> click  = expr;
+                case "change" -> change = expr;
+                case "input"  -> input  = expr;
+            }
         }
+
+        if (submit != null && !submit.isBlank()) return submit;
+        if (click  != null && !click.isBlank())  return click;
+        if (change != null && !change.isBlank()) return change;
+        if (input  != null && !input.isBlank())  return input;
         return null;
     }
+
 
     /** Inyecta (o sustituye) un @click="..." en el primer <button ...> del hijo */
     private static String injectClickIntoRootButton(String childHtml, String handler) {
