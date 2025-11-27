@@ -50,8 +50,10 @@ public class SignupPage2 extends HtmlComponent {
         return """
             <section style="max-width: 420px; padding: 16px; font-family: system-ui;">
               <h1>Registro con Bean Validation</h1>
-
-              <JForm @submit="register(form)">
+              <JCard
+              :title="hola"
+              >
+              <JForm :submit="register(form)">
                 <JInput
                   :field="form.name"
                   :label="Nombre"
@@ -86,7 +88,6 @@ public class SignupPage2 extends HtmlComponent {
                   label="Acepto los términos y condiciones"
                 />
               </JForm>
-
               <p>{{state.lastMessage}}</p>
             </section>
             """;
