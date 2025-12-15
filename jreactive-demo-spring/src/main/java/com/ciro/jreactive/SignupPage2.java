@@ -50,48 +50,52 @@ public class SignupPage2 extends HtmlComponent {
         return """
             <section style="max-width: 420px; padding: 16px; font-family: system-ui;">
               <h1>Registro con Bean Validation</h1>
-              <JCard
-              :title="hola"
-              >
-              <JForm :onSubmit="register(form)">
-                <JInput
-                  :field="form.name"
-                  :label="Nombre"
-                  :type="text"
-                  :placeholder="Tu nombre"
-                  :required="true"
-                  :autocomplete="name"
-                />
 
-                <JInput
-                  :field="form.email"
-                  :label="Correo"
-                  :type="email"
-                  :placeholder="correo@ejemplo.com"
-                  :required="true"
-                  :autocomplete="email"
-                />
+              <JCard title="hola">
 
-                <JInput
-                  :field="form.password"
-                  :label="Contraseña"
-                  :type="password"
-                  :placeholder="Mínimo 8 caracteres"
-                  :required="true"
-                  :autocomplete="new-password"
-                />
+                <JForm onSubmit="register(form)">
 
-                <JCheckBox
-                  field="form.acceptTerms"
-                  :checked="acceptTerms"
-                  :required="true"
-                  label="Acepto los términos y condiciones"
-                />
-              </JForm>
-              <p>{{state.lastMessage}}</p>
+                  <JInput
+                    :field="form.name"
+                    label="Nombre"
+                    type="text"
+                    placeholder="Tu nombre"
+                    required="true"
+                    autocomplete="name"
+                  />
+
+                  <JInput
+                    :field="form.email"
+                    label="Correo"
+                    type="email"
+                    placeholder="correo@ejemplo.com"
+                    required="true"
+                    autocomplete="email"
+                  />
+
+                  <JInput
+                    :field="form.password"
+                    label="Contraseña"
+                    type="password"
+                    placeholder="Mínimo 8 caracteres"
+                    required="true"
+                    autocomplete="new-password"
+                  />
+
+                  <JCheckBox
+                    :field="form.acceptTerms"
+                    :checked="acceptTerms"
+                    required="true"
+                    label="Acepto los términos y condiciones"
+                  />
+
+                </JForm>
+
+                <p>{{state.lastMessage}}</p>
               </JCard>
             </section>
             """;
     }
+
 }
 

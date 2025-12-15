@@ -64,28 +64,28 @@ public class SignupCountryPage extends HtmlComponent {
             <form>
               <JSelect
                 :field="form.country"
-                :label="País"
+                label="País"
                 :options="countries"
-                :placeholder="Selecciona un país"
-                :required="true"
+                placeholder="Selecciona un país"
+                required="true"
               />
 
               {{#if selectedCountryLabel}}
                 <h2>País seleccionado: {{selectedCountryLabel}}</h2>
               {{/if}}
 
-              <!-- Botón solo para refrescar el label -->
               <JButton
-                :label="Ver país seleccionado"
-                :onClick="refreshCountryLabel(form)"
+                label="Ver país seleccionado"
+                onClick="refreshCountryLabel(form)"
               />
 
               <JButton
-                :label="Registrarme"
-                :onClick="register(form)"
+                label="Registrarme"
+                onClick="register(form)"
               />
             </form>
           </section>
           """;
     }
+
 }
