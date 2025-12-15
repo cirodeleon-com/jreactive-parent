@@ -29,6 +29,13 @@
       <artifactId>auto-service</artifactId>
       <version>${auto-service.version}</version>
     </dependency>
+    
+    <dependency>
+    <groupId>org.jsoup</groupId>
+    <artifactId>jsoup</artifactId>
+    <version>1.17.2</version>
+    </dependency>
+    
   </dependencies>
 
   <build>

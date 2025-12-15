@@ -53,7 +53,7 @@ public class SignupPage2 extends HtmlComponent {
               <JCard
               :title="hola"
               >
-              <JForm :submit="register(form)">
+              <JForm :onSubmit="register(form)">
                 <JInput
                   :field="form.name"
                   :label="Nombre"
@@ -89,6 +89,7 @@ public class SignupPage2 extends HtmlComponent {
                 />
               </JForm>
               <p>{{state.lastMessage}}</p>
+              </JCard>
             </section>
             """;
     }

@@ -1,60 +1,21 @@
-/* === Module: jreactive-core | File: jreactive-core/src/main/java/com/ciro/jreactive/components/JInput.java === */
 package com.ciro.jreactive;
 
 import static com.ciro.jreactive.Type.$;
 
-/**
- * Componente base de input de formulario para JReactive.
- *
- * Pensado para usarse como:
- *
- *   <JInput
- *     field="form.email"
- *     label="Correo"
- *     type="email"
- *     placeholder="correo@ejemplo.com"
- *   />
- *
- * El name del <input> será exactamente el valor de "field",
- * para encajar con Bean Validation y applyValidationErrors().
- */
 public class JInput extends HtmlComponent {
 
-    /** Nombre completo del campo: ej. "form.email", "user.name". */
-    @Bind
-    public Type<String> field = $("");
+    @Bind public Type<String> field = $("");       // form.email
+    @Bind public Type<String> label = $("");       // Email
+    @Bind public Type<String> type = $("text");
+    @Bind public Type<String> placeholder = $("");
+    @Bind public Type<Boolean> required = $(false);
+    @Bind public Type<Boolean> disabled = $(false);
+    @Bind public Type<String> helpText = $("");
+    @Bind public Type<String> autocomplete = $("");
 
-    /** Texto visible de la etiqueta. */
-    @Bind
-    public Type<String> label = $("");
-
-    /** Tipo HTML: text, email, password, number, date, etc. */
-    @Bind
-    public Type<String> type = $("text");
-
-    /** Placeholder del input. */
-    @Bind
-    public Type<String> placeholder = $("");
-
-    /** Marca si es requerido (añade required y un asterisco). */
-    @Bind
-    public Type<Boolean> required = $(Boolean.FALSE);
-
-    /** Deshabilitado (disabled). */
-    @Bind
-    public Type<Boolean> disabled = $(Boolean.FALSE);
-
-    /** Texto de ayuda debajo del input. */
-    @Bind
-    public Type<String> helpText = $("");
-
-    /** Valor de autocomplete: email, name, new-password, etc. */
-    @Bind
-    public Type<String> autocomplete = $("");
-
-    public JInput() {
-        // defaults ya están inicializados arriba
-    }
+    // eventos (pueden venir vacíos)
+    @Bind public String onInput = "";
+    @Bind public String onChange = "";
 
     @Override
     protected String template() {
@@ -73,6 +34,8 @@ public class JInput extends HtmlComponent {
                   name="{{field}}"
                   placeholder="{{placeholder}}"
                   autocomplete="{{autocomplete}}"
+                  @input="{{onInput}}"
+                  @change="{{onChange}}"
                 />
               </label>
 
@@ -80,7 +43,6 @@ public class JInput extends HtmlComponent {
                 <small class="jrx-help">{{helpText}}</small>
               {{/if}}
             </div>
-            """;
+        """;
     }
-
 }

@@ -2,44 +2,13 @@ package com.ciro.jreactive;
 
 import static com.ciro.jreactive.Type.$;
 
-/**
- * Componente de tarjeta contenedora para JReactive.
- *
- * Uso típico:
- *
- *   <JCard
- *     :title="pageTitle"
- *     :subtitle="pageSubtitle"
- *     variant="elevated"
- *   >
- *     <!-- aquí va el contenido interno -->
- *     <JForm ...>...</JForm>
- *   </JCard>
- *
- * El contenido interno se inserta vía slot() en el body.
- */
 public class JCard extends HtmlComponent {
 
-    /** Título principal de la tarjeta (opcional). */
-    @Bind
-    public Type<String> title = $("");
+    @Bind public Type<String> title = $(""); 
+    @Bind public Type<String> subtitle = $("");
 
-    /** Subtítulo o descripción corta (opcional). */
-    @Bind
-    public Type<String> subtitle = $("");
-
-    /**
-     * Variante visual (para CSS futuro): 
-     *  - "flat" (por defecto)
-     *  - "elevated"
-     *  - "outlined"
-     */
-    @Bind
-    public Type<String> variant = $("flat");
-
-    /** Si quieres marcar la tarjeta como clickable / hoverable (para CSS). */
-    @Bind
-    public Type<Boolean> hoverable = $(Boolean.FALSE);
+    @Bind public Type<String> variant = $("flat");
+    @Bind public Type<Boolean> hoverable = $(Boolean.FALSE);
 
     @Override
     protected String template() {

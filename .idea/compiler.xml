@@ -30,7 +30,6 @@
           <entry name="$MAVEN_REPOSITORY$/com/google/errorprone/error_prone_annotations/2.18.0/error_prone_annotations-2.18.0.jar" />
           <entry name="$MAVEN_REPOSITORY$/com/google/j2objc/j2objc-annotations/2.8/j2objc-annotations-2.8.jar" />
         </processorPath>
-        <module name="jreactive-mvc" />
       </profile>
       <profile name="Annotation profile for jreactive-parent" enabled="true">
         <sourceOutputDir name="target/generated-sources/annotations" />
@@ -58,6 +57,9 @@
         <module name="jreactive-apt" />
       </profile>
     </annotationProcessing>
+    <bytecodeTargetLevel>
+      <module name="jreactive-mvc" target="17" />
+    </bytecodeTargetLevel>
   </component>
   <component name="JavacSettings">
     <option name="ADDITIONAL_OPTIONS_OVERRIDE">

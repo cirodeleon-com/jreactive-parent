@@ -4,23 +4,17 @@ import static com.ciro.jreactive.Type.$;
 
 public class JForm extends HtmlComponent {
 
-    /** Método que se ejecutará cuando el formulario se envíe. */
-    @Bind
-    public Type<String> submit = $("");
+    @Bind public Type<String> title = $(""); 
+    @Bind public Type<String> layout = $("vertical");
 
-    /** Si quieres poner un título encima (opcional). */
-    @Bind
-    public Type<String> title = $("");
-
-    /** Layout principal (vertical, horizontal). */
-    @Bind
-    public Type<String> layout = $("vertical");
+    // submit (puede venir vacío)
+    @Bind public String onSubmit = "";
 
     @Override
     protected String template() {
         return """
-            <form class="jrx-form">
-              
+            <form class="jrx-form" @submit="{{onSubmit}}">
+
               {{#if title}}
                 <h2 class="jrx-form-title">{{title}}</h2>
               {{/if}}
@@ -29,14 +23,11 @@ public class JForm extends HtmlComponent {
             """ + slot() + """
               </div>
 
-              {{#if submit}}
-                <button type="button"
-                        @click="{{submit}}">
-                  Enviar
-                </button>
+              {{#if onSubmit}}
+                <button type="submit">Enviar</button>
               {{/if}}
 
             </form>
-            """;
+        """;
     }
 }

@@ -18,6 +18,11 @@
   <!-- *sin* dependencias de Spring -->
   <dependencies>
     <!-- solo lo que necesites realmente, por ahora vacío -->
+    <dependency>
+       <groupId>org.jsoup</groupId>
+       <artifactId>jsoup</artifactId>
+       <version>1.17.2</version>
+    </dependency>
   </dependencies>
 </project>
 

@@ -15,7 +15,7 @@ public final class ReactiveVar<T> {
 
     public T get() { return value; }
 
-    public void set(T newValue) {
+    public synchronized void set(T newValue) {
         this.value = newValue;
         
         if (!activeGuard.getAsBoolean()) {

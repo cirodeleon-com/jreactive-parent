@@ -1,60 +1,52 @@
-/* src/main/java/com/ciro/jreactive/tools/TemplateProcessor.java */
 package com.ciro.jreactive.tools;
 
 import com.ciro.jreactive.Bind;
-import java.util.stream.Stream;
 import com.google.auto.service.AutoService;
 import com.sun.source.tree.MethodTree;
 import com.sun.source.util.TreePath;
 import com.sun.source.util.Trees;
+import org.jsoup.Jsoup;
+import org.jsoup.nodes.Attribute;
+import org.jsoup.nodes.Document;
+import org.jsoup.nodes.TextNode;
+import org.jsoup.parser.Parser;
+
 import javax.annotation.processing.*;
 import javax.lang.model.SourceVersion;
-import javax.lang.model.element.*;
+import javax.lang.model.element.Element; // ✅ Import explícito: "Element" será este
+import javax.lang.model.element.ElementKind;
+import javax.lang.model.element.ExecutableElement;
+import javax.lang.model.element.Modifier;
+import javax.lang.model.element.TypeElement;
 import javax.tools.Diagnostic;
-import java.util.Set;
 import java.util.HashSet;
-import java.util.regex.Pattern;
+import java.util.Set;
 import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
-/**
- * Valida que toda variable {{x}} usada en el template()
- * exista como campo anotado con @Bind en la misma clase.
- * Ignora completamente los bloques {{#each…}}{{/each}} y
- * también elimina los placeholders con alias (alias.prop).
- */
 @AutoService(Processor.class)
 @SupportedAnnotationTypes("*")
 @SupportedSourceVersion(SourceVersion.RELEASE_17)
 public final class TemplateProcessor extends AbstractProcessor {
 
-    private Trees trees;  // acceso al AST
+    private static final boolean USE_JSOUP_ENGINE = false; 
 
-    /** Busca {{nombre}} */
-    private static final Pattern VAR =
-        Pattern.compile("\\{\\{\\s*([\\w#.-]+)\\s*}}");
+    private Trees trees;
 
-    /** Patrón para ignorar bloques {{#each…}}{{/each}} */
-    private static final Pattern EACH_BLOCK_PATTERN =
-        Pattern.compile("\\{\\{#each[\\s\\S]*?\\{\\{/each}}");
-
-    /** Patrón para eliminar placeholders con alias (alias.prop) */
-    private static final Pattern ALIAS_VAR_PATTERN =
-        Pattern.compile("\\{\\{\\s*\\w+\\.(\\w+)\\s*}}");
+    private static final Pattern VAR = Pattern.compile("\\{\\{\\s*([\\w#.-]+)\\s*}}");
+    private static final Pattern REF_ALIAS_PATTERN = Pattern.compile("\\bref\\s*=\\s*\"(\\w+)\"");
+    private static final Pattern EACH_BLOCK_PATTERN = Pattern.compile("\\{\\{#each[\\s\\S]*?\\{\\{/each}}");
     
-    /** Busca  :prop="expr"   (prop puede incluir guiones) */
-    private static final Pattern PROP_BIND_PATTERN =
-        Pattern.compile(":(\\w[\\w-]*)\\s*=\\s*\"([^\"]+)\"");
+    // Regex Legacy
+    private static final Pattern ALIAS_VAR_PATTERN = Pattern.compile("\\{\\{\\s*\\w+\\.(\\w+)\\s*}}");
+    private static final Pattern PROP_BIND_PATTERN = Pattern.compile(":(\\w[\\w-]*)\\s*=\\s*\"([^\"]+)\"");
+    private static final Pattern ATTR_BIND_PATTERN = Pattern.compile("\\s:\\w+\\s*=\\s*\"([^\"]+)\"");
 
-    /** Busca  ref="alias"   */
-    private static final Pattern REF_ALIAS_PATTERN =
-        Pattern.compile("\\bref\\s*=\\s*\"(\\w+)\"");
-    
-    /** Atributos :prop="expr"  →   expr  */
-    private static final Pattern ATTR_BIND =
-        Pattern.compile("\\s:\\w+\\s*=\\s*\"([^\"]+)\"");
-
-
+    // Jsoup
+    private static final Pattern HTML5_VOID_FIX = 
+        Pattern.compile("<(area|base|br|col|embed|hr|img|input|link|meta|param|source|track|wbr)([^>]*?)(?<!/)>", Pattern.CASE_INSENSITIVE);
 
     @Override
     public synchronized void init(ProcessingEnvironment env) {
@@ -63,13 +55,11 @@ public final class TemplateProcessor extends AbstractProcessor {
     }
 
     @Override
-    public boolean process(Set<? extends TypeElement> annotations,
-                           RoundEnvironment round) {
+    public boolean process(Set<? extends TypeElement> annotations, RoundEnvironment round) {
         for (Element root : round.getRootElements()) {
             if (root.getKind() != ElementKind.CLASS) continue;
             TypeElement clazz = (TypeElement) root;
 
-            // Buscar método template() concreto
             clazz.getEnclosedElements().stream()
                  .filter(e -> e.getKind() == ElementKind.METHOD)
                  .map(e -> (ExecutableElement) e)
@@ -81,143 +71,137 @@ public final class TemplateProcessor extends AbstractProcessor {
         return false;
     }
 
-    /** Extrae placeholders y comprueba @Bind, ignorando each y alias */
     private void checkTemplate(TypeElement cls, ExecutableElement tpl) {
-        // 1. Obtener el texto del cuerpo de template()
         TreePath path = trees.getPath(tpl);
         MethodTree mt = (MethodTree) path.getLeaf();
         if (mt.getBody() == null) return;
 
         String bodySrc = mt.getBody().toString();
+        int firstQuote = bodySrc.indexOf("\"");
+        int lastQuote  = bodySrc.lastIndexOf("\"");
+        if (firstQuote < 0 || lastQuote <= firstQuote) return;
+        
+        String rawHtml = bodySrc.substring(firstQuote, lastQuote + 1)
+                                .replace("\"\"\"", "")
+                                .replace("\"", "");
 
-        // 2. Eliminar completamente bloques {{#each…}}{{/each}}
-        bodySrc = EACH_BLOCK_PATTERN.matcher(bodySrc)
-                                     .replaceAll("");
+        ParseResult res;
 
-        // 3. Eliminar placeholders con alias (alias.prop)
-        bodySrc = ALIAS_VAR_PATTERN.matcher(bodySrc)
-                                    .replaceAll("");
+        if (USE_JSOUP_ENGINE) {
+            res = parseWithJsoup(rawHtml);
+        } else {
+            res = parseWithRegex(rawHtml, tpl);
+        }
 
-        // 4. Buscar ahora los {{var}} restantes
-        Matcher m = VAR.matcher(bodySrc);
+        validateVars(cls, tpl, res.vars, res.refs);
+    }
+
+    private ParseResult parseWithRegex(String html, ExecutableElement tpl) {
         Set<String> vars = new HashSet<>();
-        while (m.find()) {
-            vars.add(m.group(1));
-        }
-        
-     // 4-bis. Buscar bindings en atributos :prop="expr"
-        Matcher a = ATTR_BIND.matcher(bodySrc);
-        while (a.find()) {
-            vars.add(a.group(1));          // solo la expresión “expr”
-        }
-
-
-        // 5. Recoger los campos @Bind de la clase
-        Set<String> binds = cls.getEnclosedElements().stream()
-            .filter(f -> f.getKind() == ElementKind.FIELD)
-            .filter(f -> f.getAnnotation(Bind.class) != null)
-            .map(Element::getSimpleName)
-            .map(Object::toString)
-            .collect(Collectors.toSet());
-        
-        Set<String> states = cls.getEnclosedElements().stream()
-        	    .filter(f -> f.getKind() == ElementKind.FIELD)
-        	    .filter(f -> f.getAnnotation(com.ciro.jreactive.State.class) != null)
-        	    .map(Element::getSimpleName)
-        	    .map(Object::toString)
-        	    .collect(Collectors.toSet());
-        
-        /* ---- Incluye también Bindings de sub-componentes vivos -------------
-         *   • Cualquier {{Componente/>}} se resolverá a Componente#n.<bind>
-         *   • Sólo necesitamos el "root" (antes del punto) para la verificación
-         */
-     // 5. Roots de clases hijas (componentes internos)
-        Set<String> childRoots = cls.getEnclosedElements().stream()
-            .filter(e -> e.getKind() == ElementKind.CLASS)
-            .map(Element::getSimpleName)
-            .map(Object::toString)
-            .collect(Collectors.toSet());
-
-        // 6. Roots de alias ref="alias"
-        Matcher r  = REF_ALIAS_PATTERN.matcher(bodySrc);
         Set<String> refs = new HashSet<>();
+
+        String cleanHtml = EACH_BLOCK_PATTERN.matcher(html).replaceAll("");
+        cleanHtml = ALIAS_VAR_PATTERN.matcher(cleanHtml).replaceAll("");
+
+        Matcher m = VAR.matcher(cleanHtml);
+        while (m.find()) vars.add(m.group(1));
+
+        Matcher p = PROP_BIND_PATTERN.matcher(cleanHtml);
+        while (p.find()) {
+            String expr = p.group(2).trim();
+            String root = expr.contains(".") ? expr.substring(0, expr.indexOf('.')) : expr;
+            vars.add(root);
+        }
+        
+        Matcher a = ATTR_BIND_PATTERN.matcher(cleanHtml);
+        while (a.find()) vars.add(a.group(1));
+
+        Matcher r = REF_ALIAS_PATTERN.matcher(cleanHtml);
         while (r.find()) {
             String alias = r.group(1);
             if (!refs.add(alias)) {
-                processingEnv.getMessager().printMessage(
-                    Diagnostic.Kind.ERROR,
-                    "Alias 'ref=\"" + alias + "\"' duplicado en el mismo template",
-                    tpl
-                );
+                processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR, 
+                    "Alias 'ref=\"" + alias + "\"' duplicado en el mismo template", tpl);
+            }
+        }
+        return new ParseResult(vars, refs);
+    }
+
+    private ParseResult parseWithJsoup(String html) {
+        Set<String> vars = new HashSet<>();
+        
+        String noEachHtml = EACH_BLOCK_PATTERN.matcher(html).replaceAll("");
+        String xmlFriendlyHtml = HTML5_VOID_FIX.matcher(noEachHtml).replaceAll("<$1$2/>");
+
+        Document doc = Jsoup.parse(xmlFriendlyHtml, "", Parser.xmlParser());
+
+        // ⚠️ USAMOS EL NOMBRE COMPLETO PARA EVITAR CONFLICTO
+        for (org.jsoup.nodes.Element el : doc.getAllElements()) {
+            for (Attribute attr : el.attributes()) {
+                String key = attr.getKey();
+                String val = attr.getValue();
+                if (key.startsWith(":")) {
+                    String root = val.contains(".") ? val.split("\\.")[0] : val;
+                    vars.add(root); 
+                }
+                extractVarsFromText(val, vars);
+            }
+            for (TextNode text : el.textNodes()) {
+                extractVarsFromText(text.getWholeText(), vars);
             }
         }
 
-        // 7. Unión de todos los posibles “roots” válidos
-        Set<String> allRoots = Stream.of(binds, states, childRoots, refs)
-            .flatMap(Set::stream)
-            .collect(Collectors.toSet());
+        Set<String> refs = doc.select("[ref]").stream()
+                .map(e -> e.attr("ref")).collect(Collectors.toSet());
 
+        return new ParseResult(vars, refs);
+    }
 
+    private void validateVars(TypeElement cls, ExecutableElement tpl, Set<String> varsToCheck, Set<String> htmlRefs) {
+        Set<String> binds = cls.getEnclosedElements().stream()
+            .filter(f -> f.getKind() == ElementKind.FIELD && f.getAnnotation(Bind.class) != null)
+            .map(Element::getSimpleName).map(Object::toString).collect(Collectors.toSet());
+        
+        Set<String> states = cls.getEnclosedElements().stream()
+            .filter(f -> f.getKind() == ElementKind.FIELD && f.getAnnotation(com.ciro.jreactive.State.class) != null)
+            .map(Element::getSimpleName).map(Object::toString).collect(Collectors.toSet());
 
+        Set<String> childRoots = cls.getEnclosedElements().stream()
+            .filter(e -> e.getKind() == ElementKind.CLASS)
+            .map(Element::getSimpleName).map(Object::toString).collect(Collectors.toSet());
 
-        // 6. Validar que cada {{var}} esté en @Bind
-        for (String v : vars) {
-            // v puede ser: "name", "user", "user.name", "user.address.city"
-            if ("this".equals(v)) continue;
+        Set<String> allRoots = Stream.of(binds, states, childRoots, htmlRefs)
+            .flatMap(Set::stream).collect(Collectors.toSet());
 
-            String[] parts = v.split("\\.");
+        for (String v : varsToCheck) {
+            if (v.equals("this") || v.startsWith("#if") || v.startsWith("#else") || v.startsWith("/if")) continue;
+            String cleanV = v.replace("!", "").trim();
+            if (cleanV.isEmpty()) continue;
+
+            String[] parts = cleanV.split("\\.");
             String root = parts[0];
             String last = parts[parts.length - 1];
 
-            // tamaños / helpers
             if ("size".equals(last) || "length".equals(last)) continue;
 
-            boolean ok =
-            	    binds.contains(v)      ||   // {{orders}} donde orders es @Bind
-            	    binds.contains(last)   ||   // compat antiguo ({{greet}})
-            	    states.contains(root)  ||   // {{user.*}} donde user es @State
-            	    "store".equals(root)   ||
-            	    refs.contains(root);       // ✅ root mágico global
+            boolean ok = 
+                binds.contains(v)      ||
+                binds.contains(last)   || 
+                states.contains(root)  ||
+                allRoots.contains(root) ||
+                "store".equals(root);
 
-            	if (!ok) {
-            	    processingEnv.getMessager().printMessage(
-            	        Diagnostic.Kind.ERROR,
-            	        "Variable '{{" + v + "}}' no declarada con @Bind, @State o store.* en "
-            	          + cls.getSimpleName(),
-            	        tpl
-            	    );
-            	}
-
-        }
-
-        
-     // --- 4·bis  Valida props enlazados ----------------------------------
-        Matcher p = PROP_BIND_PATTERN.matcher(bodySrc);
-        while (p.find()) {
-            String expr  = p.group(2).trim();          // contenido entre comillas
-            String root  = expr.contains(".") ? expr.substring(0, expr.indexOf('.'))
-                                              : expr;
-
-            boolean ok = allRoots.contains(root)      // @Bind propio o hijo
-                    || root.equals("this")          // alias genérico
-                    || root.equals("store");        // ✅ store.* permitido en props
-
-            
             if (!ok) {
-                processingEnv.getMessager().printMessage(
-                    Diagnostic.Kind.ERROR,
-                    "Enlace de prop ':"
-                      + p.group(1) + "=\"" + expr + "\"' no resuelve a ningún @Bind",
-                    tpl
-                );
+                 processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR, 
+                     "Variable '{{" + cleanV + "}}' no declarada en " + cls.getSimpleName(), tpl);
             }
         }
-        
-        
-     // --- 5  Rechaza alias ref duplicados --------------------------------
-
-
-
     }
-}
 
+    private void extractVarsFromText(String text, Set<String> target) {
+        Matcher m = VAR.matcher(text);
+        while (m.find()) target.add(m.group(1));
+    }
+
+    private record ParseResult(Set<String> vars, Set<String> refs) {}
+}

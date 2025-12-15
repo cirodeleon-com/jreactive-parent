@@ -1083,51 +1083,80 @@ function setupEventBindings() {
 function hydrateEventDirectives(root = document) {
   const EVENT_DIRECTIVES = ['click', 'change', 'input', 'submit'];
 
-  // Recorremos TODOS los elementos dentro de root
   const all = (root === document ? document.body : root).querySelectorAll('*');
 
   all.forEach(el => {
-    // Set para evitar re-hidratar el mismo evento en el mismo elemento
     const hydratedSet = el._jrxHydratedEvents || (el._jrxHydratedEvents = new Set());
 
     EVENT_DIRECTIVES.forEach(evtName => {
-      const attr = '@' + evtName; // "@click", "@change", etc.
+      const attr = '@' + evtName;
 
-      // Si no tiene ese atributo o ya lo hidratamos, saltamos
-      if (!el.hasAttribute(attr) || hydratedSet.has(evtName)) {
+      if (!el.hasAttribute(attr) || hydratedSet.has(evtName)) return;
+
+      let value = (el.getAttribute(attr) || '').trim();
+
+      // ✅ Si está vacío o todavía viene como {{...}}, lo quitamos y no hidratamos.
+      // Esto evita que queden "restos" y rompe menos el DOM.
+      if (!value || value.includes('{{')) {
+        el.removeAttribute(attr);
+        hydratedSet.add(evtName);
         return;
       }
 
-      const value = el.getAttribute(attr);
-      if (!value) return;
-
-      let compId  = null;
-      let method  = null;
+      let compId = null;
+      let method = null;
       let rawArgs = '';
 
-      // 1) Forma completa: Componente#1.metodo(arg1,arg2)
-      let m = value.match(/^([\w#.-]+)\.([\w]+)\((.*)\)$/);
-      if (m) {
-        compId  = m[1];
-        method  = m[2];
-        rawArgs = m[3].trim();
+      // Soportar:
+      // 1) Comp#1.metodo(a,b)
+      // 2) metodo(a,b)
+      // 3) Comp#1.metodo
+      // 4) metodo
+      let m =
+        value.match(/^([\w#.-]+)\.([\w]+)\((.*)\)$/) ||  // comp.method(args)
+        value.match(/^([\w]+)\((.*)\)$/)               ||  // method(args)
+        value.match(/^([\w#.-]+)\.([\w]+)$/)           ||  // comp.method
+        value.match(/^([\w]+)$/);                         // method
+
+      if (!m) {
+        // Formato raro -> lo limpiamos para que no quede basura
+        el.removeAttribute(attr);
+        hydratedSet.add(evtName);
+        return;
+      }
+
+      if (m.length === 4) {
+        // comp.method(args)
+        compId = m[1];
+        method = m[2];
+        rawArgs = (m[3] || '').trim();
+      } else if (m.length === 3) {
+        // method(args)  OR  comp.method
+        if (value.includes('.')) {
+          compId = m[1];
+          method = m[2];
+          rawArgs = '';
+        } else {
+          compId = null;
+          method = m[1];
+          rawArgs = (m[2] || '').trim();
+        }
       } else {
-        // 2) Forma corta: metodo(arg1,arg2)
-        m = value.match(/^([\w]+)\((.*)\)$/);
-        if (!m) return; // formato raro, lo ignoramos
-        method  = m[1];
-        rawArgs = m[2].trim();
+        // method
+        compId = null;
+        method = m[1];
+        rawArgs = '';
       }
 
       const qualified = compId ? `${compId}.${method}` : method;
-      const capEvt    = evtName.charAt(0).toUpperCase() + evtName.slice(1);
+      const capEvt = evtName.charAt(0).toUpperCase() + evtName.slice(1);
 
-      // Creamos los data-* específicos por evento
-      //  click  → data-call-click / data-param-click
-      //  change → data-call-change / data-param-change
       el.dataset[`call${capEvt}`] = qualified;
+
       if (rawArgs) {
         el.dataset[`param${capEvt}`] = rawArgs;
+      } else {
+        delete el.dataset[`param${capEvt}`];
       }
 
       hydratedSet.add(evtName);
@@ -1157,32 +1186,56 @@ function updateDomForKey(k, v) {
     }
   }
 
+  // Normalizamos el valor a string para comparar
+  const strValue = v == null ? '' : String(v);
+
   (nodes || []).forEach(el => {
     if (el.nodeType === Node.TEXT_NODE) {
       renderText(el);
     } else if (el.type === 'checkbox' || el.type === 'radio') {
       el.checked = !!v;
     } else {
-      el.value = v ?? '';
+      // inputs, textareas, selects
+      
+      // 1. Evitar actualizaciones innecesarias (rompen el cursor y parpadean)
+      if (el.value === strValue) return;
+
+      // 2. Si el usuario tiene el foco aquí, preservamos la posición del cursor
+      if (document.activeElement === el) {
+          const start = el.selectionStart;
+          const end = el.selectionEnd;
+
+          el.value = strValue;
+
+          // Restauramos el cursor (solo si el input lo soporta)
+          try {
+              if (typeof el.setSelectionRange === 'function') {
+                  el.setSelectionRange(start, end);
+              }
+          } catch (_) {
+              // Inputs como type="number" o "email" pueden lanzar error aquí, lo ignoramos
+          }
+      } else {
+          // 3. Si no tiene foco, actualizamos directamente
+          el.value = strValue;
+      }
     }
   });
 }
 
-
 function applyStateForKey(k, v) {
-  // 1) Actualizamos estado principal
+  // 1) Estado
   state[k] = v;
 
   const parts = k.split('.');
   const last  = parts.at(-1);
 
-  // 2) Alias corto universal para cualquier @State:
-  //    "HelloLeaf#1.orders"  →  state["orders"] = v
+  // 2) Alias corto
   if (parts.length > 1) {
     state[last] = v;
   }
 
-  // 3) Caso especial store: "StoreTestPage#1.store" → store.ui, store.user...
+  // 3) Caso especial store
   if (last === 'store' && v && typeof v === 'object') {
     Object.entries(v).forEach(([childKey, childVal]) => {
       const globalKey = `store.${childKey}`;
@@ -1190,16 +1243,18 @@ function applyStateForKey(k, v) {
     });
   }
 
-  // 4) Actualizar DOM para la clave completa y su alias corto
+  // ✅ 4) Primero monta/desmonta lo condicional y resuelve #each
+  // (así el DOM existe antes de intentar renderizar textos)
+  updateIfBlocks();
+  updateEachBlocks();
+
+  // ✅ 5) Ahora sí actualiza DOM (esto reindexa si hace falta y renderiza)
   updateDomForKey(k, v);
   if (parts.length > 1) {
     updateDomForKey(last, v);
   }
-
-  // 5) Re-evaluar if / each
-  updateIfBlocks();
-  updateEachBlocks();
 }
+
 
 
 /* ──────────────────────────────────────────────────────────────
@@ -1232,26 +1287,7 @@ function ensureValidationStyles() {
 }
 
 
-function clearValidationErrors() {
-  $$('input,textarea,select').forEach(el => {
-    if (!el.dataset.jrxError) return;
 
-    el.classList.remove('jrx-error');
-    delete el.dataset.jrxError;
-
-    if (typeof el.setCustomValidity === 'function') {
-      el.setCustomValidity('');
-    }
-
-    if (el._jrxErrorContainer) {
-      el._jrxErrorContainer.remove();
-      delete el._jrxErrorContainer;
-    }
-  });
-
-  // Por si hay contenedores huérfanos
-  $$('.jrx-error-msg').forEach(el => el.remove());
-}
 
 
 /** Limpia errores previos marcados por JReactive */
