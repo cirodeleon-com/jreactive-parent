@@ -513,7 +513,7 @@ function connectWs(path) {
    * 6. Primera pasada cuando el DOM está listo
    * ------------------------------------------------------------------ */
 document.addEventListener('DOMContentLoaded', () => {
-	
+  ensureLoadingUI();	
   reindexBindings(); 	
   updateIfBlocks();
   updateEachBlocks();
@@ -530,6 +530,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
 
 async function loadRoute(path = location.pathname) {
+  startLoading(); // <--- INICIO
+  try {
   if (ws && ws.readyState === WebSocket.OPEN) ws.close(1000, "route-change");
   ws = null;
 
@@ -563,6 +565,10 @@ async function loadRoute(path = location.pathname) {
   connectWs(path);
 
   app.style.visibility = '';
+  
+  } finally {
+      stopLoading(); // <--- FIN
+  }
 }
 
 
@@ -878,6 +884,8 @@ function setupEventBindings() {
         }
 
         clearValidationErrors();
+        
+        startLoading();
 
         // 👇 Igual que antes: construir args con buildValue (soporta archivos)
         const args = [];
@@ -932,6 +940,9 @@ function setupEventBindings() {
         } catch (e) {
           ok    = false;
           error = e && e.message ? e.message : String(e);
+        }finally {
+             // 👇 2. DETENER CARGA (siempre, ocurra error o no)
+             stopLoading();
         }
 
         const detail = {
@@ -981,6 +992,8 @@ function setupEventBindings() {
       }
 
       clearValidationErrors();
+      
+      startLoading();
 
       const paramList = (el.dataset.param || '')
         .split(',')
@@ -1038,6 +1051,9 @@ function setupEventBindings() {
       } catch (e) {
         ok    = false;
         error = e && e.message ? e.message : String(e);
+      }finally {
+        // 🔥 FALTA AQUÍ:
+        stopLoading();
       }
 
       const detail = {
@@ -1447,6 +1463,79 @@ function deepClone(obj) {
     return structuredClone(obj);
   }
   return JSON.parse(JSON.stringify(obj));
+}
+
+/* ──────────────────────────────────────────────────────────────
+ * Feedback Visual (Loading Bar)
+ * ────────────────────────────────────────────────────────────── */
+function ensureLoadingUI() {
+  if (document.getElementById('jrx-loading-style')) return;
+
+  // 1. Inyectar CSS
+  const style = document.createElement('style');
+  style.id = 'jrx-loading-style';
+  style.textContent = `
+    #jrx-loader {
+      position: fixed;
+      top: 0; left: 0;
+      height: 3px;
+      background: #007bff; /* Azul estándar, cámbialo a tu gusto */
+      z-index: 99999;
+      transition: width 0.2s ease, opacity 0.4s ease;
+      width: 0%;
+      opacity: 0;
+      box-shadow: 0 0 10px rgba(0, 123, 255, 0.7);
+    }
+    /* Opcional: cambiar cursor mientras carga */
+    body.jrx-loading {
+      cursor: progress;
+    }
+    /* Deshabilitar clicks mientras carga (opcional, yo prefiero no bloquear) */
+    body.jrx-loading button, 
+    body.jrx-loading a {
+      pointer-events: none; 
+      opacity: 0.8;
+    }
+  `;
+  document.head.appendChild(style);
+
+  // 2. Crear elemento barra
+  const loader = document.createElement('div');
+  loader.id = 'jrx-loader';
+  document.body.appendChild(loader);
+}
+
+// Control del estado de carga
+let activeRequests = 0;
+
+function startLoading() {
+  if (activeRequests === 0) {
+    const loader = document.getElementById('jrx-loader');
+    if (loader) {
+      loader.style.opacity = '1';
+      loader.style.width = '30%'; // Salto inicial para que se vea
+    }
+    document.body.classList.add('jrx-loading');
+  }
+  activeRequests++;
+}
+
+function stopLoading() {
+  activeRequests--;
+  if (activeRequests <= 0) {
+    activeRequests = 0;
+    const loader = document.getElementById('jrx-loader');
+    if (loader) {
+      loader.style.width = '100%'; // Completar barra
+      setTimeout(() => {
+        loader.style.opacity = '0'; // Desvanecer
+        setTimeout(() => { 
+          if (activeRequests === 0) loader.style.width = '0%'; 
+        }, 400);
+      }, 200);
+    }
+    document.body.classList.remove('jrx-loading');
+  }
 }
 
 
