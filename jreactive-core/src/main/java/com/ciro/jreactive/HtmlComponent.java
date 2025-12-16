@@ -4,8 +4,10 @@ import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet; // [Nuevo]
 import java.util.List;
 import java.util.Map;
+import java.util.Set;     // [Nuevo]
 import java.util.concurrent.atomic.AtomicReference;
 
 public abstract class HtmlComponent extends ViewLeaf {
@@ -13,6 +15,10 @@ public abstract class HtmlComponent extends ViewLeaf {
     private Map<String, ReactiveVar<?>> map;      // se crea on-demand
     private ComponentEngine.Rendered cached;
     private final List<HtmlComponent> _children = new ArrayList<>();
+    
+    // [Nuevo] Rastreador de keys de estado para auto-sync
+    private final Set<String> stateKeys = new HashSet<>(); 
+
     private final AtomicReference<ComponentState> _state =
             new AtomicReference<>(ComponentState.UNMOUNTED);
     
@@ -108,6 +114,7 @@ public abstract class HtmlComponent extends ViewLeaf {
 
     private void buildBindings() {
         map = new HashMap<>();
+        stateKeys.clear(); // [Nuevo] Limpiamos para reconstruir
 
         Class<?> c = getClass();
         while (c != null && c != Object.class) {
@@ -124,10 +131,9 @@ public abstract class HtmlComponent extends ViewLeaf {
                     ReactiveVar<?> rx;
                     if (bindAnn != null) {
                         // comportamiento actual de @Bind
-                        rx =
-                            (raw instanceof ReactiveVar<?> r) ? r :
-                            (raw instanceof Type<?> v)        ? v.rx() :
-                                                                 new ReactiveVar<>(raw);
+                        rx = (raw instanceof ReactiveVar<?> r) ? r :
+                             (raw instanceof Type<?> v)        ? v.rx() :
+                             new ReactiveVar<>(raw);
 
                         String key = bindAnn.value().isBlank() ? f.getName() : bindAnn.value();
                         rx.setActiveGuard(() -> _state() == ComponentState.MOUNTED);
@@ -141,6 +147,9 @@ public abstract class HtmlComponent extends ViewLeaf {
 
                         String key = stateAnn.value().isBlank() ? f.getName() : stateAnn.value();
                         map.put(key, srx);
+                        
+                        // [Nuevo] Guardamos la key para sincronización automática
+                        stateKeys.add(key);
                     }
 
                 } catch (IllegalAccessException e) {
@@ -151,6 +160,43 @@ public abstract class HtmlComponent extends ViewLeaf {
         }
     }
 
+    // [Nuevo] Método mágico para sincronizar estado post-ejecución
+    public void _syncState() {
+        if (map == null) buildBindings();
+
+        for (String key : stateKeys) {
+            try {
+                @SuppressWarnings("unchecked")
+                ReactiveVar<Object> rx = (ReactiveVar<Object>) map.get(key);
+                // Obtenemos valor fresco por reflection
+                Object freshValue = getFieldValueByName(key); 
+                if (rx != null) {
+                    rx.set(freshValue); // Dispara actualización al frontend
+                }
+            } catch (Exception e) {
+                System.err.println("Error auto-syncing state '" + key + "': " + e.getMessage());
+            }
+        }
+    }
+
+    // [Nuevo] Helper para obtener el valor del campo
+    private Object getFieldValueByName(String key) throws Exception {
+        Class<?> c = getClass();
+        while (c != null && c != Object.class) {
+            for (Field f : c.getDeclaredFields()) {
+                State ann = f.getAnnotation(State.class);
+                if (ann != null) {
+                    String annVal = ann.value().isBlank() ? f.getName() : ann.value();
+                    if (annVal.equals(key)) {
+                        f.setAccessible(true);
+                        return f.get(this);
+                    }
+                }
+            }
+            c = c.getSuperclass();
+        }
+        return null;
+    }
     
     
     public Map<String, Method> getCallableMethods() {
@@ -261,10 +307,4 @@ public abstract class HtmlComponent extends ViewLeaf {
         }
     }
 
-    
-    
-
-
 }
-
-

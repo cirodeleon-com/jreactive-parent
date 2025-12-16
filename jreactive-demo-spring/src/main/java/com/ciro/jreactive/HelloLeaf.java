@@ -10,30 +10,24 @@ import jakarta.validation.constraints.NotBlank;
 public class HelloLeaf extends HtmlComponent {
 
     /* 1️⃣  Haz la lista MUTABLE + reactiva */
-    @Bind
-    public Type<List<String>> fruits =
-        $(new ArrayList<>(List.of("Apple", "Banana", "Cherry")));
+    @State
+    public List<String> fruits = new ArrayList<String>();
 
     @Bind
     public Type<Boolean> showHello = $(Boolean.TRUE);
 
-    @Bind
-    public Type<String> newFruit  = $("");
+    @State
+    public String newFruit  = "";
 
     
     @Call
     public void addFruit(@NotBlank String fruta) {
         if (fruta == null || fruta.isBlank()) return;
-
-        // 1️⃣ copia la lista actual
-        var copy = new ArrayList<>(fruits.get());
-        copy.add(fruta);
-
-        // 2️⃣ envía la NUEVA instancia
-        fruits.set(copy);
-
-        newFruit.set("");
-        System.out.println("GUARDADA: " + fruta+" size" + fruits.get().size());
+       
+        fruits.add(fruta);
+        newFruit="";
+        
+        System.out.println("GUARDADA: " + fruta+" size" + fruits.size());
     }
 
 

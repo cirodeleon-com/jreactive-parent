@@ -8,5 +8,5 @@ import static java.lang.annotation.ElementType.METHOD;
 @Target(METHOD)
 @Retention(RUNTIME)
 public @interface Call {
-
+	boolean sync() default true;
 }

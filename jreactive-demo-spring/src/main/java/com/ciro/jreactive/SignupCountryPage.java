@@ -52,7 +52,7 @@ public class SignupCountryPage extends HtmlComponent {
 
         selectedCountryLabel = label;
         // Empuja el nuevo valor al frontend
-        updateState("selectedCountryLabel");
+        //updateState("selectedCountryLabel");
     }
 
     @Override

@@ -12,6 +12,7 @@ import java.lang.reflect.Parameter;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import com.ciro.jreactive.annotations.Call; 
 
 @RestController
 public class PageController {
@@ -150,6 +151,14 @@ public class PageController {
         try {
             Object result = target.invoke(owner, args);
 
+            // [Nuevo] Auto-sync: Sincronizar estado automáticamente
+            Call callAnn = target.getAnnotation(com.ciro.jreactive.annotations.Call.class);
+
+         // Solo sincronizamos si sync es true (el default)
+            if (callAnn != null && callAnn.sync() && owner instanceof HtmlComponent comp) {
+               comp._syncState();
+            }
+
             Map<String,Object> envelope = new HashMap<>();
             envelope.put("ok", true);
             if (result != null) {
@@ -170,11 +179,11 @@ public class PageController {
      * Recoge todos los métodos @Call visibles para una página.
      *
      * Regla:
-     *  - La página raíz expone:
-     *      • "PageId.metodo"  (siempre)
-     *      • "metodo"         (nombre corto, sólo en la raíz)
-     *  - Los componentes hijos SÓLO exponen:
-     *      • "CompId.metodo"
+     * - La página raíz expone:
+     * • "PageId.metodo"  (siempre)
+     * • "metodo"         (nombre corto, sólo en la raíz)
+     * - Los componentes hijos SÓLO exponen:
+     * • "CompId.metodo"
      *
      * Así evitamos colisiones de nombres cortos entre hijos.
      */
