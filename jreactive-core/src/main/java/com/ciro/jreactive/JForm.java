@@ -13,7 +13,7 @@ public class JForm extends HtmlComponent {
     @Override
     protected String template() {
         return """
-            <form class="jrx-form" @submit="{{onSubmit}}">
+            <form class="jrx-form" @submit="{{onSubmit}}" novalidate>
 
               {{#if title}}
                 <h2 class="jrx-form-title">{{title}}</h2>

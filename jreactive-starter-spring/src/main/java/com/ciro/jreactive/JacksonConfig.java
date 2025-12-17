@@ -17,6 +17,8 @@ public class JacksonConfig {
              .addModule(new JavaTimeModule())      // LocalDate, Instant, etc.
              .addModule(new Jdk8Module())          // Optional<>, etc.
              .addModule(new ParameterNamesModule())// records / ctor-based
+             .visibility(com.fasterxml.jackson.annotation.PropertyAccessor.FIELD, 
+                     com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY)
              .build();
  }
 }

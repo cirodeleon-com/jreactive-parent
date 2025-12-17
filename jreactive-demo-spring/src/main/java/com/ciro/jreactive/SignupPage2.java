@@ -42,7 +42,6 @@ public class SignupPage2 extends HtmlComponent {
         } else {
             state.lastMessage = "Usuario " + form.name + " registrado correctamente";
         }
-        updateState("state");
     }
 
     @Override

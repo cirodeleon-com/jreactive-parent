@@ -149,13 +149,17 @@ public class PageController {
 
         // 5) invocar
         try {
+        	if (owner instanceof HtmlComponent comp) {
+                comp._captureStateSnapshot();
+            }
+
+            // 2. Ejecutar el método del usuario (tu lógica)
             Object result = target.invoke(owner, args);
 
-            // [Nuevo] Auto-sync: Sincronizar estado automáticamente
+            // 👇 3. [MEJORADO] Comparar y Sincronizar (Smart Sync)
             Call callAnn = target.getAnnotation(com.ciro.jreactive.annotations.Call.class);
-
-         // Solo sincronizamos si sync es true (el default)
             if (callAnn != null && callAnn.sync() && owner instanceof HtmlComponent comp) {
+               // Ahora _syncState comparará el "ahora" con la "foto" del paso 1
                comp._syncState();
             }
 
