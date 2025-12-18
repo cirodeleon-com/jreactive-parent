@@ -37,20 +37,16 @@ public class NewStateTestPage extends HtmlComponent {
         state.items = copy;
 
         newItem="";
-        updateState("state");   // 👈 dispara ws de todo state.*
-        updateState("newItem");
     }
 
     @Call
     public void resetList() {
         state.items = new ArrayList<>();
-        updateState("state");
     }
 
     @Call
     public void changeTitle(String title) {
         state.title = title;
-        updateState("state");
     }
 
     @Override

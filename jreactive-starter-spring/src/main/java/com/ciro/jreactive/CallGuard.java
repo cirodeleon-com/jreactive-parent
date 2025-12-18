@@ -2,8 +2,8 @@ package com.ciro.jreactive;
 
 import java.time.Duration;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.Set;
+
 import org.springframework.stereotype.Component;
 
 import jakarta.validation.ConstraintViolation;
@@ -11,20 +11,32 @@ import jakarta.validation.Validator;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 
+// ✅ Imports de Caffeine (La solución al Memory Leak)
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
+
 import io.github.bucket4j.Bandwidth;
 import io.github.bucket4j.Bucket;
 
-
-
-
-
-/** Guarda los @Call:  Bean Validation + rate‑limit por método. */
+/**
+ * Guarda los @Call: Bean Validation + rate-limit por método.
+ * <p>
+ * FIX: Se reemplazó el ConcurrentHashMap estático por Caffeine Cache.
+ * Esto previene Memory Leaks limpiando buckets inactivos tras 1 hora.
+ */
 @Component
 public final class CallGuard {
 
-    private static final int RATE = 60;                   // 10 peticiones / seg
+    private static final int RATE = 60;                  // 60 peticiones / seg
     private static final Duration WINDOW = Duration.ofSeconds(1);
-    private static final Map<String, Bucket> BUCKETS = new ConcurrentHashMap<>();
+
+    // ✅ FIX: Cache inteligente en lugar de Mapa estático infinito.
+    // - expireAfterAccess: Si el usuario no llama al método en 1h, liberamos RAM.
+    // - maximumSize: Protege contra ataques que intenten saturar la memoria.
+    private final Cache<String, Bucket> buckets = Caffeine.newBuilder()
+            .expireAfterAccess(Duration.ofHours(1))
+            .maximumSize(50_000)
+            .build();
 
     private final Validator validator;
     private final ObjectMapper mapper;
@@ -47,13 +59,19 @@ public final class CallGuard {
         return viol; // JReactiveApplication decidirá qué hacer con ellas
     }
 
-
-    /* true si todavía está dentro del límite */
+    /* true si todavía está dentro del límite */
     public boolean tryConsume(String key) {
-        Bucket b = BUCKETS.computeIfAbsent(key,
-            k -> Bucket.builder()                 // ←   builder() está en Bucket
-                      .addLimit(Bandwidth.simple(RATE, WINDOW))
-                      .build());
+        // ✅ USO DE CAFFEINE:
+        // Obtiene el bucket existente o crea uno nuevo de forma atómica y segura.
+        Bucket b = buckets.get(key, k -> 
+             Bucket.builder()
+                   .addLimit(Bandwidth.builder()
+            		    .capacity(RATE)
+            		    .refillGreedy(RATE, WINDOW)
+            		    .build())
+                   .build()
+        );
+        
         return b.tryConsume(1);
     }
     
@@ -63,7 +81,6 @@ public final class CallGuard {
         int dot = propertyPath.indexOf('.');
         return (dot < 0) ? propertyPath : propertyPath.substring(dot + 1);
     }
-
 
     public String errorJson(String code, String msg) {
         try {
@@ -113,7 +130,4 @@ public final class CallGuard {
             return errorJson("VALIDATION", global);
         }
     }
-
-
 }
-

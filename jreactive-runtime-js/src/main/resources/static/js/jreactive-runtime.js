@@ -73,6 +73,12 @@ function escapeHtml(str) {
 function resolveExpr(expr) {
   const safe = v => (typeof v === 'string' ? escapeHtml(v) : v ?? '');
   if (!expr) return '';
+  
+  // 🔥 SEGURIDAD: Si intentan acceder a prototipos, cortamos de raíz.
+  if (expr.includes('__proto__') || expr.includes('constructor') || expr.includes('prototype')) {
+      console.warn('⚠️ Security: Access denied to property path:', expr);
+      return '';
+  }
 
   // 1) Si la expresión completa existe en el estado → devuélvela directo
   if (expr in state) return safe(state[expr]);
@@ -325,10 +331,13 @@ function resolveInContext(expr, alias, item) {
 /* ------------------------------------------------------------------
  *  #each con diff incremental (keyed) + soporte anidado con alias
  * ------------------------------------------------------------------ */
+/* ------------------------------------------------------------------
+ * #each con diff incremental (keyed) + soporte anidado con alias
+ * ------------------------------------------------------------------ */
 function updateEachBlocks() {
   document.querySelectorAll('template[data-each]').forEach(tpl => {
 
-    /* 1 · clave de la lista y alias ---------------------------------- */
+    /* 1· clave de la lista y alias ---------------------------------- */
     const [listExprRaw, aliasRaw] = tpl.dataset.each.split(':');
     const listExpr = listExprRaw ? listExprRaw.trim() : '';
     const alias    = aliasRaw ? aliasRaw.trim() : 'this';
@@ -337,26 +346,33 @@ function updateEachBlocks() {
     let raw = resolveExpr(listExpr);
     const data = Array.isArray(raw) ? raw : [];
 
-    /* 2 · sentinelas & mapas ---------------------------------------- */
+    /* 2· sentinelas & mapas ---------------------------------------- */
     if (!tpl._start) {
       tpl._start = document.createComment('each-start');
       tpl._end   = document.createComment('each-end');
       tpl.after(tpl._end);
       tpl.after(tpl._start);
     }
-    const prev = tpl._keyMap || new Map();      // key → {nodes}
+    const prev = tpl._keyMap || new Map();       // key → {nodes, item}
     const next = new Map();
     const frag = document.createDocumentFragment();
 
-    /* 3 · recorrido con reuse --------------------------------------- */
+    /* 3 · recorrido con reuse --------------------------------------- */
     data.forEach((item, idx) => {
       const key = getKey(item, idx);            // helper: usa item.id o idx
       let entry = prev.get(key);
 
-      /* 3-a) si no existía, renderiza nodos */
+      // 🔥 FIX: Detectar si el contenido cambió (SET/Update)
+      // Si el nodo existe (entry) pero el dato es diferente, lo borramos para regenerarlo.
+      if (entry && entry.item !== item) {
+          entry.nodes.forEach(n => n.remove());
+          entry = null; 
+      }
+
+      /* 3-a) si no existía (o forzamos null arriba), renderiza nodos */
       if (!entry) {
         const html  = renderTemplate(tpl.innerHTML, item, idx, alias);
-        const nodes = htmlToNodes(html);        // [Node, Node, ...]
+        const nodes = htmlToNodes(html);
 
         /* ---- 3-a-1) #each anidados que usan el alias padre -------- */
         nodes.forEach(n => {
@@ -369,12 +385,9 @@ function updateEachBlocks() {
             const innerAlias       = innerAliasRaw || 'this';
 
             // Solo procesamos los que hacen referencia al alias padre:
-            //   ord.items
-            //   ord.algo
             if (!innerListExprRaw ||
                 (innerListExprRaw !== alias &&
                  !innerListExprRaw.startsWith(alias + '.'))) {
-              // este #each NO depende del alias padre → lo dejamos
               return;
             }
 
@@ -385,7 +398,7 @@ function updateEachBlocks() {
               const innerHtml  = renderTemplate(innerTpl.innerHTML, childItem, childIdx, innerAlias);
               const innerNodes = htmlToNodes(innerHtml);
 
-              // #if / #else internos que usan el alias del hijo (it, item, etc.)
+              // #if / #else internos
               innerNodes.forEach(nn => {
                 if (nn.nodeType !== 1) return;
                 nn.querySelectorAll?.('template[data-if], template[data-else]')
@@ -405,12 +418,11 @@ function updateEachBlocks() {
                       }
                       show = !!v;
                     } else {
-                      // puede ser cond con el alias padre o global
                       show = resolveInContext(cond, alias, item);
                     }
 
                     if ((show && !isElse) || (!show && isElse)) mount(t);
-                    else                                         unmount(t);
+                    else                                        unmount(t);
                     t.remove();
                   });
               });
@@ -418,7 +430,6 @@ function updateEachBlocks() {
               innerFrag.append(...innerNodes);
             });
 
-            // Reemplazamos el <template data-each="ord.items:it"> por sus ítems
             innerTpl.replaceWith(innerFrag);
           });
         });
@@ -430,34 +441,36 @@ function updateEachBlocks() {
              .forEach(innerTpl => {
                const cond   = innerTpl.dataset.if || innerTpl.dataset.else;
                const isElse = innerTpl.hasAttribute('data-else');
-               const show   = resolveInContext(cond, alias, item);     // helper
+               const show   = resolveInContext(cond, alias, item);
 
                if ((show && !isElse) || (!show && isElse)) mount(innerTpl);
-               else                                         unmount(innerTpl);
+               else                                        unmount(innerTpl);
 
-               /* ⬇️  elimina el template para que updateIfBlocks lo ignore */
                innerTpl.remove();
-            });
+             });
           }
         });
 
-        entry = { nodes };
+        // Guardamos 'item' para comparar en el futuro
+        entry = { nodes, item };
+      } else {
+         // Si reutilizamos, actualizamos la referencia
+         entry.item = item;
       }
 
-      frag.append(...entry.nodes);   // mantiene orden definitivo
-      next.set(key, entry);          // guarda en nuevo mapa
-      prev.delete(key);              // marca como “todavía vivo”
+      frag.append(...entry.nodes);
+      next.set(key, entry);
+      prev.delete(key);
     });
 
-    /* 4 · remueve nodos que ya no existen --------------------------- */
+    /* 4· remueve nodos que ya no existen --------------------------- */
     prev.forEach(e => e.nodes.forEach(n => n.remove()));
 
-    /* 5 · inserta fragmento resultante ------------------------------ */
+    /* 5· inserta fragmento resultante ------------------------------ */
     tpl._end.before(frag);
     tpl._keyMap = next;              // reemplaza mapa viejo
   });
 }
-
 
 
 
@@ -496,11 +509,139 @@ function connectWs(path) {
 
     console.log('[WS RX NORMALIZED]', batch);
 
-    batch.forEach(({ k, v }) => {
-      // 👇 ahora delegamos todo a la función helper
-      applyStateForKey(k, v);
+    batch.forEach(msg => {
+      // 1. Si es un paquete DELTA (optimizado)
+      if (msg.delta) {
+        applyDelta(msg.k, msg.type, msg.changes);
+      } 
+      // 2. Si es un paquete normal (snapshot completo)
+      else {
+        // Compatibilidad con el formato antiguo que trae k y v
+        applyStateForKey(msg.k, msg.v);
+      }
     });
   };
+  
+  // Agrega esto en jreactive-runtime.js
+
+/* === En jreactive-runtime.js === */
+
+function resolveTarget(key) {
+  // 1. Intento directo: busca la clave exacta que mandó el servidor
+  // Ej: "FireTestLeaf#1.orders"
+  let target = state[key];
+
+  // 2. Fallback: Intento por alias corto si no se encontró
+  // Ej: si la key es "FireTestLeaf#1.orders", el alias corto es "orders"
+  if (!target && key.includes('.')) {
+    const shortKey = key.split('.').at(-1);
+    target = state[shortKey];
+  }
+
+  // 3. Fallback para "store" global
+  // Si la key es algo como "store.ui", a veces el objeto real está en globalState
+  if (!target && key.startsWith('store.')) {
+     // Intenta buscar en el estado global si usas window.JRX.Store
+     const storeKey = key.replace('store.', '');
+     if (window.JRX && window.JRX.Store) {
+        return window.JRX.Store.get(storeKey);
+     }
+  }
+
+  return target;
+}
+  
+  // Nueva función para aplicar parches quirúrgicos
+function applyDelta(key, type, changes) {
+    // Obtenemos referencia al objeto actual en el estado
+    // (Usamos la lógica de punteros de setNestedProperty o similar)
+    // Para simplificar, asumimos que 'key' es root o usamos un helper
+    let target = resolveTarget(key); // Necesitas implementar esto o usar state[key]
+    if (!target) return; // Si no existe, no podemos parchear (debería pedir resync)
+
+    changes.forEach(ch => {
+        if (type === 'list') {
+            applyListChange(target, ch);
+        } else if (type === 'map') {
+            applyMapChange(target, ch);
+        } else if (type === 'set') {
+            applySetChange(target, ch);
+        }
+    });
+
+    // IMPORTANTE: Forzar actualización de UI después del parcheo
+    // Como modificamos el objeto "in-place", el sistema de binding podría no detectarlo
+    // si no llamamos explícitamente a la actualización.
+    updateDomForKey(key, target);
+    updateIfBlocks();
+    updateEachBlocks();
+}
+
+function applyListChange(arr, ch) {
+    // ch = { op: "ADD"|"REMOVE"|"CLEAR", index: 1, item: ... }
+    switch (ch.op) {
+        case 'ADD':
+            // SmartList.java usa "index" para inserciones [cite: 191]
+            if (ch.index >= arr.length) arr.push(ch.item);
+            else arr.splice(ch.index, 0, ch.item);
+            break;
+        case 'REMOVE':
+            // SmartList.java envía índice para remover [cite: 192, 194]
+            arr.splice(ch.index, 1);
+            break;
+        case 'CLEAR':
+            arr.length = 0;
+            break;
+            
+        case 'SET':
+            // Reemplazamos el objeto en esa posición.
+            // Al terminar applyDelta, el sistema de bindings detectará 
+            // que los valores dentro de este objeto cambiaron y actualizará el DOM.
+            if (ch.index >= 0 && ch.index < arr.length) {
+                arr[ch.index] = ch.item;
+            }
+            break;    
+    }
+}
+
+function applyMapChange(obj, ch) {
+    // ch = { op: "PUT"|"REMOVE"|"CLEAR", key: "foo", value: "bar" } [cite: 206]
+    switch (ch.op) {
+        case 'PUT':
+            obj[ch.key] = ch.value;
+            break;
+        case 'REMOVE':
+            delete obj[ch.key];
+            break;
+        case 'CLEAR':
+            for (const k in obj) delete obj[k];
+            break;
+    }
+}
+
+function applySetChange(arr, ch) {
+    // En JS los Sets suelen serializarse como Arrays.
+    // ch = { op: "ADD"|"REMOVE", item: ... } [cite: 217]
+    switch (ch.op) {
+        case 'ADD':
+            // Evitar duplicados simples
+            if (!arr.includes(ch.item)) arr.push(ch.item); 
+            break;
+        case 'REMOVE':
+            const idx = arr.indexOf(ch.item); // OJO: Comparación por referencia/valor simple
+            if (idx > -1) arr.splice(idx, 1);
+            else {
+               // Si son objetos complejos, necesitaríamos un ID para encontrarlo
+               const idIdx = arr.findIndex(x => x.id === ch.item.id);
+               if (idIdx > -1) arr.splice(idIdx, 1);
+            }
+            break;
+        case 'CLEAR':
+            arr.length = 0;
+            break;
+    }
+}
+  
 }
 
 
@@ -692,6 +833,12 @@ function setNestedProperty(obj, path, value) {
   let ref = obj;
   for (let i = 0; i < parts.length - 1; i++) {
     const key = parts[i];
+    
+    // 🔥 SEGURIDAD: Bloquear claves prohibidas en medio de la ruta
+    if (key === '__proto__' || key === 'constructor' || key === 'prototype') {
+        return; 
+    }
+    
     const nextIsIndex = /^\d+$/.test(parts[i + 1]);
 
     if (!(key in ref)) {
@@ -703,7 +850,10 @@ function setNestedProperty(obj, path, value) {
   }
   //   3.  Asigna el valor en la última clave
   const last = parts.at(-1);
-  ref[last] = value;
+  // 🔥 SEGURIDAD: Bloquear clave final prohibida
+  if (last !== '__proto__' && last !== 'constructor' && last !== 'prototype') {
+      ref[last] = value;
+  }
 }
 
 /* ─────────────────────────────────────────────────────────

@@ -255,9 +255,9 @@ public abstract class HtmlComponent extends ViewLeaf {
                 rx.set(newValue);
                 
              // 👇 4. LIMPIEZA POST-ENVÍO (Resetear flags)
-                if (newValue instanceof SmartList<?> s) s.clearDirty();
-                else if (newValue instanceof SmartSet<?> s) s.clearDirty();
-                else if (newValue instanceof SmartMap<?,?> s) s.clearDirty();
+             //   if (newValue instanceof SmartList<?> s) s.clearDirty();
+             //   else if (newValue instanceof SmartSet<?> s) s.clearDirty();
+             //   else if (newValue instanceof SmartMap<?,?> s) s.clearDirty();
 
             } catch (Exception e) {
                 System.err.println("Error Smart-Sync '" + key + "': " + e.getMessage());

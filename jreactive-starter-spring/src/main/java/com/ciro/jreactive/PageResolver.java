@@ -5,6 +5,12 @@ import org.springframework.stereotype.Component;
 
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
+
+// ✅ Imports para Caffeine Cache
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
+import com.github.benmanes.caffeine.cache.RemovalCause;
 
 @Component
 public class PageResolver {
@@ -14,29 +20,49 @@ public class PageResolver {
     /** Clave compuesta: sesión + path concreto ("/users/42") */
     private record PageKey(String sessionId, String path) {}
 
-    /** Instancias cacheadas por (sessionId, path) */
-    private final Map<PageKey, HtmlComponent> instances = new ConcurrentHashMap<>();
+    /** * ✅ FIX MULTI-TAB: Cache inteligente en lugar de Mapa simple.
+     * Guarda las instancias de páginas vivas.
+     */
+    private final Cache<PageKey, HtmlComponent> instances;
 
     /** Parámetros extraídos del path, también por (sessionId, path) */
     private final Map<PageKey, Map<String,String>> paramsByPage = new ConcurrentHashMap<>();
 
     public PageResolver(RouteRegistry registry) {
         this.registry = registry;
+        
+        // Configuración de la Cache
+        this.instances = Caffeine.newBuilder()
+            .expireAfterAccess(10, TimeUnit.MINUTES) // 1. Se mantiene viva 10 min tras el último uso
+            .maximumSize(5_000)                      // 2. Límite de seguridad
+            // 3. Listener de limpieza automática:
+            .removalListener((PageKey key, HtmlComponent comp, RemovalCause cause) -> {
+                // Limpiamos los parámetros asociados
+                paramsByPage.remove(key);
+                
+                // Desmontamos el componente correctamente para liberar recursos
+                if (comp != null) {
+                    comp._unmountRecursive();
+                }
+            })
+            .build();
     }
 
     /** Devuelve (o crea) la página asociada al path y sesión, e inyecta los @Param */
     public HtmlComponent getPage(String sessionId, String path) {
         PageKey key = new PageKey(sessionId, path);
-        return instances.computeIfAbsent(key, p -> {
+        
+        // ✅ Caffeine gestiona la creación atómica con 'get'
+        return instances.get(key, k -> {
             RouteRegistry.Result res = registry.resolveWithInstance(path);
             HtmlComponent comp = res.component();
-            comp._injectParams(res.params());          // método package-private en HtmlComponent
-            paramsByPage.put(p, res.params());
+            comp._injectParams(res.params());
+            paramsByPage.put(k, res.params());
             return comp;
         });
     }
 
-    /** Obtén los parámetros de ruta ya parseados para esa sesión+path (útil para @Call, etc.) */
+    /** Obtén los parámetros de ruta ya parseados para esa sesión+path */
     public Map<String,String> getParams(String sessionId, String path) {
         return paramsByPage.getOrDefault(new PageKey(sessionId, path), Map.of());
     }
@@ -46,35 +72,22 @@ public class PageResolver {
         return getPage(sessionId, "/");
     }
 
-    /** Limpia cache SOLO para la sesión + path concretos (ej. route-change) */
+    /** * ✅ FIX: Ya NO borramos la página manualmente al cambiar de ruta.
+     * Esto permite que si el usuario tiene la misma página abierta en otra pestaña,
+     * esa pestaña siga viva. La página expirará sola por tiempo (Caffeine).
+     */
     public void evict(String sessionId, String path) {
-        PageKey key = new PageKey(sessionId, path);
-        HtmlComponent inst = instances.remove(key);
-        paramsByPage.remove(key);
-        if (inst != null) {
-            inst._unmountRecursive();              // ← UNMOUNT aquí (en cascada)
-        }
+        // NO-OP: Dejamos que el Cache expire solo.
+        // (El WebSocket handler llama a esto, pero ahora lo ignoramos intencionalmente)
     }
 
     /**
-     * Limpia TODAS las páginas asociadas a una sesión HTTP concreta.
-     * Se usa cuando la sesión se destruye (expira / logout, etc.).
+     * Limpia TODAS las páginas de una sesión (Logout / Expiración HTTP).
+     * Esto es vital para liberar memoria cuando el usuario se va definitivamente.
      */
     public void evictAll(String sessionId) {
-        instances.entrySet().removeIf(entry -> {
-            PageKey key  = entry.getKey();
-            HtmlComponent inst = entry.getValue();
-
-            if (!key.sessionId().equals(sessionId)) {
-                return false; // dejamos esta entrada
-            }
-
-            // Eliminamos también parámetros y hacemos unmount del árbol
-            paramsByPage.remove(key);
-            if (inst != null) {
-                inst._unmountRecursive();
-            }
-            return true; // removeIf → borra esta entry
-        });
+        // Al eliminar las claves del mapa de Caffeine, se dispara el removalListener
+        // que se encarga de llamar a _unmountRecursive() automáticamente.
+        instances.asMap().keySet().removeIf(key -> key.sessionId().equals(sessionId));
     }
 }

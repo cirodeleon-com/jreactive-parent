@@ -2,23 +2,25 @@ package com.ciro.jreactive.smart;
 
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 
+/**
+ * Set reactivo Thread-Safe.
+ */
 public class SmartSet<E> extends HashSet<E> {
 
-    private final List<Change> changes = new ArrayList<>();
-    private boolean dirty = false;
+    private final List<Change> changes = Collections.synchronizedList(new ArrayList<>());
+    private volatile boolean dirty = false;
 
     public SmartSet() { super(); }
     public SmartSet(Collection<? extends E> c) { super(c); }
 
-    // En un Set, el cambio es solo el objeto, sin posición
     public record Change(String op, Object item) {}
 
     @Override
-    public boolean add(E e) {
-        // Solo registramos si realmente se agregó (no existía)
+    public synchronized boolean add(E e) {
         if (super.add(e)) {
             changes.add(new Change("ADD", e));
             dirty = true;
@@ -28,8 +30,7 @@ public class SmartSet<E> extends HashSet<E> {
     }
 
     @Override
-    public boolean remove(Object o) {
-        // Solo registramos si realmente se borró (existía)
+    public synchronized boolean remove(Object o) {
         if (super.remove(o)) {
             changes.add(new Change("REMOVE", o));
             dirty = true;
@@ -39,7 +40,7 @@ public class SmartSet<E> extends HashSet<E> {
     }
 
     @Override
-    public void clear() {
+    public synchronized void clear() {
         if (!this.isEmpty()) {
             changes.add(new Change("CLEAR", null));
             dirty = true;
@@ -60,5 +61,21 @@ public class SmartSet<E> extends HashSet<E> {
     public void clearDirty() {
         dirty = false;
         changes.clear();
+    }
+    
+    public void clearChanges() {
+        this.changes.clear();
+        this.dirty = false;
+    }
+    
+    /**
+     * Fuerza la actualización de un elemento (Remove + Add).
+     */
+    public synchronized void update(E element) {
+        if (this.contains(element)) {
+            changes.add(new Change("REMOVE", element));
+            changes.add(new Change("ADD", element));
+            dirty = true;
+        }
     }
 }

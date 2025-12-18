@@ -1,42 +1,41 @@
 package com.ciro.jreactive.smart;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * Mapa reactivo Thread-Safe.
+ */
 public class SmartMap<K, V> extends HashMap<K, V> {
 
-    private final List<Change> changes = new ArrayList<>();
-    private boolean dirty = false;
+    private final List<Change> changes = Collections.synchronizedList(new ArrayList<>());
+    private volatile boolean dirty = false;
 
     public SmartMap() { super(); }
     public SmartMap(Map<? extends K, ? extends V> m) { super(m); }
 
-    // Delta: Qué clave cambió y cuál es su nuevo valor (si aplica)
     public record Change(String op, Object key, Object value) {}
 
     @Override
-    public V put(K key, V value) {
-        // Podríamos optimizar verificando si el valor nuevo es equals al anterior
-        // pero por ahora asumimos que un PUT siempre es una intención de cambio.
+    public synchronized V put(K key, V value) {
         V old = super.put(key, value);
-        
         changes.add(new Change("PUT", key, value));
         dirty = true;
-        
         return old;
     }
 
     @Override
-    public void putAll(Map<? extends K, ? extends V> m) {
+    public synchronized void putAll(Map<? extends K, ? extends V> m) {
         for (Map.Entry<? extends K, ? extends V> e : m.entrySet()) {
-            put(e.getKey(), e.getValue()); // Reutilizamos put para registrar cada cambio
+            put(e.getKey(), e.getValue());
         }
     }
 
     @Override
-    public V remove(Object key) {
+    public synchronized V remove(Object key) {
         if (containsKey(key)) {
             changes.add(new Change("REMOVE", key, null));
             dirty = true;
@@ -46,7 +45,7 @@ public class SmartMap<K, V> extends HashMap<K, V> {
     }
 
     @Override
-    public void clear() {
+    public synchronized void clear() {
         if (!isEmpty()) {
             changes.add(new Change("CLEAR", null, null));
             dirty = true;
@@ -67,5 +66,16 @@ public class SmartMap<K, V> extends HashMap<K, V> {
     public void clearDirty() {
         dirty = false;
         changes.clear();
+    }
+    
+    public void clearChanges() {
+        this.changes.clear();
+        this.dirty = false;
+    }
+    
+    public synchronized void update(K key) {
+        if (this.containsKey(key)) {
+            this.put(key, this.get(key));
+        }
     }
 }

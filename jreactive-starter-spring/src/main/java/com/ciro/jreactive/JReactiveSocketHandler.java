@@ -7,6 +7,7 @@ import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
 import org.springframework.web.socket.handler.TextWebSocketHandler;
+import com.ciro.jreactive.smart.*;
 
 import java.io.IOException;
 import java.util.*;
@@ -64,7 +65,7 @@ public class JReactiveSocketHandler extends TextWebSocketHandler {
         for (var e : bindings.entrySet()) {
         	System.out.println("WS‑INIT  " + e.getKey() + " = " + e.getValue().get());
             if (s.isOpen()) {
-                s.sendMessage(jsonSingle(e.getKey(), e.getValue().get()));
+                s.sendMessage(jsonSingle(e.getKey(), e.getValue().get(),false));
             }
         }
     }
@@ -107,7 +108,7 @@ public class JReactiveSocketHandler extends TextWebSocketHandler {
     private void sendImmediate(String k, Object v) {
         TextMessage msg;
         try {
-            msg = jsonSingle(k, v);
+            msg = jsonSingle(k, v, true);
         } catch (Exception e) {
             return;
         }
@@ -164,12 +165,37 @@ public class JReactiveSocketHandler extends TextWebSocketHandler {
         try {
             // convertimos a lista [{k:..., v:...}, ...]
             List<Map<String, Object>> payload = new ArrayList<>(lastByKey.size());
+            /* === En JReactiveSocketHandler.java, dentro de flushQueue() === */
+
+            /* Dentro del forEach en flushQueue */
             lastByKey.forEach((k, v) -> {
                 Map<String, Object> m = new HashMap<>();
                 m.put("k", k);
-                m.put("v", v);
+
+                if (v instanceof SmartList<?> list && list.isDirty()) {
+                    m.put("delta", true);
+                    m.put("type", "list");
+                    m.put("changes", new ArrayList<>(list.getChanges())); // 1. Copia los cambios
+                    list.clearChanges();                                  // 2. 🔥 ¡LIMPIAR LA BITÁCORA!
+                } 
+                else if (v instanceof SmartMap<?,?> map && map.isDirty()) {
+                    m.put("delta", true);
+                    m.put("type", "map");
+                    m.put("changes", new ArrayList<>(map.getChanges()));    // 1. Copia
+                    map.clearChanges();                                   // 2. 🔥 LIMPIAR
+                } 
+                else if (v instanceof SmartSet<?> set && set.isDirty()) {
+                    m.put("delta", true);
+                    m.put("type", "set");
+                    m.put("changes", new ArrayList<>(set.getChanges()));  // 1. Copia
+                    set.clearChanges();                                   // 2. 🔥 LIMPIAR
+                } 
+                else {
+                    m.put("v", v);
+                }
                 payload.add(m);
             });
+            
             msg = new TextMessage(mapper.writeValueAsString(payload));
         } catch (IOException ex) {
             return;
@@ -192,14 +218,54 @@ public class JReactiveSocketHandler extends TextWebSocketHandler {
         });
     }
 
-    /* JSON helpers */
+ // En JReactiveSocketHandler.java
+
+ // Importamos tus clases Smart
+
+
+ // Helper para compatibilidad interna si alguien lo llama sin boolean
     private TextMessage jsonSingle(String k, Object v) throws IOException {
+        return jsonSingle(k, v, true); 
+    }
+
+    // El método real con la lógica protegida
+    private TextMessage jsonSingle(String k, Object v, boolean allowDelta) throws IOException {
         Map<String, Object> payload = new HashMap<>();
         payload.put("k", k);
-        payload.put("v", v);
+
+        // Solo entramos a la lógica Smart si:
+        // 1. allowDelta es TRUE (es un broadcast, no una conexión inicial)
+        // 2. El objeto es Smart y está sucio
+        if (allowDelta && v instanceof SmartList<?> list && list.isDirty()) {
+            payload.put("delta", true);
+            payload.put("type", "list");
+            payload.put("changes", new ArrayList<>(list.getChanges())); 
+            System.out.println("🟢 [OPTIMIZADO] Enviando DELTA para: " + k);
+            list.clearChanges(); 
+        } 
+        else if (allowDelta && v instanceof SmartMap<?,?> map && map.isDirty()) {
+            payload.put("delta", true);
+            payload.put("type", "map");
+            payload.put("changes", new ArrayList<>(map.getChanges()));
+            map.clearChanges();
+        }
+        else if (allowDelta && v instanceof SmartSet<?> set && set.isDirty()) {
+            payload.put("delta", true);
+            payload.put("type", "set");
+            payload.put("changes", new ArrayList<>(set.getChanges())); 
+            set.clearChanges();
+        }
+        else {
+            // Fallback: Snapshot completo (para inicio o si no hay cambios smart)
+            payload.put("v", v);
+            // Opcional: Log solo si es una colección grande para no spamear
+            if (v instanceof Collection) {
+                 System.out.println("🔴 [SNAPSHOT] Enviando objeto completo: " + k);
+            }
+        }
+        
         return new TextMessage(mapper.writeValueAsString(payload));
-    }
-    
+    }    
     /* Recoger bindings de todo el árbol */
     private Map<String, ReactiveVar<?>> collect(ViewNode node) {
         Map<String, ReactiveVar<?>> map = new HashMap<>();
