@@ -28,6 +28,14 @@
      <artifactId>jreactive-runtime-js</artifactId>
      <version>${project.version}</version>
   </dependency>
+  
+  <dependency>
+  <groupId>com.ciro</groupId>
+  <artifactId>jreactive-runtime-jvm</artifactId>
+  <version>${project.version}</version>
+</dependency>
+
+
 
   
     <dependency>

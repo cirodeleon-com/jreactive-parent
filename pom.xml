@@ -38,6 +38,8 @@
     <module>jreactive-core</module>
     <module>jreactive-runtime-js</module> 
     <module>jreactive-demo-spring</module>
+    <module>jreactive-standalone</module>
+    <module>jreactive-runtime-jvm</module>
   </modules>
 
   <build>

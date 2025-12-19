@@ -3,7 +3,7 @@ package com.ciro.jreactive.router;
 import java.util.*;
 import java.util.regex.*;
 
-final class PathPattern {
+public final class PathPattern {
     final Pattern regex;
     final List<String> names;
 
@@ -12,7 +12,7 @@ final class PathPattern {
         this.names = names;
     }
 
-    static PathPattern compile(String template) {
+    public static PathPattern compile(String template) {
         // "/users/{id}/orders/{oid}" ->  "^/users/([^/]+)/orders/([^/]+)$"
         Matcher m = Pattern.compile("\\{([^/}]+)}").matcher(template);
         StringBuffer sb = new StringBuffer("^");
@@ -29,7 +29,7 @@ final class PathPattern {
         return new PathPattern(Pattern.compile(sb.toString()), names);
     }
 
-    Map<String,String> match(String path) {
+    public Map<String,String> match(String path) {
         Matcher m = regex.matcher(path);
         if (!m.matches()) return null;
         Map<String,String> vals = new LinkedHashMap<>();
