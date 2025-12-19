@@ -21,7 +21,6 @@ public class JrxProtocolHandler {
     private static final Logger log = LoggerFactory.getLogger(JrxProtocolHandler.class);
 
     private final Map<String, ReactiveVar<?>> bindings;
-    // 🔥 Usamos la interfaz SPI, no la sesión de Spring
     private final Set<JrxSession> sessions = ConcurrentHashMap.newKeySet();
     
     private final ObjectMapper mapper;
@@ -36,6 +35,8 @@ public class JrxProtocolHandler {
     private final ConcurrentLinkedQueue<Event> queue = new ConcurrentLinkedQueue<>();
     private final AtomicInteger queueSize = new AtomicInteger(0);
     private final AtomicBoolean flushScheduled = new AtomicBoolean(false);
+    
+    // Lista de tareas de limpieza (desuscripción de listeners)
     private final List<Runnable> disposables = new ArrayList<>();
 
     private record Event(String k, Object v) {}
@@ -56,29 +57,26 @@ public class JrxProtocolHandler {
         /* Recoge recursivamente TODO el árbol */
         this.bindings = collect(root);
 
-        /* listeners para broadcast */
-        //bindings.forEach((k, v) -> v.onChange(val -> broadcast(k, val)));
-        
+        /* listeners para broadcast con limpieza automática */
         bindings.forEach((k, v) -> {
-            // 👇 Guardamos el ticket de desuscripción
+            // Guardamos el ticket de desuscripción
             Runnable unsubscribe = v.onChange(val -> broadcast(k, val));
             disposables.add(unsubscribe);
         });
-        
     }
 
     // --- CICLO DE VIDA (Llamado por el adaptador) ---
 
     public void onOpen(JrxSession s) {
         sessions.add(s);
-        // Enviar estado inicial
+        // Enviar estado inicial (Snapshot)
         for (var e : bindings.entrySet()) {
-            System.out.println("JRX-INIT  " + e.getKey() + " = " + e.getValue().get());
             if (s.isOpen()) {
                 try {
+                    // false = handshake inicial siempre es snapshot completo
                     s.sendText(jsonSingle(e.getKey(), e.getValue().get(), false));
                 } catch (Exception ex) {
-                    log.error("Error sending init state", ex);
+                    log.error("Error sending init state for key: " + e.getKey(), ex);
                 }
             }
         }
@@ -89,9 +87,11 @@ public class JrxProtocolHandler {
         if (sessions.isEmpty()) {
             queue.clear();
             queueSize.set(0);
-         // 🔥 CRÍTICO: Desconectar los cables al salir
-            // Esto evita que este handler siga recibiendo eventos y limpiando flags
-            System.out.println("🔌 ProtocolHandler cerrado: Limpiando " + disposables.size() + " listeners");
+            
+            // 🔥 CRÍTICO: Desconectar los cables al salir para evitar fugas de memoria
+            if (log.isDebugEnabled()) {
+                log.debug("ProtocolHandler closed. Cleaning up {} listeners.", disposables.size());
+            }
             disposables.forEach(Runnable::run);
             disposables.clear();
         }
@@ -112,7 +112,6 @@ public class JrxProtocolHandler {
     // --- LÓGICA DE BROADCAST & DELTAS ---
 
     private void broadcast(String k, Object v) {
-        System.out.println("JRX-BROADCAST " + k + " → " + v);
         if (!backpressureEnabled) {
             sendImmediate(k, v);
             return;
@@ -126,6 +125,7 @@ public class JrxProtocolHandler {
         try {
             msg = jsonSingle(k, v, true);
         } catch (Exception e) {
+            log.warn("Failed to serialize immediate message for key: " + k, e);
             return;
         }
         sessions.removeIf(sess -> {
@@ -152,7 +152,7 @@ public class JrxProtocolHandler {
                 }
             }
             if (dropped > 0) {
-                log.warn("throttled {} events (queue>{})", dropped, maxQueue);
+                log.warn("Throttled {} events (queue size > {})", dropped, maxQueue);
             }
         }
         queue.offer(new Event(k, v));
@@ -183,11 +183,12 @@ public class JrxProtocolHandler {
                 Map<String, Object> m = new HashMap<>();
                 m.put("k", k);
 
+                // Detección de cambios (Deltas)
                 if (v instanceof SmartList<?> list && list.isDirty()) {
                     m.put("delta", true);
                     m.put("type", "list");
                     m.put("changes", new ArrayList<>(list.getChanges()));
-                    System.out.println("🟢 [OPTIMIZADO] Enviando DELTA para: " + k + " (" + list.getChanges().size() + " cambios)");
+                    // Limpiamos los cambios AQUI, después de empaquetarlos
                     list.clearChanges();
                 } 
                 else if (v instanceof SmartMap<?,?> map && map.isDirty()) {
@@ -209,14 +210,9 @@ public class JrxProtocolHandler {
             });
             
             jsonPayload = mapper.writeValueAsString(payload);
-         // 🔥 AGREGA ESTO: Vamos a ver EXACTAMENTE qué se está enviando
-            if (jsonPayload.contains("\"delta\":true")) {
-                System.out.println("🚀 ENVIANDO DELTA REAL: " + jsonPayload);
-            } else {
-                System.out.println("⚠️ ENVIANDO SNAPSHOT: " + jsonPayload);
-            }
             
         } catch (IOException ex) {
+            log.error("Error serializing flush queue", ex);
             return;
         }
 
@@ -242,7 +238,6 @@ public class JrxProtocolHandler {
             payload.put("delta", true);
             payload.put("type", "list");
             payload.put("changes", new ArrayList<>(list.getChanges()));
-            System.out.println("🟢 [OPTIMIZADO] Enviando DELTA para: " + k);
             list.clearChanges();
         } 
         else if (allowDelta && v instanceof SmartMap<?,?> map && map.isDirty()) {
@@ -259,9 +254,6 @@ public class JrxProtocolHandler {
         }
         else {
             payload.put("v", v);
-            if (v instanceof Collection) {
-                 System.out.println("🔴 [SNAPSHOT] Enviando objeto completo: " + k);
-            }
         }
         return mapper.writeValueAsString(payload);
     }    
