@@ -33,5 +33,11 @@ public final class ReactiveVar<T> {
         listeners.clear();
     }
 
-    public void onChange(Consumer<T> listener) { listeners.add(listener); }
+    //public void onChange(Consumer<T> listener) { listeners.add(listener); }
+    
+    public Runnable onChange(Consumer<T> listener) {
+        listeners.add(listener);
+        return () -> listeners.remove(listener);
+    }
+    
 }

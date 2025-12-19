@@ -1,6 +1,8 @@
 package com.ciro.jreactive.router;
 
 import com.ciro.jreactive.HtmlComponent;
+// 🔥 Importamos la interfaz que definiste en el Core
+import com.ciro.jreactive.router.RouteProvider; 
 import org.springframework.beans.factory.config.AutowireCapableBeanFactory;
 import org.springframework.context.ApplicationContext;
 import org.springframework.stereotype.Component;
@@ -8,16 +10,10 @@ import org.springframework.stereotype.Component;
 import java.util.*;
 import java.util.function.Supplier;
 
-/**
- * Registra rutas anotadas con {@link Route} y permite resolver
- * paths dinámicos como "/users/{id}" devolviendo:
- *  - una NUEVA instancia del componente (creada por Spring)
- *  - los valores de los parámetros extraídos del path
- */
 @Component
-public class RouteRegistry {
+public class RouteRegistry implements RouteProvider {
 
-    /** Entrada interna: template original, regex compilado y factory */
+    // --- MISMAS CLASES INTERNAS (Entry) ---
     private static final class Entry {
         final String template;
         final PathPattern pattern;
@@ -25,64 +21,59 @@ public class RouteRegistry {
 
         Entry(String template, Supplier<HtmlComponent> factory) {
             this.template = template;
-            this.pattern  = PathPattern.compile(template);
+            this.pattern  = PathPattern.compile(template); 
             this.factory  = factory;
         }
     }
 
-    /** Resultado público: componente + params del path */
-    public static record Result(HtmlComponent component, Map<String, String> params) {}
+    // ❌ ELIMINADO: 'public static record Result' 
+    // (Porque ahora usamos RouteProvider.Result que viene del Core)
 
     private final List<Entry> routes = new ArrayList<>();
 
+    // --- MISMO CONSTRUCTOR (Lógica de escaneo idéntica) ---
     public RouteRegistry(ApplicationContext ctx) {
         AutowireCapableBeanFactory beanFactory = ctx.getAutowireCapableBeanFactory();
 
-        // Escanea todos los HtmlComponent registrados como beans
+        // 1. Escanea Beans
         ctx.getBeansOfType(HtmlComponent.class).values().forEach(bean -> {
             Route ann = bean.getClass().getAnnotation(Route.class);
             if (ann == null) return;
 
             Class<? extends HtmlComponent> clazz = bean.getClass();
 
-            // ✅ Cada instancia se crea a través de Spring (DI, @Autowired, @Value, etc.)
+            // 2. Crea Factory de Spring (Vital para prototype scope)
             Supplier<HtmlComponent> sup = () -> beanFactory.createBean(clazz);
 
             routes.add(new Entry(ann.path(), sup));
         });
 
-        // Asegura que exista "/"
+        // 3. Validación de root
         boolean hasRoot = routes.stream().anyMatch(e -> "/".equals(e.template));
         if (!hasRoot) {
             throw new IllegalStateException("Debe existir al menos una ruta @Route(path=\"/\")");
         }
     }
 
-    /**
-     * Versión antigua: sólo devuelve el componente.
-     * Si el path tiene parámetros, éstos se ignoran.
-     * (Se mantiene por compatibilidad si lo usas en otro lado)
-     */
-    public HtmlComponent resolve(String path) {
-        return resolveWithInstance(path).component();
-    }
-
-    /**
-     * Devuelve SIEMPRE una nueva instancia + mapa de parámetros extraídos.
-     * Si no hace match ninguna ruta, cae en "/".
-     */
-    public Result resolveWithInstance(String path) {
+    // --- MÉTODO ADAPTADO (Misma lógica, nuevo nombre de retorno) ---
+    
+    @Override
+    public RouteProvider.Result resolve(String path) {
+        // 1. Intentar hacer match
         for (Entry e : routes) {
             Map<String, String> params = e.pattern.match(path);
             if (params != null) {
-                return new Result(e.factory.get(), params);
+                // ✅ ÉXITO: Devolvemos el Result del Core
+                return new RouteProvider.Result(e.factory.get(), params);
             }
         }
-        // Fallback al root
+        
+        // 2. Fallback al root "/" (Igual que antes)
         Entry root = routes.stream()
                            .filter(r -> "/".equals(r.template))
                            .findFirst()
-                           .orElseThrow(); // imposible si validamos en ctor
-        return new Result(root.factory.get(), Map.of());
+                           .orElseThrow(); // Imposible fallar si pasó el constructor
+                           
+        return new RouteProvider.Result(root.factory.get(), Map.of());
     }
 }

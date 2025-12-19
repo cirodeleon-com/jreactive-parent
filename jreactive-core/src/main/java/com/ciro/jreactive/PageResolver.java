@@ -1,21 +1,21 @@
 package com.ciro.jreactive;
 
-import com.ciro.jreactive.router.RouteRegistry;
-import org.springframework.stereotype.Component;
+
 
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 
+import com.ciro.jreactive.router.RouteProvider;
 // ✅ Imports para Caffeine Cache
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import com.github.benmanes.caffeine.cache.RemovalCause;
 
-@Component
+
 public class PageResolver {
 
-    private final RouteRegistry registry;
+    private final RouteProvider registry;
 
     /** Clave compuesta: sesión + path concreto ("/users/42") */
     private record PageKey(String sessionId, String path) {}
@@ -28,7 +28,7 @@ public class PageResolver {
     /** Parámetros extraídos del path, también por (sessionId, path) */
     private final Map<PageKey, Map<String,String>> paramsByPage = new ConcurrentHashMap<>();
 
-    public PageResolver(RouteRegistry registry) {
+    public PageResolver(RouteProvider registry) {
         this.registry = registry;
         
         // Configuración de la Cache
@@ -54,7 +54,7 @@ public class PageResolver {
         
         // ✅ Caffeine gestiona la creación atómica con 'get'
         return instances.get(key, k -> {
-            RouteRegistry.Result res = registry.resolveWithInstance(path);
+            RouteProvider.Result res = registry.resolve(path);
             HtmlComponent comp = res.component();
             comp._injectParams(res.params());
             paramsByPage.put(k, res.params());

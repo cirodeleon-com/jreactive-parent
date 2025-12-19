@@ -3,18 +3,11 @@ package com.ciro.jreactive;
 import java.time.Duration;
 import java.util.Map;
 import java.util.Set;
-
-import org.springframework.stereotype.Component;
-
 import jakarta.validation.ConstraintViolation;
 import jakarta.validation.Validator;
-
 import com.fasterxml.jackson.databind.ObjectMapper;
-
-// ✅ Imports de Caffeine (La solución al Memory Leak)
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
-
 import io.github.bucket4j.Bandwidth;
 import io.github.bucket4j.Bucket;
 
@@ -24,7 +17,6 @@ import io.github.bucket4j.Bucket;
  * FIX: Se reemplazó el ConcurrentHashMap estático por Caffeine Cache.
  * Esto previene Memory Leaks limpiando buckets inactivos tras 1 hora.
  */
-@Component
 public final class CallGuard {
 
     private static final int RATE = 60;                  // 60 peticiones / seg

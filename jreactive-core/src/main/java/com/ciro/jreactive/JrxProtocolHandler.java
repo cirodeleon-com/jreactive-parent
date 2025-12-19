@@ -36,6 +36,7 @@ public class JrxProtocolHandler {
     private final ConcurrentLinkedQueue<Event> queue = new ConcurrentLinkedQueue<>();
     private final AtomicInteger queueSize = new AtomicInteger(0);
     private final AtomicBoolean flushScheduled = new AtomicBoolean(false);
+    private final List<Runnable> disposables = new ArrayList<>();
 
     private record Event(String k, Object v) {}
 
@@ -56,7 +57,14 @@ public class JrxProtocolHandler {
         this.bindings = collect(root);
 
         /* listeners para broadcast */
-        bindings.forEach((k, v) -> v.onChange(val -> broadcast(k, val)));
+        //bindings.forEach((k, v) -> v.onChange(val -> broadcast(k, val)));
+        
+        bindings.forEach((k, v) -> {
+            // 👇 Guardamos el ticket de desuscripción
+            Runnable unsubscribe = v.onChange(val -> broadcast(k, val));
+            disposables.add(unsubscribe);
+        });
+        
     }
 
     // --- CICLO DE VIDA (Llamado por el adaptador) ---
@@ -81,6 +89,11 @@ public class JrxProtocolHandler {
         if (sessions.isEmpty()) {
             queue.clear();
             queueSize.set(0);
+         // 🔥 CRÍTICO: Desconectar los cables al salir
+            // Esto evita que este handler siga recibiendo eventos y limpiando flags
+            System.out.println("🔌 ProtocolHandler cerrado: Limpiando " + disposables.size() + " listeners");
+            disposables.forEach(Runnable::run);
+            disposables.clear();
         }
     }
 
@@ -174,6 +187,7 @@ public class JrxProtocolHandler {
                     m.put("delta", true);
                     m.put("type", "list");
                     m.put("changes", new ArrayList<>(list.getChanges()));
+                    System.out.println("🟢 [OPTIMIZADO] Enviando DELTA para: " + k + " (" + list.getChanges().size() + " cambios)");
                     list.clearChanges();
                 } 
                 else if (v instanceof SmartMap<?,?> map && map.isDirty()) {
@@ -195,6 +209,13 @@ public class JrxProtocolHandler {
             });
             
             jsonPayload = mapper.writeValueAsString(payload);
+         // 🔥 AGREGA ESTO: Vamos a ver EXACTAMENTE qué se está enviando
+            if (jsonPayload.contains("\"delta\":true")) {
+                System.out.println("🚀 ENVIANDO DELTA REAL: " + jsonPayload);
+            } else {
+                System.out.println("⚠️ ENVIANDO SNAPSHOT: " + jsonPayload);
+            }
+            
         } catch (IOException ex) {
             return;
         }
