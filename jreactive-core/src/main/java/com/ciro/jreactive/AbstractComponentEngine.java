@@ -4,12 +4,24 @@ import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
+import com.ciro.jreactive.factory.ComponentFactory;
+import com.ciro.jreactive.factory.DefaultComponentFactory;
+import java.util.Objects;
+
+
 
 public abstract class AbstractComponentEngine implements ComponentEngine.Strategy {
 
     protected static final Pattern IF_BLOCK = Pattern.compile("\\{\\{\\s*#if\\s+([^}]+)}}([\\s\\S]*?)\\{\\{\\s*/if}}", Pattern.MULTILINE);
     protected static final Pattern IF_ELSE_BLOCK = Pattern.compile("\\{\\{\\s*#if\\s+([^}]+)}}([\\s\\S]*?)\\{\\{\\s*else}}([\\s\\S]*?)\\{\\{\\s*/if}}", Pattern.MULTILINE);
     protected static final Pattern EACH_BLOCK = Pattern.compile("\\{\\{\\s*#each\\s+([\\w#.-]+)(?:\\s+as\\s+(\\w+))?\\s*\\}\\}([\\s\\S]*?)\\{\\{\\s*/each\\s*\\}\\}", Pattern.MULTILINE);
+    
+    private static volatile ComponentFactory componentFactory = new DefaultComponentFactory();
+
+    public static void setComponentFactory(ComponentFactory factory) {
+        componentFactory = Objects.requireNonNull(factory, "componentFactory must not be null");
+    }
+
 
     protected String processControlBlocks(String html) {
         html = IF_ELSE_BLOCK.matcher(html).replaceAll("<template data-if=\"$1\">$2</template><template data-else=\"$1\">$3</template>");
@@ -121,7 +133,7 @@ public abstract class AbstractComponentEngine implements ComponentEngine.Strateg
                 String key = e.getKey();
                 //String val = String.valueOf(e.getValue().get() == null ? "" : e.getValue().get());
                 Object rawVal = e.getValue().get();
-                String val = (rawVal == null) ? "" : org.jsoup.nodes.Entities.escape(String.valueOf(rawVal));
+                String val = (rawVal == null) ? "" : HtmlEscaper.escape(String.valueOf(rawVal));
                 
                 String expr = "{{" + ns + key + "}}";
                 
@@ -183,12 +195,22 @@ public abstract class AbstractComponentEngine implements ComponentEngine.Strateg
 
     private ViewLeaf newInstance(HtmlComponent ctx, String className) {
         try {
-            return (ViewLeaf) Class.forName(ctx.getClass().getPackageName() + "." + className)
-                .getDeclaredConstructor().newInstance();
+            Class<?> raw = Class.forName(ctx.getClass().getPackageName() + "." + className);
+            if (!ViewLeaf.class.isAssignableFrom(raw)) {
+                throw new IllegalStateException("Tag <" + className + "> is not a ViewLeaf: " + raw.getName());
+            }
+            @SuppressWarnings("unchecked")
+            Class<? extends ViewLeaf> type = (Class<? extends ViewLeaf>) raw;
+
+            return (ViewLeaf) componentFactory.create(type);
+
+        } catch (RuntimeException re) {
+            throw re;
         } catch (Exception ex) {
-            throw new RuntimeException("Reflect error: " + className, ex);
+            throw new RuntimeException("Error creating child: " + className, ex);
         }
     }
+
     
     /**
      * Limpia los componentes que no se reutilizaron en este renderizado.

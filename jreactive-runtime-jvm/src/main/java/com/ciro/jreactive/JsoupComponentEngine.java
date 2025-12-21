@@ -9,10 +9,16 @@ import org.jsoup.parser.Parser;
 import java.util.*;
 import java.util.regex.Pattern;
 
+
 public class JsoupComponentEngine extends AbstractComponentEngine {
 
     private static final Pattern HTML5_VOID_FIX = 
         Pattern.compile("<(area|base|br|col|embed|hr|img|input|link|meta|param|source|track|wbr)([^>]*?)(?<!/)>", Pattern.CASE_INSENSITIVE);
+    
+    // ✅ Opción recomendada: instalación explícita (sin magia por classloading)
+    public static void installAsDefault() {
+        ComponentEngine.setStrategy(new JsoupComponentEngine());
+    }
 
     @Override
     public ComponentEngine.Rendered render(HtmlComponent ctx) {

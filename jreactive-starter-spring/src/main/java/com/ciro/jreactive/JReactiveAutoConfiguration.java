@@ -5,10 +5,17 @@ import org.springframework.context.annotation.Configuration;
 
 import com.ciro.jreactive.router.RouteProvider;
 import com.fasterxml.jackson.databind.ObjectMapper;
+
+import jakarta.annotation.PostConstruct;
 import jakarta.validation.Validator;
 
 @Configuration
 public class JReactiveAutoConfiguration {
+	
+	@PostConstruct
+    public void installEngine() {
+        JsoupComponentEngine.installAsDefault();
+    }
 
     @Bean
     public CallGuard callGuard(Validator validator, ObjectMapper mapper) {
