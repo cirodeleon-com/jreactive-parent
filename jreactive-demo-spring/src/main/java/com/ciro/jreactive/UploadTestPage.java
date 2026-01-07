@@ -39,13 +39,12 @@ public class UploadTestPage extends HtmlComponent {
 
     @Call
     public void handleUpload(JrxFile file) {
-        //if (file == null) {
-        //    return;
-        //}
+        if (file == null) {
+            return;
+        }
         
-    	throw new RuntimeException("¡Prueba de Toast!");
         
-        //state = new JrxFile(file.name(),file.contentType(),file.size(),file.base64());
+        state = new JrxFile(file.name(),file.contentType(),file.size(),file.base64());
         
     }
     
