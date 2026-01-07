@@ -1,0 +1,5 @@
+# Archivo: jitpack.yml
+jdk:
+  - openjdk17
+install:
+  - mvn clean install -DskipTests

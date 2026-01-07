@@ -78,4 +78,14 @@ public class SmartMap<K, V> extends HashMap<K, V> {
             this.put(key, this.get(key));
         }
     }
+    
+    public synchronized List<Change> drainChanges() {
+        if (!dirty || changes.isEmpty()) {
+            return Collections.emptyList();
+        }
+        List<Change> snapshot = new ArrayList<>(this.changes);
+        this.changes.clear();
+        this.dirty = false;
+        return snapshot;
+    }
 }

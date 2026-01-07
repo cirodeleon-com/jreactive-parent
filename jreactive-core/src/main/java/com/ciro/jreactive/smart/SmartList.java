@@ -97,4 +97,23 @@ public class SmartList<E> extends ArrayList<E> {
         this.changes.clear();
         this.dirty = false;
     }
+    
+    /**
+     * 🔥 CRÍTICO: Obtiene los cambios y limpia la lista en UNA sola operación atómica.
+     * Esto evita que se pierdan eventos si un hilo escribe justo mientras el WS lee.
+     */
+    public synchronized List<Change> drainChanges() {
+        if (!dirty || changes.isEmpty()) {
+            return Collections.emptyList();
+        }
+        // 1. Copia instantánea (Snapshot)
+        List<Change> snapshot = new ArrayList<>(this.changes);
+        
+        // 2. Limpieza inmediata
+        this.changes.clear();
+        this.dirty = false;
+        
+        // 3. Retorno seguro
+        return snapshot;
+    }
 }

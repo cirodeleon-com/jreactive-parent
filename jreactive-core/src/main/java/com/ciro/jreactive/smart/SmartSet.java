@@ -78,4 +78,14 @@ public class SmartSet<E> extends HashSet<E> {
             dirty = true;
         }
     }
+    
+    public synchronized List<Change> drainChanges() {
+        if (!dirty || changes.isEmpty()) {
+            return Collections.emptyList();
+        }
+        List<Change> snapshot = new ArrayList<>(this.changes);
+        this.changes.clear();
+        this.dirty = false;
+        return snapshot;
+    }
 }

@@ -187,21 +187,21 @@ public class JrxProtocolHandler {
                 if (v instanceof SmartList<?> list && list.isDirty()) {
                     m.put("delta", true);
                     m.put("type", "list");
-                    m.put("changes", new ArrayList<>(list.getChanges()));
+                    m.put("changes", list.drainChanges());
                     // Limpiamos los cambios AQUI, después de empaquetarlos
-                    list.clearChanges();
+                    //list.clearChanges();
                 } 
                 else if (v instanceof SmartMap<?,?> map && map.isDirty()) {
                     m.put("delta", true);
                     m.put("type", "map");
-                    m.put("changes", new ArrayList<>(map.getChanges()));
-                    map.clearChanges();
+                    m.put("changes", map.drainChanges());
+                    //map.clearChanges();
                 } 
                 else if (v instanceof SmartSet<?> set && set.isDirty()) {
                     m.put("delta", true);
                     m.put("type", "set");
-                    m.put("changes", new ArrayList<>(set.getChanges()));
-                    set.clearChanges();
+                    m.put("changes", set.drainChanges());
+                    //set.clearChanges();
                 } 
                 else {
                     m.put("v", v);
@@ -210,7 +210,11 @@ public class JrxProtocolHandler {
             });
             
             jsonPayload = mapper.writeValueAsString(payload);
-            
+          
+        } catch (com.fasterxml.jackson.core.JsonProcessingException ex2) {
+            // 🛡️ ESCUDO CRÍTICO: Si Jackson falla (ej. Referencia Circular), no matamos el hilo.
+            log.error("🔥 Error CRÍTICO de serialización JSON en broadcast. Posible referencia circular.", ex2);
+            return; // Abortamos este flush para proteger el socket
         } catch (IOException ex) {
             log.error("Error serializing flush queue", ex);
             return;
@@ -237,20 +241,20 @@ public class JrxProtocolHandler {
         if (allowDelta && v instanceof SmartList<?> list && list.isDirty()) {
             payload.put("delta", true);
             payload.put("type", "list");
-            payload.put("changes", new ArrayList<>(list.getChanges()));
-            list.clearChanges();
+            payload.put("changes", list.drainChanges());
+            //list.clearChanges();
         } 
         else if (allowDelta && v instanceof SmartMap<?,?> map && map.isDirty()) {
             payload.put("delta", true);
             payload.put("type", "map");
-            payload.put("changes", new ArrayList<>(map.getChanges()));
-            map.clearChanges();
+            payload.put("changes", map.drainChanges());
+            //map.clearChanges();
         }
         else if (allowDelta && v instanceof SmartSet<?> set && set.isDirty()) {
             payload.put("delta", true);
             payload.put("type", "set");
-            payload.put("changes", new ArrayList<>(set.getChanges()));
-            set.clearChanges();
+            payload.put("changes", set.drainChanges());
+            //set.clearChanges();
         }
         else {
             payload.put("v", v);

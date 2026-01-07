@@ -660,6 +660,7 @@ document.addEventListener('DOMContentLoaded', () => {
   updateEachBlocks();
   hydrateEventDirectives();
   setupEventBindings();
+  setupGlobalErrorFeedback();
   connectWs(window.location.pathname);
 });
 
@@ -1694,6 +1695,73 @@ function stopLoading() {
 
 window.JRX = window.JRX || {};
 window.JRX.Store = Store;
+
+/* ──────────────────────────────────────────────────────────────
+ * Feedback Visual de Errores (Toast)
+ * ────────────────────────────────────────────────────────────── */
+function setupGlobalErrorFeedback() {
+  window.addEventListener('jrx:call:error', (e) => {
+    const msg = e.detail.error || "Error desconocido en el servidor";
+    
+    // Crear el contenedor del toast
+    const toast = document.createElement('div');
+    
+    // Estilos inline para no depender de CSS externo (Self-contained)
+    toast.style.cssText = `
+      position: fixed; 
+      top: 20px; 
+      right: 20px; 
+      background-color: #d32f2f; /* Rojo Material Design */
+      color: #fff; 
+      padding: 12px 24px; 
+      border-radius: 4px; 
+      box-shadow: 0 4px 6px rgba(0,0,0,0.1), 0 1px 3px rgba(0,0,0,0.08);
+      font-family: system-ui, -apple-system, sans-serif;
+      font-size: 14px; 
+      font-weight: 500;
+      z-index: 100000;
+      opacity: 0; 
+      transform: translateY(-10px);
+      transition: opacity 0.3s ease, transform 0.3s ease;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      pointer-events: none; /* Para que no bloquee clicks mientras aparece */
+    `;
+
+    // Icono de advertencia + Mensaje
+    toast.innerHTML = `
+      <span style="font-size: 1.2em;">⚠️</span> 
+      <span>${escapeHtml(msg)}</span>
+    `;
+
+    document.body.appendChild(toast);
+
+    // Animación de entrada (pequeño delay para que el CSS transition funcione)
+    requestAnimationFrame(() => {
+      toast.style.opacity = '1';
+      toast.style.transform = 'translateY(0)';
+      toast.style.pointerEvents = 'auto';
+    });
+
+    // Auto-cierre a los 5 segundos
+    setTimeout(() => {
+      closeToast();
+    }, 5000);
+
+    // Cierre manual al hacer click
+    toast.addEventListener('click', closeToast);
+
+    function closeToast() {
+      toast.style.opacity = '0';
+      toast.style.transform = 'translateY(-10px)';
+      // Eliminar del DOM después de la animación de salida
+      setTimeout(() => {
+        if (toast.parentNode) toast.parentNode.removeChild(toast);
+      }, 300);
+    }
+  });
+}
 
 
 
