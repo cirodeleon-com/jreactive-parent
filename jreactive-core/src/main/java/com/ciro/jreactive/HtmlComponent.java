@@ -274,6 +274,14 @@ public abstract class HtmlComponent extends ViewLeaf {
      * Lógica de comparación
      */
 private boolean hasChanged(String key, Object newVal) {
+	
+	Integer oldIdentity = _identitySnapshots.get(key);
+    int newIdentity = System.identityHashCode(newVal);
+    
+    // Si la referencia en memoria es distinta, DEFINITIVAMENTE cambió.
+    if (oldIdentity != null && oldIdentity != newIdentity) {
+        return true; 
+    }
         
         // A) Familia Smart (Optimización O(1))
         if (newVal instanceof SmartList<?> s) return s.isDirty();
