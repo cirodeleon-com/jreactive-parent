@@ -174,6 +174,14 @@ function mount(tpl) {
   /*  ❌  NO LLAMES de nuevo a updateEachBlocks()
    *      eso provocaba la duplicación recursiva
    */
+  // 1. Re-indexar los {{variables}} para que updateDomForKey los encuentre
+  reindexBindings();
+
+  // 2. Convertir los @click nuevos en data-call
+  hydrateEventDirectives();
+
+  // 3. Conectar los listeners de eventos a los nuevos elementos
+  setupEventBindings();
 }
 
   function unmount(tpl) {
