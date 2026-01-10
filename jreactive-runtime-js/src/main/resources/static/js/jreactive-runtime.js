@@ -1420,6 +1420,21 @@ function applyStateForKey(k, v) {
   if (parts.length > 1) {
     updateDomForKey(last, v);
   }
+  
+  // 🔥 6) MAGIA: Propagación en Cascada (El Fix para 'limpiar')
+  // Si 'v' es un objeto (y no es null ni array), recorremos sus propiedades
+  // para actualizar los bindings hijos (ej. form.name, form.email)
+  if (v && typeof v === 'object' && !Array.isArray(v)) {
+      Object.keys(v).forEach(subKey => {
+          // Construimos la clave completa: "form.name"
+          const childKey = `${k}.${subKey}`; 
+          const childVal = v[subKey];
+          
+          // Llamada recursiva: Esto hará que updateDomForKey("form.name") se ejecute
+          applyStateForKey(childKey, childVal);
+      });
+  }
+  
 }
 
 
