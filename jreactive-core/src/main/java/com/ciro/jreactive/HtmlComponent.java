@@ -30,6 +30,8 @@ public abstract class HtmlComponent extends ViewLeaf {
  // 📸 Almacenes temporales para detectar cambios (Snapshots)
     private final Map<String, Integer> _structureHashes = new HashMap<>();
     private final Map<String, Object> _simpleSnapshots = new HashMap<>();
+    
+    private final Map<String, Integer> _identitySnapshots = new HashMap<>();
  // ... snapshots ...
     
     
@@ -47,10 +49,13 @@ public abstract class HtmlComponent extends ViewLeaf {
         
         _structureHashes.clear();
         _simpleSnapshots.clear();
+        _identitySnapshots.clear();
 
         for (String key : stateKeys) {
             try {
                 Object val = getFieldValueByName(key);
+                
+                _identitySnapshots.put(key, System.identityHashCode(val));
                 
                 if (val == null) {
                     _simpleSnapshots.put(key, null);
