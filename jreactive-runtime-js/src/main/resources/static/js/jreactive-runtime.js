@@ -534,6 +534,10 @@ function connectWs(path) {
 
 /* === En jreactive-runtime.js === */
 
+
+  
+}
+
 function resolveTarget(key) {
   // 1. Intento directo: busca la clave exacta que mandó el servidor
   // Ej: "FireTestLeaf#1.orders"
@@ -649,10 +653,6 @@ function applySetChange(arr, ch) {
             break;
     }
 }
-  
-}
-
-
 
 
 
