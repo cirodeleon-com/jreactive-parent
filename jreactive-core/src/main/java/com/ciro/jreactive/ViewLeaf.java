@@ -7,6 +7,7 @@ public abstract class ViewLeaf implements ViewNode {
     private String fixedId;
     private String generatedId;
     private static long COUNTER = 0;
+    private static final Object LOCK = new Object();
 
     public void setId(String id) {
         this.fixedId = id;
@@ -19,7 +20,11 @@ public abstract class ViewLeaf implements ViewNode {
     public String getId() {
        if (fixedId != null) return fixedId;
        if (generatedId == null) {
-           generatedId = getClass().getSimpleName() + "#" + (++COUNTER);
+    	   synchronized (LOCK) {
+    		   if (generatedId == null) {
+                   generatedId = getClass().getSimpleName() + "#" + (++COUNTER);
+               }
+           }
        }
        return generatedId;
     }

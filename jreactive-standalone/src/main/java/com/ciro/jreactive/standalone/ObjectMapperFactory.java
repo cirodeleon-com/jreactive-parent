@@ -17,7 +17,7 @@ public final class ObjectMapperFactory {
             .addModule(new JavaTimeModule())
             .addModule(new Jdk8Module())
             .addModule(new ParameterNamesModule())
-            .visibility(PropertyAccessor.FIELD, JsonAutoDetect.Visibility.ANY)
+            //.visibility(PropertyAccessor.FIELD, JsonAutoDetect.Visibility.ANY)
             .build();
     }
 }

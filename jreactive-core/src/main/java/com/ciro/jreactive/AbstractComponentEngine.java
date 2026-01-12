@@ -129,7 +129,7 @@ public abstract class AbstractComponentEngine implements ComponentEngine.Strateg
             }
 
             // 2. Interpolación estática
-            
+            /*
             for (var e : leaf.bindings().entrySet()) {
                 String key = e.getKey();
                 //String val = String.valueOf(e.getValue().get() == null ? "" : e.getValue().get());
@@ -141,6 +141,25 @@ public abstract class AbstractComponentEngine implements ComponentEngine.Strateg
                 // Acepta comillas simples o dobles
                 child = child.replaceAll("=\\s*[\"']\\s*" + Pattern.quote(expr) + "\\s*[\"']", "=\"" + Matcher.quoteReplacement(val) + "\"");
                 child = child.replaceAll(">\\s*" + Pattern.quote(expr) + "\\s*<", ">" + Matcher.quoteReplacement(val) + "<");
+            }
+            */
+         // 2. Interpolación estática (SÓLO EN ATRIBUTOS)
+            for (var e : leaf.bindings().entrySet()) {
+                String key = e.getKey();
+                Object rawVal = e.getValue().get();
+                String val = (rawVal == null) ? "" : HtmlEscaper.escape(String.valueOf(rawVal));
+                
+                String expr = "{{" + ns + key + "}}";
+                
+                // 🔥 FIX V2: Regex "Quirúrgico".
+                // 1. Busca algo que empiece por =" o =' (inicio de atributo)
+                // 2. Busca el token {{variable}}
+                // 3. Busca el cierre de comillas.
+                // 4. Reemplaza SÓLO el token, manteniendo el resto del atributo intacto.
+                // Esto DEJA VIVOS los tokens del cuerpo (<h1>{{reloj}}</h1>) para que el JS los active.
+                
+                String regex = "(=\\s*['\"][^'\"]*?)" + Pattern.quote(expr) + "([^'\"]*?['\"])";
+                child = child.replaceAll(regex, "$1" + Matcher.quoteReplacement(val) + "$2");
             }
             
             // 3. Eliminar ref

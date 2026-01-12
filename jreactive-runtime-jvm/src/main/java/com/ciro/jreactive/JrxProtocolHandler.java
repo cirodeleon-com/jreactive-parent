@@ -33,7 +33,11 @@ public class JrxProtocolHandler {
     private final AtomicInteger queueSize = new AtomicInteger(0);
     private final AtomicBoolean flushScheduled = new AtomicBoolean(false);
     
+    // Hooks generales (ReactiveVar.onChange)
     private final List<Runnable> disposables = new ArrayList<>();
+    
+    // 🔥 FIX MEMORY LEAK: Mapa para rastrear y eliminar listeners de colecciones antiguas
+    private final Map<String, Runnable> activeSmartCleanups = new ConcurrentHashMap<>();
 
     private record Event(String k, Object v) {}
     private record DeltaPacket(String type, List<?> changes) {}
@@ -56,33 +60,51 @@ public class JrxProtocolHandler {
         /* Suscripción a variables reactivas */
         bindings.forEach((k, v) -> {
             
-            // 1. Hook inicial a colecciones Smart existentes
-            attachSmartListener(k, v.get());
+            // 1. Hook inicial: Conecta a la colección actual y guarda el cleanup
+            updateSmartSubscription(k, v.get());
 
-            // 2. Hook cuando cambia la referencia (ej: items = new ArrayList)
+            // 2. Hook cambio de referencia: Limpia el listener viejo y conecta el nuevo
             Runnable unsubscribe = v.onChange(val -> {
-                attachSmartListener(k, val);
+                updateSmartSubscription(k, val); // <--- Rotación de listeners aquí
                 broadcast(k, val); // Envía snapshot completo del nuevo objeto
             });
             disposables.add(unsubscribe);
         });
     }
     
-    private void attachSmartListener(String key, Object value) {
+    /**
+     * Gestiona la suscripción a SmartCollections evitando fugas de memoria.
+     * Si ya existía un listener para esta clave (de una lista anterior), lo elimina antes de crear el nuevo.
+     */
+    private void updateSmartSubscription(String key, Object value) {
+        // 1. LIMPIEZA: Si hay un listener activo en una instancia previa, lo matamos.
+        Runnable oldCleanup = activeSmartCleanups.remove(key);
+        if (oldCleanup != null) {
+            oldCleanup.run();
+        }
+
+        // 2. SUSCRIPCIÓN: Si el nuevo valor es Smart, nos enganchamos.
+        Runnable newCleanup = null;
+
         if (value instanceof SmartList<?> list) {
             Consumer<SmartList.Change> l = ch -> broadcastDelta(key, "list", ch);
             list.subscribe(l);
-            disposables.add(() -> list.unsubscribe(l));
+            newCleanup = () -> list.unsubscribe(l);
         } 
         else if (value instanceof SmartMap<?,?> map) {
             Consumer<SmartMap.Change> l = ch -> broadcastDelta(key, "map", ch);
             map.subscribe(l);
-            disposables.add(() -> map.unsubscribe(l));
+            newCleanup = () -> map.unsubscribe(l);
         } 
         else if (value instanceof SmartSet<?> set) {
             Consumer<SmartSet.Change> l = ch -> broadcastDelta(key, "set", ch);
             set.subscribe(l);
-            disposables.add(() -> set.unsubscribe(l));
+            newCleanup = () -> set.unsubscribe(l);
+        }
+
+        // 3. REGISTRO: Guardamos el cleanup nuevo para usarlo en el futuro (rotación o cierre)
+        if (newCleanup != null) {
+            activeSmartCleanups.put(key, newCleanup);
         }
     }
 
@@ -93,7 +115,6 @@ public class JrxProtocolHandler {
             enqueue(key, packet);
             scheduleFlushIfNeeded();
         } else {
-            // 🔥 Optimización: Enviamos el Delta inmediatamente, NO el snapshot entero.
             sendImmediateDelta(key, packet);
         }
     }
@@ -120,8 +141,14 @@ public class JrxProtocolHandler {
             queue.clear();
             queueSize.set(0);
             if (log.isDebugEnabled()) {
-                log.debug("ProtocolHandler closed. Cleaning up {} listeners.", disposables.size());
+                log.debug("ProtocolHandler closed. Cleaning up listeners.");
             }
+            
+            // 1. Limpiar listeners de colecciones activas
+            activeSmartCleanups.values().forEach(Runnable::run);
+            activeSmartCleanups.clear();
+
+            // 2. Limpiar hooks de ReactiveVar
             disposables.forEach(Runnable::run);
             disposables.clear();
         }
@@ -130,7 +157,7 @@ public class JrxProtocolHandler {
     public void onMessage(JrxSession s, String payload) {
         try {
             @SuppressWarnings("unchecked")
-            Map<String, String> m = mapper.readValue(payload, Map.class);
+            Map<String, Object> m = mapper.readValue(payload, Map.class);
             @SuppressWarnings("unchecked")
             ReactiveVar<Object> rv = (ReactiveVar<Object>) bindings.get(m.get("k"));
             if (rv != null) rv.set(m.get("v"));
@@ -225,21 +252,17 @@ public class JrxProtocolHandler {
                 Object existing = lastByKey.get(key);
                 
                 if (existing instanceof DeltaPacket oldDp && oldDp.type().equals(newDp.type())) {
-                    // Fusión de Deltas (Correcto)
                     List<Object> merged = new ArrayList<>(oldDp.changes());
                     merged.addAll(newDp.changes());
                     lastByKey.put(key, new DeltaPacket(newDp.type(), merged));
                 } 
                 else if (existing != null && !(existing instanceof DeltaPacket)) {
-                    // ✅ FIX CRÍTICO: Si ya hay un Snapshot (objeto completo), IGNORAMOS el Delta.
-                    // El snapshot es la verdad absoluta y más reciente.
+                    // Snapshot prevalece sobre delta
                 } 
                 else {
-                    // Si no había nada, guardamos el Delta
                     lastByKey.put(key, newDp);
                 }
             } else {
-                // Si llega un Snapshot nuevo, reemplaza todo lo anterior (Deltas o Snapshots viejos)
                 lastByKey.put(key, newValue);
             }
         }
