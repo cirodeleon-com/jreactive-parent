@@ -15,7 +15,10 @@ const storeListeners  = new Map();
 let es = null;              // EventSource
 let lastSeq = 0;            // cursor incremental
 let transport = 'ws';       // 'ws' | 'sse' | 'poll'
-
+// --- Variables Globales Nuevas ---
+let wsRetryCount = 0;       // Contador de intentos fallidos
+const MAX_WS_RETRIES = 5;   // Intentar 5 veces antes de rendirse a SSE
+let recoveryTimer = null;   // Timer para intentar volver a WS si estamos en SSE
 
 
 const Store = {
@@ -202,9 +205,20 @@ async function pollLoop(path, myId) {
 function connectTransport(path) {
   currentPath = path;
   
-  // Limpieza preventiva siempre
+  // --- LIMPIEZA PROFUNDA ---
   stopSse();
   stopPoll();
+
+  // 1. 🔥 IMPORTANTE: Matar el timer de "Upgrade" si estaba pendiente
+  if (recoveryTimer) {
+      clearTimeout(recoveryTimer);
+      recoveryTimer = null;
+  }
+
+  // 2. 🔥 IMPORTANTE: Resetear intentos. Página nueva = Vida nueva.
+  wsRetryCount = 0; 
+
+  // 3. Cerrar socket anterior limpiamente
   if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
      try { ws.close(1000, "transport-switch"); } catch(_) {}
   }
@@ -662,24 +676,60 @@ function connectWs(path) {
   firstMiss   = true;
   currentPath = path;
 
+  // Limpieza preventiva
   if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
-    try { ws.close(1000, "route-change"); } catch(_) {}
+    // Usamos un código específico para saber que fuimos nosotros
+    try { ws.close(4000, "manual-restart"); } catch(_) {}
   }
 
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  ws = new WebSocket(`${proto}://${location.host}/ws?path=${encodeURIComponent(path)}`);
-
+  // Incluimos 'since' para recuperar mensajes perdidos durante el parpadeo
+  const url = `${proto}://${location.host}/ws?path=${encodeURIComponent(path)}&since=${lastSeq || 0}`;
+  
+  ws = new WebSocket(url);
   let opened = false;
 
-  ws.onopen = () => { opened = true; };
+  ws.onopen = () => { 
+      opened = true; 
+      wsRetryCount = 0; // 🔥 ¡Éxito! Reseteamos el contador
+      console.log("🟢 WS Conectado y estable");
+      
+      // Si veníamos de SSE (recuperación), matamos el SSE
+      if (transport === 'sse') stopSse();
+      transport = 'ws';
+  };
+
+  // Unificamos error y close para manejar el reintento en un solo lugar
+  const handleDisconnect = (reason) => {
+      // 1. Si el cierre fue intencional (cambio de ruta o manual), no hacemos nada
+      if (reason === "route-change" || reason === "transport-switch" || reason === "manual-restart") return;
+
+      // 2. Lógica de Reintento (Backoff Exponencial)
+      if (wsRetryCount < MAX_WS_RETRIES) {
+          wsRetryCount++;
+          // Espera: 1s, 2s, 4s, 8s, 16s...
+          const delay = Math.min(1000 * (2 ** (wsRetryCount - 1)), 10000); 
+          
+          console.warn(`⚠️ WS Caído. Reintentando en ${delay}ms... (Intento ${wsRetryCount}/${MAX_WS_RETRIES})`);
+          
+          setTimeout(() => connectWs(path), delay);
+      } else {
+          // 3. Nos rendimos -> Downgrade a SSE
+          console.error("⛔ WS inestable. Cambiando a SSE (Modo Seguro).");
+          connectSse(path);
+          
+          // 🔥 EXTRA: Iniciar la "Sonda de Recuperación"
+          scheduleWsRecovery(path);
+      }
+  };
 
   ws.onerror = () => {
-    if (!opened) connectSse(currentPath);
+    if (!opened) handleDisconnect("connection-failed");
   };
 
   ws.onclose = (e) => {
-    // si cerró antes de abrir -> fallback
-    if (!opened) connectSse(currentPath);
+    if (opened) handleDisconnect(e.reason); 
+    // Si no estaba abierto, onerror ya disparó, evitamos doble llamada
   };
 
   ws.onmessage = ({ data }) => {
@@ -689,7 +739,33 @@ function connectWs(path) {
   };
 }
 
+function scheduleWsRecovery(path) {
+    if (recoveryTimer) clearTimeout(recoveryTimer);
 
+    // Intentar volver a WS cada 30 segundos
+    recoveryTimer = setTimeout(() => {
+        console.log("🕵️ Probando recuperación de WS en segundo plano...");
+        
+        const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+        const testWs = new WebSocket(`${proto}://${location.host}/ws?path=${encodeURIComponent(path)}&since=${lastSeq}`);
+
+        testWs.onopen = () => {
+            console.log("🚀 ¡La red mejoró! Volviendo a WS (Upgrade).");
+            testWs.close(); // Cerramos el de prueba
+            connectWs(path); // Conectamos el oficial
+            clearTimeout(recoveryTimer);
+            recoveryTimer = null;
+        };
+
+        testWs.onerror = () => {
+            console.log("🌧️ WS sigue caído. Mantenemos SSE.");
+            testWs.close();
+            // Re-agendar siguiente prueba
+            scheduleWsRecovery(path);
+        };
+
+    }, 30000); 
+}
 
 function resolveTarget(key) {
   // 1. Intento directo: busca la clave exacta que mandó el servidor
