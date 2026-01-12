@@ -14,16 +14,37 @@ public class SmartMap<K, V> extends HashMap<K, V> {
     private final List<Change> changes = Collections.synchronizedList(new ArrayList<>());
     private volatile boolean dirty = false;
 
+    // ✅ Opción A: callback cuando hay cambios in-place (deltas)
+    private transient Runnable onDirty;
+
     public SmartMap() { super(); }
     public SmartMap(Map<? extends K, ? extends V> m) { super(m); }
 
     public record Change(String op, Object key, Object value) {}
 
+    /** Registra callback para notificar que hubo cambios in-place */
+    public synchronized void onDirty(Runnable r) {
+        this.onDirty = r;
+    }
+
+    private void fireDirty() {
+        Runnable cb;
+        synchronized (this) { cb = this.onDirty; }
+        if (cb != null) {
+            try { cb.run(); } catch (Exception ignored) {}
+        }
+    }
+
+    private void markDirty(Change c) {
+        changes.add(c);
+        dirty = true;
+        fireDirty();
+    }
+
     @Override
     public synchronized V put(K key, V value) {
         V old = super.put(key, value);
-        changes.add(new Change("PUT", key, value));
-        dirty = true;
+        markDirty(new Change("PUT", key, value));
         return old;
     }
 
@@ -37,8 +58,7 @@ public class SmartMap<K, V> extends HashMap<K, V> {
     @Override
     public synchronized V remove(Object key) {
         if (containsKey(key)) {
-            changes.add(new Change("REMOVE", key, null));
-            dirty = true;
+            markDirty(new Change("REMOVE", key, null));
             return super.remove(key);
         }
         return null;
@@ -47,8 +67,7 @@ public class SmartMap<K, V> extends HashMap<K, V> {
     @Override
     public synchronized void clear() {
         if (!isEmpty()) {
-            changes.add(new Change("CLEAR", null, null));
-            dirty = true;
+            markDirty(new Change("CLEAR", null, null));
             super.clear();
         }
     }
@@ -67,18 +86,18 @@ public class SmartMap<K, V> extends HashMap<K, V> {
         dirty = false;
         changes.clear();
     }
-    
+
     public void clearChanges() {
         this.changes.clear();
         this.dirty = false;
     }
-    
+
     public synchronized void update(K key) {
         if (this.containsKey(key)) {
             this.put(key, this.get(key));
         }
     }
-    
+
     public synchronized List<Change> drainChanges() {
         if (!dirty || changes.isEmpty()) {
             return Collections.emptyList();

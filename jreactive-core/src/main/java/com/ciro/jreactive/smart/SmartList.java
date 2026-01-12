@@ -11,37 +11,56 @@ import java.util.List;
  */
 public class SmartList<E> extends ArrayList<E> {
 
-    // ✅ FIX: Lista sincronizada para evitar ConcurrentModificationException al leer cambios
+    // ✅ Lista sincronizada para evitar ConcurrentModificationException al leer cambios
     private final List<Change> changes = Collections.synchronizedList(new ArrayList<>());
-    
-    // ✅ FIX: Volatile asegura visibilidad inmediata entre hilos
+
+    // ✅ Volatile asegura visibilidad inmediata entre hilos
     private volatile boolean dirty = false;
+
+    // ✅ Opción A: callback cuando hay cambios in-place (deltas)
+    private transient Runnable onDirty;
 
     public SmartList() { super(); }
     public SmartList(Collection<? extends E> c) { super(c); }
 
     public record Change(String op, int index, Object item) {}
 
+    /** Registra callback para notificar que hubo cambios in-place */
+    public synchronized void onDirty(Runnable r) {
+        this.onDirty = r;
+    }
+
+    private void fireDirty() {
+        Runnable cb;
+        synchronized (this) { cb = this.onDirty; }
+        if (cb != null) {
+            try { cb.run(); } catch (Exception ignored) {}
+        }
+    }
+
+    private void markDirty(Change c) {
+        changes.add(c);
+        dirty = true;
+        fireDirty();
+    }
+
     // --- Métodos Interceptados (Sincronizados) ---
 
     @Override
     public synchronized boolean add(E e) {
-        changes.add(new Change("ADD", this.size(), e));
-        dirty = true;
+        markDirty(new Change("ADD", this.size(), e));
         return super.add(e);
     }
 
     @Override
     public synchronized void add(int index, E element) {
-        changes.add(new Change("ADD", index, element));
-        dirty = true;
+        markDirty(new Change("ADD", index, element));
         super.add(index, element);
     }
 
     @Override
     public synchronized E remove(int index) {
-        changes.add(new Change("REMOVE", index, null));
-        dirty = true;
+        markDirty(new Change("REMOVE", index, null));
         return super.remove(index);
     }
 
@@ -49,9 +68,8 @@ public class SmartList<E> extends ArrayList<E> {
     public synchronized boolean remove(Object o) {
         int index = this.indexOf(o);
         if (index >= 0) {
-            changes.add(new Change("REMOVE", index, null));
-            dirty = true;
-            super.remove(index); 
+            markDirty(new Change("REMOVE", index, null));
+            super.remove(index);
             return true;
         }
         return false;
@@ -59,15 +77,13 @@ public class SmartList<E> extends ArrayList<E> {
 
     @Override
     public synchronized void clear() {
-        changes.add(new Change("CLEAR", 0, null));
-        dirty = true;
+        markDirty(new Change("CLEAR", 0, null));
         super.clear();
     }
 
     @Override
     public synchronized E set(int index, E element) {
-        changes.add(new Change("SET", index, element));
-        dirty = true;
+        markDirty(new Change("SET", index, element));
         return super.set(index, element);
     }
 
@@ -92,12 +108,12 @@ public class SmartList<E> extends ArrayList<E> {
         dirty = false;
         changes.clear();
     }
-    
+
     public void clearChanges() {
         this.changes.clear();
         this.dirty = false;
     }
-    
+
     /**
      * 🔥 CRÍTICO: Obtiene los cambios y limpia la lista en UNA sola operación atómica.
      * Esto evita que se pierdan eventos si un hilo escribe justo mientras el WS lee.
@@ -108,11 +124,11 @@ public class SmartList<E> extends ArrayList<E> {
         }
         // 1. Copia instantánea (Snapshot)
         List<Change> snapshot = new ArrayList<>(this.changes);
-        
+
         // 2. Limpieza inmediata
         this.changes.clear();
         this.dirty = false;
-        
+
         // 3. Retorno seguro
         return snapshot;
     }

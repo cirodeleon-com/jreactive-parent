@@ -26,4 +26,10 @@ public class JReactiveAutoConfiguration {
     public PageResolver pageResolver(RouteProvider routeProvider) {
         return new PageResolver(routeProvider);
     }
+    
+    @Bean
+    public JrxHubManager jrxHubManager(PageResolver pageResolver, ObjectMapper mapper) {
+        return new JrxHubManager(pageResolver, mapper);
+    }
+
 }

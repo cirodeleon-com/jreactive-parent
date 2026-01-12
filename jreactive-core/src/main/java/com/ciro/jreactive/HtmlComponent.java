@@ -148,12 +148,14 @@ public abstract class HtmlComponent extends ViewLeaf {
     public Map<String, ReactiveVar<?>> bindings() {
         if (cached == null) cached = ComponentEngine.render(this);
         return cached.bindings();
+    	
     }
 
     @Override
     public String render() {
         if (cached == null) cached = ComponentEngine.render(this);
         return cached.html();
+    	
     }
 
     /* ----------------- para las subclases ------------------ */

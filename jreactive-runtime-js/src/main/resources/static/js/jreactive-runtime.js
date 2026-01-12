@@ -4,6 +4,7 @@
    * ------------------------------------------------------------------ */
   const bindings = new Map();            // clave → [nodos texto / inputs]
   const state    = Object.create(null);  // último valor conocido
+  const lastEdits = new Map();
   const $$       = sel => [...document.querySelectorAll(sel)];
   // helpers de debug en ventana global
 window.__jrxState    = state;
@@ -11,6 +12,11 @@ window.__jrxBindings = bindings;
 
 const globalState     = Object.create(null);   // estado global logical: user, theme, etc.
 const storeListeners  = new Map();  
+let es = null;              // EventSource
+let lastSeq = 0;            // cursor incremental
+let transport = 'ws';       // 'ws' | 'sse' | 'poll'
+
+
 
 const Store = {
   set(key, value) {
@@ -62,6 +68,164 @@ function escapeHtml(str) {
     .replaceAll("'", '&#x27;')
     .replaceAll('/', '&#x2F;');
 }
+
+function normalizeIncoming(pkt) {
+  // Envelope {seq,batch}
+  if (pkt && typeof pkt === 'object' && Array.isArray(pkt.batch)) {
+    if (typeof pkt.seq === 'number') lastSeq = Math.max(lastSeq, pkt.seq);
+    return pkt.batch;
+  }
+  // Array
+  if (Array.isArray(pkt)) return pkt;
+  // Single
+  return [pkt];
+}
+
+function applyBatch(batch) {
+  batch.forEach(msg => {
+    if (!msg) return;
+
+    // soporte nombres cortos y largos
+    const k = msg.k ?? msg.key;
+    const v = msg.v ?? msg.value;
+
+    if (msg.delta) {
+      const type    = msg.type ?? msg.t;
+      const changes = msg.changes ?? msg.c ?? [];
+      applyDelta(k, type, changes);
+    } else {
+      applyStateForKey(k, v);
+    }
+  });
+}
+
+
+function stopSse() {
+  if (es) { try { es.close(); } catch(_) {} }
+  es = null;
+}
+
+
+
+function connectSse(path) {
+  transport = 'sse';
+  stopPoll();
+  stopSse();
+
+  const url = `/jrx/sse?path=${encodeURIComponent(path)}&since=${lastSeq || 0}`;
+  es = new EventSource(url, { withCredentials: true });
+
+es.addEventListener('jrx', (ev) => {
+  const pkt = JSON.parse(ev.data);
+  const batch = normalizeIncoming(pkt);
+  applyBatch(batch);
+});
+
+
+  es.onerror = () => {
+    // si SSE muere, caemos a polling
+    stopSse();
+    connectPoll(path);
+  };
+}
+
+// --- ZONA DE VARIABLES GLOBALES ---
+// Reemplaza 'let pollTimer' y 'let isPolling' por esto:
+let currentPollId = 0; // Token de generación para matar loops zombies
+
+// --- FUNCIONES MODIFICADAS ---
+
+function connectPoll(path) {
+  transport = 'poll';
+  stopSse();
+  stopPoll(); // Detiene lógicamente el anterior
+
+  // 🔥 Creamos una nueva "generación" de polling
+  currentPollId++;
+  const myId = currentPollId; 
+  
+  console.log(`[POLL] Iniciando loop ID: ${myId}`);
+  pollLoop(path, myId);
+}
+
+function stopPoll() {
+  // Simplemente incrementando el ID, invalidamos cualquier loop anterior
+  // que esté esperando en un setTimeout o en un fetch await.
+  currentPollId++;
+}
+
+async function pollLoop(path, myId) {
+  // 1. Chequeo de seguridad: ¿Soy el loop legítimo?
+  if (myId !== currentPollId) return;
+
+  try {
+    const url = `/jrx/poll?path=${encodeURIComponent(path)}&since=${lastSeq || 0}`;
+    
+    const res = await fetch(url, {
+      headers: { 'X-Requested-With': 'JReactive' }
+    });
+
+    // 2. Chequeo post-await: ¿Cambió el ID mientras yo esperaba la red?
+    // Si cambió, significa que el usuario navegó o reinició. ABORTAMOS.
+    if (myId !== currentPollId) return;
+
+    if (!res.ok) throw new Error("Poll error " + res.status);
+
+    const pkt = await res.json();
+    const batch = normalizeIncoming(pkt);
+    
+    if (batch.length > 0) {
+      applyBatch(batch);
+      
+      // "Turbo mode": Si hay datos, pedimos el siguiente YA (0ms)
+      if (myId === currentPollId) {
+         setTimeout(() => pollLoop(path, myId), 0);
+      }
+      return;
+    }
+
+  } catch (e) {
+    console.warn('[POLL WARN]', e);
+    // Si falla, espera larga (2s)
+    if (myId === currentPollId) {
+        setTimeout(() => pollLoop(path, myId), 2000);
+    }
+    return;
+  }
+
+  // Loop normal (1s) si no hubo datos ni errores
+  if (myId === currentPollId) {
+      setTimeout(() => pollLoop(path, myId), 1000);
+  }
+}
+
+function connectTransport(path) {
+  currentPath = path;
+  
+  // Limpieza preventiva siempre
+  stopSse();
+  stopPoll();
+  if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+     try { ws.close(1000, "transport-switch"); } catch(_) {}
+  }
+
+  console.log(`🔄 Conectando transporte usando modo: ${transport.toUpperCase()}`);
+
+  switch (transport) {
+    case 'sse':
+      connectSse(path);
+      break;
+    case 'poll':
+      connectPoll(path);
+      break;
+    case 'ws':
+    default:
+      connectWs(path);
+      break;
+  }
+}
+
+
 
 /* ----------------------------------------------------------
  *  Util: resuelve cualquier placeholder {{expr[.prop]}}
@@ -494,49 +658,38 @@ function updateEachBlocks() {
  *  Conexión WS que se reinicia cuando cambias de página
  * ========================================================== */
   // recuerda la ruta asociada al socket
-
 function connectWs(path) {
-  // reinicia estado para la nueva página
   firstMiss   = true;
   currentPath = path;
 
-  if (ws && ws.readyState === WebSocket.OPEN) {
-    ws.close(1000, "route-change");
+  if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+    try { ws.close(1000, "route-change"); } catch(_) {}
   }
 
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   ws = new WebSocket(`${proto}://${location.host}/ws?path=${encodeURIComponent(path)}`);
 
-  ws.onclose = e => {
-    if (e.code !== 1000) setTimeout(() => connectWs(currentPath), 1000);
+  let opened = false;
+
+  ws.onopen = () => { opened = true; };
+
+  ws.onerror = () => {
+    if (!opened) connectSse(currentPath);
+  };
+
+  ws.onclose = (e) => {
+    // si cerró antes de abrir -> fallback
+    if (!opened) connectSse(currentPath);
   };
 
   ws.onmessage = ({ data }) => {
-    const pkt   = JSON.parse(data);
-    const batch = Array.isArray(pkt) ? pkt : [pkt];
-
-    console.log('[WS RX NORMALIZED]', batch);
-
-    batch.forEach(msg => {
-      // 1. Si es un paquete DELTA (optimizado)
-      if (msg.delta) {
-        applyDelta(msg.k, msg.type, msg.changes);
-      } 
-      // 2. Si es un paquete normal (snapshot completo)
-      else {
-        // Compatibilidad con el formato antiguo que trae k y v
-        applyStateForKey(msg.k, msg.v);
-      }
-    });
+    const pkt = JSON.parse(data);
+    const batch = normalizeIncoming(pkt);
+    applyBatch(batch);
   };
-  
-  // Agrega esto en jreactive-runtime.js
-
-/* === En jreactive-runtime.js === */
-
-
-  
 }
+
+
 
 function resolveTarget(key) {
   // 1. Intento directo: busca la clave exacta que mandó el servidor
@@ -563,31 +716,23 @@ function resolveTarget(key) {
   return target;
 }
   
-  // Nueva función para aplicar parches quirúrgicos
 function applyDelta(key, type, changes) {
-    // Obtenemos referencia al objeto actual en el estado
-    // (Usamos la lógica de punteros de setNestedProperty o similar)
-    // Para simplificar, asumimos que 'key' es root o usamos un helper
-    let target = resolveTarget(key); // Necesitas implementar esto o usar state[key]
-    if (!target) return; // Si no existe, no podemos parchear (debería pedir resync)
+  const target = resolveTarget(key);
+  if (!target) return;
 
-    changes.forEach(ch => {
-        if (type === 'list') {
-            applyListChange(target, ch);
-        } else if (type === 'map') {
-            applyMapChange(target, ch);
-        } else if (type === 'set') {
-            applySetChange(target, ch);
-        }
-    });
+  if (!Array.isArray(changes)) changes = [];
 
-    // IMPORTANTE: Forzar actualización de UI después del parcheo
-    // Como modificamos el objeto "in-place", el sistema de binding podría no detectarlo
-    // si no llamamos explícitamente a la actualización.
-    updateDomForKey(key, target);
-    updateIfBlocks();
-    updateEachBlocks();
+  changes.forEach(ch => {
+    if (type === 'list') applyListChange(target, ch);
+    else if (type === 'map') applyMapChange(target, ch);
+    else if (type === 'set') applySetChange(target, ch);
+  });
+
+  updateDomForKey(key, target);
+  updateIfBlocks();
+  updateEachBlocks();
 }
+
 
 function applyListChange(arr, ch) {
     // ch = { op: "ADD"|"REMOVE"|"CLEAR", index: 1, item: ... }
@@ -669,7 +814,9 @@ document.addEventListener('DOMContentLoaded', () => {
   hydrateEventDirectives();
   setupEventBindings();
   setupGlobalErrorFeedback();
-  connectWs(window.location.pathname);
+  //connectWs(window.location.pathname);
+  connectTransport(window.location.pathname);
+  
 });
 
   
@@ -684,6 +831,8 @@ async function loadRoute(path = location.pathname) {
   try {
   if (ws && ws.readyState === WebSocket.OPEN) ws.close(1000, "route-change");
   ws = null;
+  
+  lastSeq = 0;
 
   bindings.clear();
   for (const k in state) delete state[k];
@@ -712,7 +861,9 @@ async function loadRoute(path = location.pathname) {
   hydrateEventDirectives(app);
   setupEventBindings();
 
-  connectWs(path);
+  //connectWs(path);
+  connectTransport(path);
+
 
   app.style.visibility = '';
   
@@ -741,6 +892,54 @@ window.addEventListener('popstate', () => {
   loadRoute(p);
   //connectWs(p);
 });
+
+async function sendSet(k, v) {
+  // WS si está disponible
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ k, v }));
+    return;
+  }
+
+  // SSE o Poll: usamos HTTP
+  try {
+    await fetch(`/jrx/set?path=${encodeURIComponent(currentPath)}`, {
+      method: 'POST',
+      headers: {
+        'X-Requested-With': 'JReactive',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ k, v })
+    });
+    
+    if (transport === 'poll') {
+       triggerImmediatePoll();
+    }
+    
+  } catch (e) {
+    console.warn('[SET HTTP failed]', e);
+  }
+}
+
+/* Archivo: jreactive-runtime-js/.../static/js/jreactive-runtime.js */
+
+function triggerImmediatePoll() {
+   // 1. Verificamos si estamos en modo poll usando la variable global 'transport'
+   if (transport === 'poll') {
+       
+       console.log("⚡ Forzando actualización inmediata (Input usuario)");
+
+       // 2. 🔥 TRUCO MAESTRO: Incrementamos el ID.
+       // Esto invalida automáticamente cualquier loop que estuviera esperando en setTimeout.
+       // El loop viejo despertará, verá que su ID ya no es válido, y morirá.
+       currentPollId++; 
+       const myId = currentPollId;
+       
+       setTimeout(() => {
+           console.log("⚡ Polling inmediato (tras acción)...");
+           pollLoop(currentPath, myId);
+       }, 50);
+   }
+}
 
 function reindexBindings() {
   bindings.clear();
@@ -802,23 +1001,40 @@ function reindexBindings() {
     if (el.type === 'checkbox' || el.type === 'radio' || el.type === 'file') {
       evt = 'change';
     } else {
+      // 🔥 FIX DE RENDIMIENTO PARA POLLING:
+      // En WS somos agresivos (input), en Poll somos pacientes (change/blur).
+      // Esto evita saturar la red con una petición por cada letra.
+      //evt = (transport === 'ws') ? 'input' : 'change';
       evt = 'input';
     }
 
-    el.addEventListener(evt, () => {
-      if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    el.addEventListener(evt, async () => {
+		
+	el._jrxLastEdit = Date.now();
+	const keyToSave = el.name || el.id || k; 
+    lastEdits.set(keyToSave, Date.now());
+  // Archivos: no mandamos base64 por tiempo real aquí
+  if (el.type === 'file') {
+    const file = el.files && el.files[0];
+    const info = file ? file.name : null;
 
-      // ⚠️ Archivos grandes NO se mandan por WS en tiempo real.
-      if (el.type === 'file') {
-        const file = el.files && el.files[0];
-        const info = file ? file.name : null;
-        ws.send(JSON.stringify({ k, v: info }));
-        return;
-      }
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ k, v: info }));
+    } else {
+      await sendSet(k, info);
+    }
+    return;
+  }
 
-      const v = (el.type === 'checkbox' || el.type === 'radio') ? el.checked : el.value;
-      ws.send(JSON.stringify({ k, v }));
-    });
+  const v = (el.type === 'checkbox' || el.type === 'radio') ? el.checked : el.value;
+
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ k, v }));
+  } else {
+    await sendSet(k, v);
+  }
+});
+
   });
 
 
@@ -1096,6 +1312,9 @@ function setupEventBindings() {
             }
           }
 
+          if (ok && transport === 'poll') {
+            triggerImmediatePoll();
+          }
         } catch (e) {
           ok    = false;
           error = e && e.message ? e.message : String(e);
@@ -1206,7 +1425,9 @@ function setupEventBindings() {
             code = payload.code;
           }
         }
-
+        if (ok && transport === 'poll') {
+            triggerImmediatePoll();
+        }
       } catch (e) {
         ok    = false;
         error = e && e.message ? e.message : String(e);
@@ -1341,7 +1562,7 @@ function hydrateEventDirectives(root = document) {
 }
 
 
-
+/*
 function updateDomForKey(k, v) {
   let nodes = bindings.get(k);
 
@@ -1371,6 +1592,40 @@ function updateDomForKey(k, v) {
       el.checked = !!v;
     } else {
       // inputs, textareas, selects
+      if (document.activeElement === el) {
+          return; 
+      }
+      
+      
+      // 2. PROTECCIÓN TEMPORAL (Solo para Polling/SSE)
+      // Si el usuario escribió hace menos de 1.5 segundos, ignoramos si el servidor 
+      // nos manda un valor vacío (borrado accidental).
+      // Esto arregla /signup2 y /signup-country sin romper el reset de frutas.
+      // 2. PROTECCIÓN TEMPORAL (Solo para Polling/SSE)
+      if (transport !== 'ws') {
+          const now = Date.now();
+          
+          // 🔥 CORRECCIÓN: Búsqueda inteligente de la clave de edición
+          let lastEditTime = lastEdits.get(k);
+          
+          // Si no encontramos la hora con la clave del servidor, probamos con la clave corta
+          // (ej: si k="Page#1.form.name", probamos "form.name")
+          if (!lastEditTime && k.includes('.')) {
+             const simpleKey = k.split('.').at(-1); // o la lógica que uses para nombres simples
+             // Ojo: si tus inputs usan nombres compuestos como "form.name", 
+             // necesitamos asegurarnos de que coincida con el el.name
+             lastEditTime = lastEdits.get(el.name) || lastEdits.get(el.id);
+          }
+
+          // Si escribiste hace menos de 2 segundos...
+          if (lastEditTime && (now - lastEditTime < 2000)) {
+              // ...y el servidor manda vacío/null, ¡IGNORAR!
+              if (el.value !== '' && (strValue === '' || strValue == null)) {
+                  // console.log(`🛡️ Escudo activo para ${el.name}`);
+                  return; 
+              }
+          }
+      }
       
       // 1. Evitar actualizaciones innecesarias (rompen el cursor y parpadean)
       if (el.value === strValue) return;
@@ -1394,6 +1649,76 @@ function updateDomForKey(k, v) {
           // 3. Si no tiene foco, actualizamos directamente
           el.value = strValue;
       }
+    }
+  });
+}
+*/
+/* Archivo: jreactive-runtime.js */
+
+function updateDomForKey(k, v) {
+  let nodes = bindings.get(k);
+
+  // 1. Reindexación (Sin cambios)
+  if (!nodes || !nodes.length) {
+    reindexBindings();
+    hydrateEventDirectives();
+    setupEventBindings();
+    nodes = bindings.get(k);
+  }
+  if (!nodes || !nodes.length) {
+    const simple = k.split('.').at(-1);
+    if (simple !== k) nodes = bindings.get(simple);
+  }
+
+  // Preparamos los valores que manda el servidor
+  const strValue  = v == null ? '' : String(v);
+  const boolValue = !!v;
+
+  (nodes || []).forEach(el => {
+    // A. Si es texto plano ({{...}}), renderizamos siempre (no tiene interacción)
+    if (el.nodeType === Node.TEXT_NODE) {
+      renderText(el);
+      return; 
+    }
+    
+    // --- 🛡️ ZONA DE PROTECCIÓN (Aplica a Checkbox, Radio, Input, Select) ---
+
+    // B. REGLA DE ORO: Si tiene foco, el usuario manda.
+    if (document.activeElement === el) {
+        return; 
+    }
+
+    // C. ESCUDO TEMPORAL ADAPTATIVO (Solo Polling/SSE)
+    if (transport !== 'ws') {
+        const lastEditTime = lastEdits.get(el.name) || lastEdits.get(el.id) || 0;
+        const now = Date.now();
+        
+        // 🟢 AJUSTE AQUÍ:
+        // Si es Polling (lento/desordenado), usamos 2000ms.
+        // Si es SSE (rápido/ordenado), usamos solo 350ms.
+        const safetyTime = (transport === 'poll') ? 2000 : 350;
+        
+        // Si fue hace menos del tiempo de seguridad...
+        if (now - lastEditTime < safetyTime) {
+            
+            // CASO 1: Checkbox/Radio
+            if (el.type === 'checkbox' || el.type === 'radio') {
+                 if (el.checked !== boolValue) return;
+            }
+            // CASO 2: Inputs de Texto
+            else {
+                 // Si el servidor manda vacío (limpieza) y yo tengo texto, protejo solo si estoy dentro del safetyTime
+                 if (el.value !== strValue) return; 
+            }
+        }
+    }
+
+    // --- 🚀 APLICAR CAMBIOS (Si pasó los filtros) ---
+
+    if (el.type === 'checkbox' || el.type === 'radio') {
+      if (el.checked !== boolValue) el.checked = boolValue;
+    } else {
+      if (el.value !== strValue) el.value = strValue;
     }
   });
 }

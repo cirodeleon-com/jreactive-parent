@@ -129,6 +129,7 @@ public abstract class AbstractComponentEngine implements ComponentEngine.Strateg
             }
 
             // 2. Interpolación estática
+            
             for (var e : leaf.bindings().entrySet()) {
                 String key = e.getKey();
                 //String val = String.valueOf(e.getValue().get() == null ? "" : e.getValue().get());
@@ -141,7 +142,7 @@ public abstract class AbstractComponentEngine implements ComponentEngine.Strateg
                 child = child.replaceAll("=\\s*[\"']\\s*" + Pattern.quote(expr) + "\\s*[\"']", "=\"" + Matcher.quoteReplacement(val) + "\"");
                 child = child.replaceAll(">\\s*" + Pattern.quote(expr) + "\\s*<", ">" + Matcher.quoteReplacement(val) + "<");
             }
-
+            
             // 3. Eliminar ref
             if (refAlias != null) {
                 child = child.replaceFirst("\\s+ref\\s*=\\s*[\"']" + Pattern.quote(refAlias) + "[\"']", "");

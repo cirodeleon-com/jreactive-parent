@@ -14,16 +14,37 @@ public class SmartSet<E> extends HashSet<E> {
     private final List<Change> changes = Collections.synchronizedList(new ArrayList<>());
     private volatile boolean dirty = false;
 
+    // ✅ Opción A: callback cuando hay cambios in-place (deltas)
+    private transient Runnable onDirty;
+
     public SmartSet() { super(); }
     public SmartSet(Collection<? extends E> c) { super(c); }
 
     public record Change(String op, Object item) {}
 
+    /** Registra callback para notificar que hubo cambios in-place */
+    public synchronized void onDirty(Runnable r) {
+        this.onDirty = r;
+    }
+
+    private void fireDirty() {
+        Runnable cb;
+        synchronized (this) { cb = this.onDirty; }
+        if (cb != null) {
+            try { cb.run(); } catch (Exception ignored) {}
+        }
+    }
+
+    private void markDirty(Change c) {
+        changes.add(c);
+        dirty = true;
+        fireDirty();
+    }
+
     @Override
     public synchronized boolean add(E e) {
         if (super.add(e)) {
-            changes.add(new Change("ADD", e));
-            dirty = true;
+            markDirty(new Change("ADD", e));
             return true;
         }
         return false;
@@ -32,8 +53,7 @@ public class SmartSet<E> extends HashSet<E> {
     @Override
     public synchronized boolean remove(Object o) {
         if (super.remove(o)) {
-            changes.add(new Change("REMOVE", o));
-            dirty = true;
+            markDirty(new Change("REMOVE", o));
             return true;
         }
         return false;
@@ -42,8 +62,7 @@ public class SmartSet<E> extends HashSet<E> {
     @Override
     public synchronized void clear() {
         if (!this.isEmpty()) {
-            changes.add(new Change("CLEAR", null));
-            dirty = true;
+            markDirty(new Change("CLEAR", null));
             super.clear();
         }
     }
@@ -62,23 +81,22 @@ public class SmartSet<E> extends HashSet<E> {
         dirty = false;
         changes.clear();
     }
-    
+
     public void clearChanges() {
         this.changes.clear();
         this.dirty = false;
     }
-    
+
     /**
      * Fuerza la actualización de un elemento (Remove + Add).
      */
     public synchronized void update(E element) {
         if (this.contains(element)) {
-            changes.add(new Change("REMOVE", element));
-            changes.add(new Change("ADD", element));
-            dirty = true;
+            markDirty(new Change("REMOVE", element));
+            markDirty(new Change("ADD", element));
         }
     }
-    
+
     public synchronized List<Change> drainChanges() {
         if (!dirty || changes.isEmpty()) {
             return Collections.emptyList();
