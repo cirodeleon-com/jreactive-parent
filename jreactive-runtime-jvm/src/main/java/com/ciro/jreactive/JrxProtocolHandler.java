@@ -11,6 +11,7 @@ import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Consumer;
 
 public class JrxProtocolHandler {
 
@@ -35,6 +36,7 @@ public class JrxProtocolHandler {
     private final List<Runnable> disposables = new ArrayList<>();
 
     private record Event(String k, Object v) {}
+    private record DeltaPacket(String type, List<?> changes) {}
 
     public JrxProtocolHandler(ViewNode root,
                               ObjectMapper mapper,
@@ -48,45 +50,57 @@ public class JrxProtocolHandler {
         this.maxQueue = maxQueue;
         this.flushIntervalMs = flushIntervalMs;
 
-        /* Recoge recursivamente TODO el árbol */
         this.bindings = collect(root);
 
-        /* listeners para broadcast con limpieza automática */
         bindings.forEach((k, v) -> {
-            
-            // 1. 🔥 FIX: Enganchar listener a la colección inicial (si ya existe)
             attachSmartListener(k, v.get());
-
-            // 2. Listener normal: cuando cambia la referencia completa (ej: items = new ArrayList<>())
             Runnable unsubscribe = v.onChange(val -> {
-                // 🔥 FIX: Si reemplazan la lista, enganchamos la nueva
                 attachSmartListener(k, val);
-                broadcast(k, val);
+                broadcast(k, val); 
             });
             disposables.add(unsubscribe);
         });
     }
-
-    // --- 🔥 MÉTODO NUEVO PARA DETECTAR DELTAS ---
+    
     private void attachSmartListener(String key, Object value) {
         if (value instanceof SmartList<?> list) {
-            // Cuando la lista detecta un add/remove interno, avisa aquí
-            list.onDirty(() -> broadcast(key, list));
-        } else if (value instanceof SmartMap<?,?> map) {
-            map.onDirty(() -> broadcast(key, map));
-        } else if (value instanceof SmartSet<?> set) {
-            set.onDirty(() -> broadcast(key, set));
+            Consumer<SmartList.Change> l = ch -> broadcastDelta(key, "list", ch);
+            list.subscribe(l);
+            disposables.add(() -> list.unsubscribe(l));
+        } 
+        else if (value instanceof SmartMap<?,?> map) {
+            Consumer<SmartMap.Change> l = ch -> broadcastDelta(key, "map", ch);
+            map.subscribe(l);
+            disposables.add(() -> map.unsubscribe(l));
+        } 
+        else if (value instanceof SmartSet<?> set) {
+            Consumer<SmartSet.Change> l = ch -> broadcastDelta(key, "set", ch);
+            set.subscribe(l);
+            disposables.add(() -> set.unsubscribe(l));
         }
     }
 
-    // --- CICLO DE VIDA (Sin cambios) ---
+    private void broadcastDelta(String key, String type, Object change) {
+        DeltaPacket packet = new DeltaPacket(type, List.of(change));
+        
+        if (backpressureEnabled) {
+            enqueue(key, packet);
+            scheduleFlushIfNeeded();
+        } else {
+            // 🔥 FIX: Enviamos el Delta inmediatamente, NO el snapshot entero.
+            // Esto hace que el sistema sea ultra-rápido incluso sin batching.
+            sendImmediateDelta(key, packet);
+        }
+    }
+
+    // --- CICLO DE VIDA ---
 
     public void onOpen(JrxSession s) {
         sessions.add(s);
         for (var e : bindings.entrySet()) {
             if (s.isOpen()) {
                 try {
-                    s.sendText(jsonSingle(e.getKey(), e.getValue().get(), false));
+                    s.sendText(jsonSingle(e.getKey(), e.getValue().get()));
                 } catch (Exception ex) {
                     log.error("Error sending init state for key: " + e.getKey(), ex);
                 }
@@ -99,9 +113,6 @@ public class JrxProtocolHandler {
         if (sessions.isEmpty()) {
             queue.clear();
             queueSize.set(0);
-            if (log.isDebugEnabled()) {
-                log.debug("ProtocolHandler closed. Cleaning up {} listeners.", disposables.size());
-            }
             disposables.forEach(Runnable::run);
             disposables.clear();
         }
@@ -119,7 +130,7 @@ public class JrxProtocolHandler {
         }
     }
 
-    // --- LÓGICA DE BROADCAST & DELTAS (Sin cambios) ---
+    // --- LÓGICA DE ENVÍO ---
 
     private void broadcast(String k, Object v) {
         if (!backpressureEnabled) {
@@ -131,11 +142,19 @@ public class JrxProtocolHandler {
     }
 
     private void sendImmediate(String k, Object v) {
+        sendRawJson(k, v, null);
+    }
+    
+    private void sendImmediateDelta(String k, DeltaPacket dp) {
+        sendRawJson(k, null, dp);
+    }
+    
+    private void sendRawJson(String k, Object v, DeltaPacket dp) {
         String msg;
         try {
-            msg = jsonSingle(k, v, true);
+            msg = buildJsonMessage(k, v, dp);
         } catch (Exception e) {
-            log.warn("Failed to serialize immediate message for key: " + k, e);
+            log.warn("Failed to serialize message", e);
             return;
         }
         sessions.removeIf(sess -> {
@@ -148,20 +167,27 @@ public class JrxProtocolHandler {
             return false;
         });
     }
+    
+    private String buildJsonMessage(String k, Object v, DeltaPacket dp) throws IOException {
+        Map<String, Object> payload = new HashMap<>();
+        payload.put("k", k);
+        
+        if (dp != null) {
+            payload.put("delta", true);
+            payload.put("type", dp.type());
+            payload.put("changes", dp.changes());
+        } else {
+            payload.put("v", v); 
+        }
+        return mapper.writeValueAsString(payload);
+    }
 
     private void enqueue(String k, Object v) {
         int size = queueSize.incrementAndGet();
         if (size > maxQueue) {
             int toDrop = size - maxQueue;
-            int dropped = 0;
             while (toDrop-- > 0) {
-                if (queue.poll() != null) {
-                    queueSize.decrementAndGet();
-                    dropped++;
-                }
-            }
-            if (dropped > 0) {
-                log.warn("Throttled {} events (queue size > {})", dropped, maxQueue);
+                if (queue.poll() != null) queueSize.decrementAndGet();
             }
         }
         queue.offer(new Event(k, v));
@@ -178,47 +204,60 @@ public class JrxProtocolHandler {
         if (queue.isEmpty()) return;
 
         Map<String, Object> lastByKey = new LinkedHashMap<>();
+        
         Event e;
         while ((e = queue.poll()) != null) {
-            lastByKey.put(e.k(), e.v());
             queueSize.decrementAndGet();
+            
+            Object newValue = e.v();
+            String key = e.k();
+
+            if (newValue instanceof DeltaPacket newDp) {
+                Object existing = lastByKey.get(key);
+                
+                if (existing instanceof DeltaPacket oldDp && oldDp.type().equals(newDp.type())) {
+                    // Fusión de Deltas (Correcto)
+                    List<Object> merged = new ArrayList<>(oldDp.changes());
+                    merged.addAll(newDp.changes());
+                    lastByKey.put(key, new DeltaPacket(newDp.type(), merged));
+                } 
+                else if (existing != null && !(existing instanceof DeltaPacket)) {
+                    // 🔥 FIX: Si ya hay un Snapshot (objeto completo), IGNORAMOS el Delta.
+                    // ¿Por qué? Porque el Snapshot es la referencia viva al objeto.
+                    // Al serializarse al final, ¡ya contendrá este cambio!
+                } 
+                else {
+                    // Si no había nada, guardamos el Delta
+                    lastByKey.put(key, newDp);
+                }
+            } else {
+                // Si llega un Snapshot nuevo, reemplaza todo lo anterior (Deltas o Snapshots viejos)
+                lastByKey.put(key, newValue);
+            }
         }
 
+        // ... resto del método de serialización igual ...
         String jsonPayload;
         try {
+            // (Tu código de serialización aquí sigue igual)
             List<Map<String, Object>> payload = new ArrayList<>(lastByKey.size());
-            
-            lastByKey.forEach((k, v) -> {
+            for (var entry : lastByKey.entrySet()) {
+                String k = entry.getKey();
+                Object v = entry.getValue();
+                
                 Map<String, Object> m = new HashMap<>();
                 m.put("k", k);
 
-                // Detección de cambios (Deltas)
-                if (v instanceof SmartList<?> list && list.isDirty()) {
+                if (v instanceof DeltaPacket dp) {
                     m.put("delta", true);
-                    m.put("type", "list");
-                    m.put("changes", list.drainChanges());
-                } 
-                else if (v instanceof SmartMap<?,?> map && map.isDirty()) {
-                    m.put("delta", true);
-                    m.put("type", "map");
-                    m.put("changes", map.drainChanges());
-                } 
-                else if (v instanceof SmartSet<?> set && set.isDirty()) {
-                    m.put("delta", true);
-                    m.put("type", "set");
-                    m.put("changes", set.drainChanges());
-                } 
-                else {
+                    m.put("type", dp.type());
+                    m.put("changes", dp.changes());
+                } else {
                     m.put("v", v);
                 }
                 payload.add(m);
-            });
-            
+            }
             jsonPayload = mapper.writeValueAsString(payload);
-           
-        } catch (com.fasterxml.jackson.core.JsonProcessingException ex2) {
-            log.error("🔥 Error CRÍTICO de serialización JSON en broadcast.", ex2);
-            return;
         } catch (IOException ex) {
             log.error("Error serializing flush queue", ex);
             return;
@@ -235,32 +274,9 @@ public class JrxProtocolHandler {
         });
     }
 
-    // --- HELPERS (JSON & Collect) ---
-
-    private String jsonSingle(String k, Object v, boolean allowDelta) throws IOException {
-        Map<String, Object> payload = new HashMap<>();
-        payload.put("k", k);
-
-        if (allowDelta && v instanceof SmartList<?> list && list.isDirty()) {
-            payload.put("delta", true);
-            payload.put("type", "list");
-            payload.put("changes", list.drainChanges());
-        } 
-        else if (allowDelta && v instanceof SmartMap<?,?> map && map.isDirty()) {
-            payload.put("delta", true);
-            payload.put("type", "map");
-            payload.put("changes", map.drainChanges());
-        }
-        else if (allowDelta && v instanceof SmartSet<?> set && set.isDirty()) {
-            payload.put("delta", true);
-            payload.put("type", "set");
-            payload.put("changes", set.drainChanges());
-        }
-        else {
-            payload.put("v", v);
-        }
-        return mapper.writeValueAsString(payload);
-    }    
+    private String jsonSingle(String k, Object v) throws IOException {
+        return buildJsonMessage(k, v, null);
+    }     
 
     private Map<String, ReactiveVar<?>> collect(ViewNode node) {
         Map<String, ReactiveVar<?>> map = new HashMap<>();

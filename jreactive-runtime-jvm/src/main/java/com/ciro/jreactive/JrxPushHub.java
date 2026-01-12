@@ -1,3 +1,4 @@
+/* === File: jreactive-runtime-jvm\src\main\java\com\ciro\jreactive\JrxPushHub.java === */
 package com.ciro.jreactive;
 
 import com.ciro.jreactive.smart.*;
@@ -8,17 +9,16 @@ import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Consumer;
 
 public class JrxPushHub {
 
-    /** Sink genérico (WS/SSE/lo que sea) */
     public interface JrxSink {
         boolean isOpen();
         void send(String json) throws IOException;
         void close();
     }
 
-    /** DTO simple (sin record) para evitar líos de versión */
     public static final class Batch {
         private final long seq;
         private final List<Map<String, Object>> batch;
@@ -49,111 +49,90 @@ public class JrxPushHub {
         this.maxBuffer = Math.max(100, maxBuffer);
         this.bindings = collect(root);
 
-        // Suscribir listeners una sola vez
         bindings.forEach((k, rv) -> {
-
-            // 1) Hook al valor inicial (si ya era Smart*)
+            // 1) Hook al valor inicial
             Object initial = rv.get();
-            attachDirtyHook(k, initial);
+            attachSmartListener(k, initial);
 
-            // 2) Listener normal: cuando el root cambia (snapshot o nueva referencia)
+            // 2) Hook cuando cambia la referencia
             Runnable unsub = rv.onChange(val -> {
-                // re-hook si cambia la referencia (ej: asignas una nueva SmartList)
-                attachDirtyHook(k, val);
-
-                // push normal (y aquí encode decide snapshot vs delta)
-                onChange(k, val);
+                attachSmartListener(k, val);
+                onSnapshot(k, val); // Si cambia referencia, mandamos snapshot
             });
 
             disposables.add(unsub);
         });
+    }
 
+    private void attachSmartListener(String key, Object value) {
+        if (value instanceof SmartList<?> list) {
+            Consumer<SmartList.Change> l = ch -> onDelta(key, "list", ch);
+            list.subscribe(l);
+            disposables.add(() -> list.unsubscribe(l));
+        } 
+        else if (value instanceof SmartMap<?,?> map) {
+            Consumer<SmartMap.Change> l = ch -> onDelta(key, "map", ch);
+            map.subscribe(l);
+            disposables.add(() -> map.unsubscribe(l));
+        } 
+        else if (value instanceof SmartSet<?> set) {
+            Consumer<SmartSet.Change> l = ch -> onDelta(key, "set", ch);
+            set.subscribe(l);
+            disposables.add(() -> set.unsubscribe(l));
+        }
     }
 
     public void close() {
         disposables.forEach(Runnable::run);
         disposables.clear();
-
         sinks.forEach(s -> {
             try { s.close(); } catch (Exception ignored) {}
         });
         sinks.clear();
-
         buffer.clear();
         bufferSeq.clear();
     }
 
-    /*
     @SuppressWarnings("unchecked")
     public void set(String k, Object v) {
-        ReactiveVar<Object> rv = (ReactiveVar<Object>) bindings.get(k);
-        if (rv != null) rv.set(v);
-    }
-    */
-    
-    @SuppressWarnings("unchecked")
-    public void set(String k, Object v) {
-        // 1. Intento directo (Ej: "count", o si el mapa ya tiene la clave completa)
         ReactiveVar<Object> rv = (ReactiveVar<Object>) bindings.get(k);
         if (rv != null) {
             rv.set(v);
             return;
         }
-
-        // 2. Intento anidado (Ej: "form.name" -> buscar "form" y setear "name")
         if (k.contains(".")) {
-            // Buscamos la raíz: "form"
             String[] parts = k.split("\\.");
             String rootKey = parts[0]; 
-            
             rv = (ReactiveVar<Object>) bindings.get(rootKey);
-            
             if (rv != null) {
                 Object rootObj = rv.get();
                 if (rootObj != null) {
                     try {
-                        // Navegamos dentro del objeto para setear el valor
                         applyPath(rootObj, parts, 1, v);
-                        
-                        // 🔥 MUY IMPORTANTE:
-                        // Al hacer set() del objeto raíz, disparas los listeners 
-                        // y el sistema se entera de que hubo un cambio.
                         rv.set(rootObj); 
-                        
                     } catch (Exception e) {
-                        System.err.println("Error setting nested field " + k + ": " + e.getMessage());
                         e.printStackTrace();
                     }
                 }
-            } else {
-                // Debug opcional: avisar si llega algo que no existe
-                // System.out.println("Warning: Binding not found for " + k);
             }
         }
     }
 
     public Batch snapshot() {
         List<Map<String,Object>> out = new ArrayList<>(bindings.size());
-        bindings.forEach((k, rv) -> out.add(encode(k, rv.get(), false)));
+        // Aquí pedimos snapshots limpios
+        bindings.forEach((k, rv) -> out.add(encodeSnapshot(k, rv.get())));
         return new Batch(seq.get(), out);
     }
 
     public Batch poll(long since) {
         if (since <= 0) return snapshot();
-        
         long oldestAvailable = bufferSeq.isEmpty() ? seq.get() : bufferSeq.peek();
-        
-        // Si el cliente pide el 50, pero el buffer empieza en el 100...
-        // significa que hemos perdido datos intermedios.
-        if (since < oldestAvailable - 1) { // -1 por margen de seguridad
-            System.out.println("⚠️ Cliente desincronizado (pide " + since + ", min es " + oldestAvailable + "). Forzando Snapshot.");
-            return snapshot(); // 🔥 ROBUSTEZ: Forzamos recarga total
-        }
+        if (since < oldestAvailable - 1) return snapshot(); 
 
         List<Map<String,Object>> out = new ArrayList<>();
         Iterator<Long> itS = bufferSeq.iterator();
         Iterator<Map<String,Object>> itB = buffer.iterator();
-
         long last = since;
 
         while (itS.hasNext() && itB.hasNext()) {
@@ -167,11 +146,8 @@ public class JrxPushHub {
         return new Batch(last, out);
     }
 
-    /** Suscripción genérica (sirve para SSE o cualquier stream) */
     public void subscribe(JrxSink sink, long since) {
         sinks.add(sink);
-
-        // enviar estado inicial
         try {
             Batch initial = (since <= 0) ? snapshot() : poll(since);
             String json = mapper.writeValueAsString(toEnvelope(initial));
@@ -186,29 +162,24 @@ public class JrxPushHub {
         sinks.remove(sink);
         try { sink.close(); } catch (Exception ignored) {}
     }
-    
-    private void attachDirtyHook(String k, Object val) {
-        if (val instanceof SmartList<?> sl) {
-            sl.onDirty(() -> onChange(k, sl));
-        } else if (val instanceof SmartMap<?,?> sm) {
-            sm.onDirty(() -> onChange(k, sm));
-        } else if (val instanceof SmartSet<?> ss) {
-            ss.onDirty(() -> onChange(k, ss));
-        }
+
+    // --- Manejo de Eventos ---
+
+    private void onSnapshot(String k, Object v) {
+        pushToBuffer(encodeSnapshot(k, v));
     }
 
+    private void onDelta(String k, String type, Object change) {
+        Map<String, Object> msg = new HashMap<>();
+        msg.put("k", k);
+        msg.put("delta", true);
+        msg.put("type", type);
+        msg.put("changes", List.of(change));
+        pushToBuffer(msg);
+    }
 
-    // --- internal onChange ---
-    private void onChange(String k, Object v) {
+    private void pushToBuffer(Map<String, Object> msg) {
         long s = seq.incrementAndGet();
-        Map<String,Object> msg = encode(k, v, true);
-        
-        if (Boolean.TRUE.equals(msg.get("delta"))) {
-            System.out.println("[JRX DELTA] " + k + " type=" + msg.get("type") + " seq=" + s);
-        } else {
-            System.out.println("[JRX SNAP] " + k + " seq=" + s);
-        }
-
         buffer.add(msg);
         bufferSeq.add(s);
 
@@ -216,7 +187,11 @@ public class JrxPushHub {
             buffer.poll();
             bufferSeq.poll();
         }
+        broadcastToSinks(msg, s);
+    }
 
+    private void broadcastToSinks(Map<String, Object> msg, long s) {
+        if (sinks.isEmpty()) return;
         String json;
         try {
             json = mapper.writeValueAsString(Map.of(
@@ -226,7 +201,6 @@ public class JrxPushHub {
         } catch (Exception ex) {
             return;
         }
-
         sinks.removeIf(sink -> {
             if (!sink.isOpen()) return true;
             try {
@@ -239,25 +213,10 @@ public class JrxPushHub {
         });
     }
 
-    private Map<String,Object> encode(String k, Object v, boolean allowDelta) {
+    private Map<String,Object> encodeSnapshot(String k, Object v) {
         Map<String,Object> payload = new HashMap<>();
         payload.put("k", k);
-
-        if (allowDelta && v instanceof SmartList<?> list && list.isDirty()) {
-            payload.put("delta", true);
-            payload.put("type", "list");
-            payload.put("changes", list.drainChanges());
-        } else if (allowDelta && v instanceof SmartMap<?,?> map && map.isDirty()) {
-            payload.put("delta", true);
-            payload.put("type", "map");
-            payload.put("changes", map.drainChanges());
-        } else if (allowDelta && v instanceof SmartSet<?> set && set.isDirty()) {
-            payload.put("delta", true);
-            payload.put("type", "set");
-            payload.put("changes", set.drainChanges());
-        } else {
-            payload.put("v", v);
-        }
+        payload.put("v", v);
         return payload;
     }
 
@@ -281,27 +240,18 @@ public class JrxPushHub {
         }
         return map;
     }
-    
- // --- Helpers para inyección de dependencias anidadas ---
 
     private void applyPath(Object target, String[] parts, int idx, Object value) throws Exception {
         if (target == null) return;
-        
         String fieldName = parts[idx];
-        
-        // Si estamos en el último segmento (ej: "name"), escribimos el valor
         if (idx == parts.length - 1) {
             setField(target, fieldName, value);
             return;
         }
-        
-        // Si no, bajamos un nivel (ej: "address" en "user.address.city")
         java.lang.reflect.Field f = findField(target.getClass(), fieldName);
         if (f != null) {
             f.setAccessible(true);
             Object child = f.get(target);
-            
-            // Si el hijo es nulo, intentamos crearlo (si tiene constructor vacío)
             if (child == null) {
                 child = f.getType().getDeclaredConstructor().newInstance();
                 f.set(target, child);
@@ -314,11 +264,7 @@ public class JrxPushHub {
         java.lang.reflect.Field f = findField(target.getClass(), fieldName);
         if (f != null) {
             f.setAccessible(true);
-            
-            // Usamos Jackson para convertir el tipo (ej: "true" -> boolean, "123" -> int)
-            // Esto es vital porque del JSON siempre vienen Strings o tipos primitivos simples.
             Object typedValue = mapper.convertValue(rawValue, mapper.constructType(f.getGenericType()));
-            
             f.set(target, typedValue);
         }
     }
@@ -334,5 +280,4 @@ public class JrxPushHub {
         }
         return null;
     }
-    
 }

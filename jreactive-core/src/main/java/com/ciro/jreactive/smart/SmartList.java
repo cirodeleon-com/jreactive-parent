@@ -4,63 +4,51 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.function.Consumer;
 
-/**
- * Lista reactiva Thread-Safe.
- * Protege contra modificaciones concurrentes (Timer vs WebSocket).
- */
 public class SmartList<E> extends ArrayList<E> {
 
-    // ✅ Lista sincronizada para evitar ConcurrentModificationException al leer cambios
-    private final List<Change> changes = Collections.synchronizedList(new ArrayList<>());
-
-    // ✅ Volatile asegura visibilidad inmediata entre hilos
-    private volatile boolean dirty = false;
-
-    // ✅ Opción A: callback cuando hay cambios in-place (deltas)
-    private transient Runnable onDirty;
+    private final transient List<Consumer<Change>> listeners = new CopyOnWriteArrayList<>();
 
     public SmartList() { super(); }
     public SmartList(Collection<? extends E> c) { super(c); }
 
     public record Change(String op, int index, Object item) {}
 
-    /** Registra callback para notificar que hubo cambios in-place */
-    public synchronized void onDirty(Runnable r) {
-        this.onDirty = r;
+    public void subscribe(Consumer<Change> listener) {
+        listeners.add(listener);
     }
 
-    private void fireDirty() {
-        Runnable cb;
-        synchronized (this) { cb = this.onDirty; }
-        if (cb != null) {
-            try { cb.run(); } catch (Exception ignored) {}
+    public void unsubscribe(Consumer<Change> listener) {
+        listeners.remove(listener);
+    }
+
+    private void fire(String op, int index, Object item) {
+        if (listeners.isEmpty()) return;
+        Change c = new Change(op, index, item);
+        for (Consumer<Change> l : listeners) {
+            try { l.accept(c); } catch (Exception e) { e.printStackTrace(); }
         }
     }
 
-    private void markDirty(Change c) {
-        changes.add(c);
-        dirty = true;
-        fireDirty();
-    }
-
-    // --- Métodos Interceptados (Sincronizados) ---
+    // --- Operaciones Unitarias ---
 
     @Override
     public synchronized boolean add(E e) {
-        markDirty(new Change("ADD", this.size(), e));
+        fire("ADD", this.size(), e);
         return super.add(e);
     }
 
     @Override
     public synchronized void add(int index, E element) {
-        markDirty(new Change("ADD", index, element));
+        fire("ADD", index, element);
         super.add(index, element);
     }
 
     @Override
     public synchronized E remove(int index) {
-        markDirty(new Change("REMOVE", index, null));
+        fire("REMOVE", index, null);
         return super.remove(index);
     }
 
@@ -68,7 +56,7 @@ public class SmartList<E> extends ArrayList<E> {
     public synchronized boolean remove(Object o) {
         int index = this.indexOf(o);
         if (index >= 0) {
-            markDirty(new Change("REMOVE", index, null));
+            fire("REMOVE", index, null);
             super.remove(index);
             return true;
         }
@@ -76,60 +64,88 @@ public class SmartList<E> extends ArrayList<E> {
     }
 
     @Override
-    public synchronized void clear() {
-        markDirty(new Change("CLEAR", 0, null));
-        super.clear();
-    }
-
-    @Override
     public synchronized E set(int index, E element) {
-        markDirty(new Change("SET", index, element));
+        fire("SET", index, element);
         return super.set(index, element);
     }
 
-    /** Helper para notificar cambios internos en objetos sin reemplazarlos */
+    @Override
+    public synchronized void clear() {
+        if (!isEmpty()) {
+            fire("CLEAR", 0, null);
+            super.clear();
+        }
+    }
+    
     public synchronized void update(int index) {
         if (index >= 0 && index < this.size()) {
             this.set(index, this.get(index));
         }
     }
 
-    // --- API para el Framework ---
+    // --- 🔥 FIX: Soporte para subList y Operaciones Masivas ---
 
-    public boolean isDirty() {
-        return dirty;
-    }
-
-    public List<Change> getChanges() {
-        return changes;
-    }
-
-    public void clearDirty() {
-        dirty = false;
-        changes.clear();
-    }
-
-    public void clearChanges() {
-        this.changes.clear();
-        this.dirty = false;
+    /**
+     * Esto permite que subList(0, 5).clear() funcione y dispare eventos.
+     * Iteramos hacia atrás para no afectar los índices mientras borramos.
+     */
+    @Override
+    protected synchronized void removeRange(int fromIndex, int toIndex) {
+        // Borramos uno a uno para disparar "REMOVE" individuales al frontend.
+        // Es menos eficiente en CPU pero garantiza consistencia visual.
+        for (int i = toIndex - 1; i >= fromIndex; i--) {
+            this.remove(i); 
+        }
     }
 
     /**
-     * 🔥 CRÍTICO: Obtiene los cambios y limpia la lista en UNA sola operación atómica.
-     * Esto evita que se pierdan eventos si un hilo escribe justo mientras el WS lee.
+     * Sobreescribimos removeAll para que use nuestro remove(Object) y dispare eventos.
      */
-    public synchronized List<Change> drainChanges() {
-        if (!dirty || changes.isEmpty()) {
-            return Collections.emptyList();
+    @Override
+    public synchronized boolean removeAll(Collection<?> c) {
+        boolean modified = false;
+        // Copiamos para evitar ConcurrentModification si c es this
+        for (Object x : new ArrayList<>(this)) { 
+            if (c.contains(x)) {
+                if (this.remove(x)) modified = true;
+            }
         }
-        // 1. Copia instantánea (Snapshot)
-        List<Change> snapshot = new ArrayList<>(this.changes);
+        return modified;
+    }
 
-        // 2. Limpieza inmediata
-        this.changes.clear();
-        this.dirty = false;
+    /**
+     * Sobreescribimos retainAll para que use nuestro remove(Object).
+     */
+    @Override
+    public synchronized boolean retainAll(Collection<?> c) {
+        boolean modified = false;
+        for (Object x : new ArrayList<>(this)) {
+            if (!c.contains(x)) {
+                if (this.remove(x)) modified = true;
+            }
+        }
+        return modified;
+    }
+    
+    // addAll usa internamente add(index, elem) o similar, así que suele funcionar,
+    // pero si quisieras forzar eventos uno a uno:
+    @Override
+    public synchronized boolean addAll(Collection<? extends E> c) {
+        boolean modified = false;
+        for (E e : c) {
+            if (add(e)) modified = true;
+        }
+        return modified;
+    }
 
-        // 3. Retorno seguro
-        return snapshot;
+    @Override
+    public synchronized boolean addAll(int index, Collection<? extends E> c) {
+        boolean modified = false;
+        int i = index;
+        for (E e : c) {
+            add(i++, e);
+            modified = true;
+        }
+        return modified;
     }
 }

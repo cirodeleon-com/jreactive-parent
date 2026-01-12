@@ -4,10 +4,10 @@ import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.HashSet; // [Nuevo]
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;     // [Nuevo]
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.Collection;
 import java.util.Objects;
@@ -17,33 +17,22 @@ import com.ciro.jreactive.smart.SmartMap;
 
 public abstract class HtmlComponent extends ViewLeaf {
 
-    private Map<String, ReactiveVar<?>> map;      // se crea on-demand
+    private Map<String, ReactiveVar<?>> map;
     private ComponentEngine.Rendered cached;
     private final List<HtmlComponent> _children = new ArrayList<>();
     
-    // [Nuevo] Rastreador de keys de estado para auto-sync
     private final Set<String> stateKeys = new HashSet<>(); 
 
     private final AtomicReference<ComponentState> _state =
             new AtomicReference<>(ComponentState.UNMOUNTED);
     
- // 📸 Almacenes temporales para detectar cambios (Snapshots)
+    // Snapshots
     private final Map<String, Integer> _structureHashes = new HashMap<>();
     private final Map<String, Object> _simpleSnapshots = new HashMap<>();
-    
     private final Map<String, Integer> _identitySnapshots = new HashMap<>();
- // ... snapshots ...
-    
-    
-    
-    /** Contenido raw que va entre <MiComp> ... </MiComp> */
+
     private String slotHtml = "";
     
-    
-    
-    /**
-     * Captura el estado actual. Soporta: List, Set, Queue, Map y POJOs.
-     */
     public void _captureStateSnapshot() {
         if (map == null) buildBindings();
         
@@ -60,15 +49,15 @@ public abstract class HtmlComponent extends ViewLeaf {
                 if (val == null) {
                     _simpleSnapshots.put(key, null);
                 } 
-                // A) Familia Smart (List, Set, Map) -> No guardamos nada, confiamos en isDirty()
+                // A) Familia Smart: No guardamos estado, confiamos en los eventos en tiempo real
                 else if (val instanceof SmartList || val instanceof SmartSet || val instanceof SmartMap) {
-                    // No hacemos nada, el flag dirty se encarga
+                    // NO-OP: El sistema de eventos maneja los cambios internos
                 }
-                // B) Tipos inmutables simples (String, Integer, Boolean) -> Guardamos valor
+                // B) Tipos inmutables simples
                 else if (val instanceof String || val instanceof Number || val instanceof Boolean) {
                     _simpleSnapshots.put(key, val);
                 }
-                // C) POJOs Mutables (PageState, SignupForm) y Colecciones normales -> Guardamos DEEP HASH
+                // C) POJOs Mutables y Colecciones normales
                 else {
                     _structureHashes.put(key, getPojoHash(val));
                 }
@@ -78,90 +67,62 @@ public abstract class HtmlComponent extends ViewLeaf {
         }
     }
 
-    // Solo el motor debe usar esto
     void _setSlotHtml(String html) {
         this.slotHtml = (html == null) ? "" : html;
     }
 
-    /**
-     * Para que los componentes contenedores (JForm, layouts, etc.)
-     * puedan incrustar el contenido interno.
-     */
     protected String slot() {
         return slotHtml;
     }
     
     void _addChild(HtmlComponent child) { _children.add(child); }
     List<HtmlComponent> _children()     { return _children; }
-     // para IDs automáticos
-    
 
-    /** Hook: se llama una vez cuando el componente pasa a MOUNTED */
-    protected void onMount() {
-        // por defecto nada; las subclases sobreescriben si necesitan
-    }
-
-    /** Hook: se llama una vez cuando el componente pasa a UNMOUNTED */
-    protected void onUnmount() {
-        // por defecto nada
-    }
+    protected void onMount() {}
+    protected void onUnmount() {}
     
-    /** Monta este componente (si aún no lo está) y luego sus hijos */
     public void _mountRecursive() {
-        // primero este componente
         if (_state.compareAndSet(ComponentState.UNMOUNTED, ComponentState.MOUNTED)) {
             onMount();
         }
-        // luego los hijos
         for (HtmlComponent child : _children) {
             child._mountRecursive();
         }
     }
 
-    /** Desmonta en cascada: hijos primero, luego este componente */
     public void _unmountRecursive() {
-        // primero los hijos
         for (HtmlComponent child : _children) {
             child._unmountRecursive();
         }
-        // luego este
         if (_state.compareAndSet(ComponentState.MOUNTED, ComponentState.UNMOUNTED)) {
             onUnmount();
             cleanupBindings();
         }
     }
 
-    /** Solo por si quieres inspeccionar el estado en debug */
     ComponentState _state() {
         return _state.get();
     }
     
     private void cleanupBindings() {
-        // selfBindings() se asegura de construir `map` si aún no existe
         Map<String, ReactiveVar<?>> binds = selfBindings();
         binds.values().forEach(rx -> rx.clearListeners());
     }
 
-
-    /* --------------------- API ViewLeaf -------------------- */
     @Override
     public Map<String, ReactiveVar<?>> bindings() {
         if (cached == null) cached = ComponentEngine.render(this);
         return cached.bindings();
-    	
     }
 
     @Override
     public String render() {
         if (cached == null) cached = ComponentEngine.render(this);
         return cached.html();
-    	
     }
 
-    /* ----------------- para las subclases ------------------ */
     protected abstract String template();
 
-    /* ----------------- util interno ------------------------ */
     Map<String, ReactiveVar<?>> selfBindings() {
         if (map == null) buildBindings();
         return map;
@@ -169,12 +130,12 @@ public abstract class HtmlComponent extends ViewLeaf {
 
     private void buildBindings() {
         map = new HashMap<>();
-        stateKeys.clear(); // [Nuevo] Limpiamos para reconstruir
+        stateKeys.clear();
 
         Class<?> c = getClass();
         while (c != null && c != Object.class) {
             for (Field f : c.getDeclaredFields()) {
-                Bind bindAnn   = f.getAnnotation(Bind.class);
+                Bind bindAnn    = f.getAnnotation(Bind.class);
                 State stateAnn = f.getAnnotation(State.class);
 
                 if (bindAnn == null && stateAnn == null) continue;
@@ -185,7 +146,6 @@ public abstract class HtmlComponent extends ViewLeaf {
 
                     ReactiveVar<?> rx;
                     if (bindAnn != null) {
-                        // comportamiento actual de @Bind
                         rx = (raw instanceof ReactiveVar<?> r) ? r :
                              (raw instanceof Type<?> v)        ? v.rx() :
                              new ReactiveVar<>(raw);
@@ -195,27 +155,20 @@ public abstract class HtmlComponent extends ViewLeaf {
                         map.put(key, rx);
                     }
 
-
                     if (stateAnn != null) {
-                        // 👇 1. INTERCEPTAMOS: Convertimos a Smart si es necesario
-                        // (Aquí un HashSet normal se vuelve SmartSet silenciosamente)
                         Object smartValue = wrapInSmartType(raw);
 
-                        // Si hubo conversión, inyectamos el espía en la variable del usuario
                         if (smartValue != raw) {
                             f.set(this, smartValue);
                             raw = smartValue; 
                         }
 
-                        // Creamos el ReactiveVar con el valor Smart
                         ReactiveVar<Object> srx = new ReactiveVar<>(raw);
                         srx.setActiveGuard(() -> _state() == ComponentState.MOUNTED);
 
-                        // 👇 2. PROTEGEMOS EL TWO-WAY BINDING
                         srx.onChange(newValue -> {
                             try {
                                 f.setAccessible(true);
-                                // Si el WebSocket manda una colección nueva pura, la volvemos a envolver
                                 Object smartNew = wrapInSmartType(newValue);
                                 f.set(this, smartNew);
                             } catch (Exception e) {
@@ -225,8 +178,6 @@ public abstract class HtmlComponent extends ViewLeaf {
 
                         String key = stateAnn.value().isBlank() ? f.getName() : stateAnn.value();
                         map.put(key, srx);
-                        
-                        // Guardamos la key para sincronización automática
                         stateKeys.add(key);
                     }
 
@@ -238,9 +189,6 @@ public abstract class HtmlComponent extends ViewLeaf {
         }
     }
 
-    /**
-     * Sincronización Inteligente: Solo envía si detecta cambios vs el Snapshot.
-     */
     public void _syncState() {
         if (map == null) buildBindings();
 
@@ -250,67 +198,48 @@ public abstract class HtmlComponent extends ViewLeaf {
                 ReactiveVar<Object> rx = (ReactiveVar<Object>) map.get(key);
                 if (rx == null) continue;
 
-                // 1. Valor fresco post-ejecución
                 Object newValue = getFieldValueByName(key);
 
-                // 2. ¿Cambió? (Dirty Checking)
                 if (!hasChanged(key, newValue)) {
-                    continue; // 🛑 AHORRO: Si es igual, no enviamos nada por red
+                    continue; 
                 }
 
-                // 3. Si cambió, actualizamos el ReactiveVar (esto dispara el envío)
                 rx.set(newValue);
                 
-             // 👇 4. LIMPIEZA POST-ENVÍO (Resetear flags)
-             //   if (newValue instanceof SmartList<?> s) s.clearDirty();
-             //   else if (newValue instanceof SmartSet<?> s) s.clearDirty();
-             //   else if (newValue instanceof SmartMap<?,?> s) s.clearDirty();
-
             } catch (Exception e) {
                 System.err.println("Error Smart-Sync '" + key + "': " + e.getMessage());
             }
         }
     }
 
-    /**
-     * Lógica de comparación
-     */
-private boolean hasChanged(String key, Object newVal) {
-	
-	Integer oldIdentity = _identitySnapshots.get(key);
-    int newIdentity = System.identityHashCode(newVal);
-    
-    // Si la referencia en memoria es distinta, DEFINITIVAMENTE cambió.
-    if (oldIdentity != null && oldIdentity != newIdentity) {
-        return true; 
-    }
+    private boolean hasChanged(String key, Object newVal) {
         
-        // A) Familia Smart (Optimización O(1))
-        if (newVal instanceof SmartList<?> s) return s.isDirty();
-        if (newVal instanceof SmartSet<?> s)  return s.isDirty();
-        if (newVal instanceof SmartMap<?,?> s) return s.isDirty();
+        Integer oldIdentity = _identitySnapshots.get(key);
+        int newIdentity = System.identityHashCode(newVal);
+        
+        // Si la referencia en memoria es distinta, DEFINITIVAMENTE cambió (o se reasignó la lista).
+        if (oldIdentity != null && oldIdentity != newIdentity) {
+            return true; 
+        }
+        
+        // A) Familia Smart: Si es la MISMA instancia (identidad igual), 
+        // asumimos que los listeners ya enviaron los deltas. No hacemos nada.
+        if (newVal instanceof SmartList<?> || newVal instanceof SmartSet<?> || newVal instanceof SmartMap<?,?>) {
+            return false;
+        }
 
-        // B) Tipos Simples Inmutables (String, Integer, Boolean)
-        // Estos cambian de referencia, así que equals() funciona perfecto.
+        // B) Tipos Simples Inmutables
         if (newVal instanceof String || newVal instanceof Number || newVal instanceof Boolean) {
             Object oldVal = _simpleSnapshots.get(key);
             return !Objects.equals(newVal, oldVal);
         }
 
-        // C) POJOs Mutables (SignupForm, PageState) y Colecciones Normales
-        // Aquí es donde ocurría tu error. Antes usabas equals(), ahora usamos Deep Hash.
-        
-        // 1. Calculamos la huella digital actual del objeto
+        // C) POJOs Mutables y Colecciones Normales -> Deep Hash
         int newHash = getPojoHash(newVal);
-        
-        // 2. Recuperamos la huella que tomamos en el Snapshot (antes del @Call)
         Integer oldHash = _structureHashes.get(key);
-        
-        // 3. Si no había huella o es distinta -> ¡CAMBIO DETECTADO!
         return oldHash == null || oldHash != newHash;
     }
 
-    // [Nuevo] Helper para obtener el valor del campo
     private Object getFieldValueByName(String key) throws Exception {
         Class<?> c = getClass();
         while (c != null && c != Object.class) {
@@ -329,7 +258,6 @@ private boolean hasChanged(String key, Object newVal) {
         return null;
     }
     
-    
     public Map<String, Method> getCallableMethods() {
         Map<String, Method> callables = new HashMap<>();
         for (Method m : this.getClass().getDeclaredMethods()) {
@@ -341,8 +269,6 @@ private boolean hasChanged(String key, Object newVal) {
         return callables;
     }
     
-    
-    /* ======== Param injection (ruta) ======== */
     void _injectParams(Map<String,String> params) {
         var fields = new java.util.ArrayList<java.lang.reflect.Field>();
         Class<?> c = getClass();
@@ -391,11 +317,9 @@ private boolean hasChanged(String key, Object newVal) {
         return raw;
     }
     
-
     @SuppressWarnings("unchecked")
     protected void updateState(String fieldName) {
         try {
-            // 1) localizar el Field real
             Class<?> c = getClass();
             Field found = null;
             while (c != null && c != Object.class) {
@@ -415,22 +339,13 @@ private boolean hasChanged(String key, Object newVal) {
             found.setAccessible(true);
             Object currentValue = found.get(this);
 
-            // 🔥 aquí viene el cambio importante:
             State stateAnn = found.getAnnotation(State.class);
-            if (stateAnn == null) {
-                throw new IllegalStateException("Field '" + fieldName + "' is not annotated with @State");
-            }
-
-            String bindingKey = stateAnn.value().isBlank()
-                    ? found.getName()
-                    : stateAnn.value();
+            String bindingKey = stateAnn.value().isBlank() ? found.getName() : stateAnn.value();
 
             ReactiveVar<Object> rx = (ReactiveVar<Object>) selfBindings().get(bindingKey);
             if (rx == null) {
                 throw new IllegalStateException("No ReactiveVar for @State '" + bindingKey + "'");
             }
-
-            // 2) dispara la notificación
             rx.set(currentValue);
 
         } catch (Exception e) {
@@ -438,52 +353,31 @@ private boolean hasChanged(String key, Object newVal) {
         }
     }
     
-    /**
-     * Convierte una colección Java normal en su versión Smart (Espía).
-     */
     private Object wrapInSmartType(Object rawValue) {
         if (rawValue == null) return null;
-
-        // 1. LISTAS
         if (rawValue instanceof java.util.List<?> list) {
-            if (list instanceof SmartList) return list; // Ya es smart
+            if (list instanceof SmartList) return list;
             return new SmartList<>(list);
         }
-
-        // 2. SETS (Aquí entra tu SmartSet)
         if (rawValue instanceof java.util.Set<?> set) {
             if (set instanceof SmartSet) return set;
             return new SmartSet<>(set);
         }
-
-        // 3. MAPAS
         if (rawValue instanceof java.util.Map<?,?> map) {
             if (map instanceof SmartMap) return map;
             return new SmartMap<>(map);
         }
-
-        // Arrays y otros tipos se devuelven tal cual
         return rawValue;
     }
     
-    /**
-     * Calcula un hash basado en el contenido de los campos del objeto (Reflexión).
-     * Esto permite detectar cambios en POJOs mutables que no implementan hashCode().
-     */
     private int getPojoHash(Object o) {
         if (o == null) return 0;
-        
-        // Si es un tipo simple, usamos su hash normal
         if (o instanceof String || o instanceof Number || o instanceof Boolean) {
             return o.hashCode();
         }
-
-        // Si es una colección o mapa, usamos su hash estándar
         if (o instanceof Collection || o instanceof Map) {
             return o.hashCode();
         }
-
-        // Si es un POJO, recorremos sus campos
         int result = 1;
         try {
             for (Field f : o.getClass().getDeclaredFields()) {
@@ -493,10 +387,8 @@ private boolean hasChanged(String key, Object newVal) {
                 result = 31 * result + elementHash;
             }
         } catch (Exception e) {
-            // Si falla la reflexión, fallback al hash de identidad
             return o.hashCode();
         }
         return result;
     }
-
 }
