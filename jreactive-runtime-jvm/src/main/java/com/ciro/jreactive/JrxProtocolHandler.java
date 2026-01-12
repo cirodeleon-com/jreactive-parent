@@ -50,13 +50,19 @@ public class JrxProtocolHandler {
         this.maxQueue = maxQueue;
         this.flushIntervalMs = flushIntervalMs;
 
+        /* Recoge recursivamente TODO el árbol */
         this.bindings = collect(root);
 
+        /* Suscripción a variables reactivas */
         bindings.forEach((k, v) -> {
+            
+            // 1. Hook inicial a colecciones Smart existentes
             attachSmartListener(k, v.get());
+
+            // 2. Hook cuando cambia la referencia (ej: items = new ArrayList)
             Runnable unsubscribe = v.onChange(val -> {
                 attachSmartListener(k, val);
-                broadcast(k, val); 
+                broadcast(k, val); // Envía snapshot completo del nuevo objeto
             });
             disposables.add(unsubscribe);
         });
@@ -87,8 +93,7 @@ public class JrxProtocolHandler {
             enqueue(key, packet);
             scheduleFlushIfNeeded();
         } else {
-            // 🔥 FIX: Enviamos el Delta inmediatamente, NO el snapshot entero.
-            // Esto hace que el sistema sea ultra-rápido incluso sin batching.
+            // 🔥 Optimización: Enviamos el Delta inmediatamente, NO el snapshot entero.
             sendImmediateDelta(key, packet);
         }
     }
@@ -97,6 +102,7 @@ public class JrxProtocolHandler {
 
     public void onOpen(JrxSession s) {
         sessions.add(s);
+        // Enviar estado inicial (Snapshots)
         for (var e : bindings.entrySet()) {
             if (s.isOpen()) {
                 try {
@@ -113,6 +119,9 @@ public class JrxProtocolHandler {
         if (sessions.isEmpty()) {
             queue.clear();
             queueSize.set(0);
+            if (log.isDebugEnabled()) {
+                log.debug("ProtocolHandler closed. Cleaning up {} listeners.", disposables.size());
+            }
             disposables.forEach(Runnable::run);
             disposables.clear();
         }
@@ -222,9 +231,8 @@ public class JrxProtocolHandler {
                     lastByKey.put(key, new DeltaPacket(newDp.type(), merged));
                 } 
                 else if (existing != null && !(existing instanceof DeltaPacket)) {
-                    // 🔥 FIX: Si ya hay un Snapshot (objeto completo), IGNORAMOS el Delta.
-                    // ¿Por qué? Porque el Snapshot es la referencia viva al objeto.
-                    // Al serializarse al final, ¡ya contendrá este cambio!
+                    // ✅ FIX CRÍTICO: Si ya hay un Snapshot (objeto completo), IGNORAMOS el Delta.
+                    // El snapshot es la verdad absoluta y más reciente.
                 } 
                 else {
                     // Si no había nada, guardamos el Delta
@@ -236,10 +244,8 @@ public class JrxProtocolHandler {
             }
         }
 
-        // ... resto del método de serialización igual ...
         String jsonPayload;
         try {
-            // (Tu código de serialización aquí sigue igual)
             List<Map<String, Object>> payload = new ArrayList<>(lastByKey.size());
             for (var entry : lastByKey.entrySet()) {
                 String k = entry.getKey();

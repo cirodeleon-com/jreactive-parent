@@ -56,8 +56,12 @@ public class SmartList<E> extends ArrayList<E> {
     public synchronized boolean remove(Object o) {
         int index = this.indexOf(o);
         if (index >= 0) {
-            fire("REMOVE", index, null);
+            // 1. 🔥 PRIMERO: Mutamos el estado real (Borramos)
             super.remove(index);
+            
+            // 2. ✅ LUEGO: Notificamos al mundo que ya sucedió
+            fire("REMOVE", index, null);
+            
             return true;
         }
         return false;
