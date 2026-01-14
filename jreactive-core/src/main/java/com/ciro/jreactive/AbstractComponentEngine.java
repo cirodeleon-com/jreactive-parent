@@ -13,6 +13,8 @@ public abstract class AbstractComponentEngine implements ComponentEngine.Strateg
     private static final Pattern IF_START = Pattern.compile("\\{\\{\\s*#if\\s+([^}]+)}}");
     private static final String IF_END_TOKEN = "{{/if}}";
     private static final String ELSE_TOKEN = "{{else}}";
+    private static final Pattern EVENT_CALL_SIG =
+            Pattern.compile("^\\s*([\\w#.-]+)\\s*(?:\\((.*)\\))?\\s*$");
 
     private static volatile ComponentFactory componentFactory = new DefaultComponentFactory();
 
@@ -114,6 +116,62 @@ public abstract class AbstractComponentEngine implements ComponentEngine.Strateg
         }
         return -1;
     }
+    
+ 
+
+    private static String qualifyEventPropIfNeeded(HtmlComponent parent, String prop, String raw) {
+        if (raw == null) return null;
+
+        // Solo para props estilo "onClick", "onSubmit", "onChange", etc.
+        if (prop == null || prop.length() < 3 || !prop.startsWith("on")) return raw;
+
+        String v = raw.trim();
+        Matcher m = EVENT_CALL_SIG.matcher(v);
+        if (!m.matches()) return raw;
+
+        String method = m.group(1);
+        String args   = m.group(2); // puede ser null
+
+        // Ya está cualificado (tus ids reales contienen '#')
+        if (method.contains("#")) return raw;
+
+        // Solo cualificar si ese método existe en el parent como callable
+        if (parent.getCallableMethods() == null || !parent.getCallableMethods().containsKey(method)) {
+            return raw;
+        }
+
+        String qualified = parent.getId() + "." + method;
+        return (args == null) ? qualified : qualified + "(" + args + ")";
+    }
+    
+    private static Object coerceLiteral(String v) {
+        if (v == null) return null;
+        String s = v.trim();
+
+        // Quitar comillas si vienen
+        if ((s.startsWith("\"") && s.endsWith("\"")) || (s.startsWith("'") && s.endsWith("'"))) {
+            s = s.substring(1, s.length() - 1);
+        }
+
+        // boolean
+        if ("true".equalsIgnoreCase(s)) return true;
+        if ("false".equalsIgnoreCase(s)) return false;
+
+        // int
+        if (s.matches("-?\\d+")) {
+            try { return Integer.parseInt(s); } catch (Exception ignored) {}
+        }
+
+        // double
+        if (s.matches("-?\\d+\\.\\d+")) {
+            try { return Double.parseDouble(s); } catch (Exception ignored) {}
+        }
+
+        // default: string
+        return s;
+    }
+
+
 
     protected HtmlComponent createAndBindComponent(HtmlComponent parent, List<HtmlComponent> pool, Map<String, ReactiveVar<?>> globalBindings, String className, Map<String, String> attrs, String slotHtml) {
         String ref = attrs.get("ref");
@@ -139,11 +197,22 @@ public abstract class AbstractComponentEngine implements ComponentEngine.Strateg
             String prop = isB ? k.substring(1) : k;
             ReactiveVar<Object> target = (ReactiveVar<Object>) childBinds.get(prop);
             if (target != null) {
-                if (isB) {
-                    ReactiveVar<?> pRx = parent.selfBindings().get(v);
-                    if (pRx == null) pRx = globalBindings.get(v);
-                    if (pRx != null) { target.set(pRx.get()); pRx.onChange(target::set); }
-                } else target.set(v);
+            	if (isB) {
+            	    ReactiveVar<?> pRx = parent.selfBindings().get(v);
+            	    if (pRx == null) pRx = globalBindings.get(v);
+
+            	    if (pRx != null) {
+            	        target.set(pRx.get());
+            	        pRx.onChange(target::set);
+            	    } else {
+            	        // ✅ Fallback robusto: si no es binding real, es literal (ej: "form.country")
+            	        target.set(coerceLiteral(v));
+            	    }
+            	} else {
+            	    String fixed = qualifyEventPropIfNeeded(parent, prop, v);
+            	    target.set(fixed);
+            	}
+
             }
         });
         return hc;

@@ -14,6 +14,7 @@ public class JButton extends HtmlComponent {
     protected String template() {
         return """
             <button
+              type="button"
               class="jr-btn {{type}}"
               @click="{{onClick}}"
               :disabled="{{disabled}} || {{loading}}"

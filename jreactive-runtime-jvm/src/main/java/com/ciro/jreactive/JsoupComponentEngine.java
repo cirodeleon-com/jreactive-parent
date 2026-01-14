@@ -51,23 +51,33 @@ public class JsoupComponentEngine extends AbstractComponentEngine {
         return new ComponentEngine.Rendered(html, all);
     }
 
-    private void processNodeTree(Node node, HtmlComponent ctx, List<HtmlComponent> pool, Map<String, ReactiveVar<?>> all, String namespacePrefix) {
-        List<Node> children = new ArrayList<>(node.childNodes());
-
-        for (Node child : children) {
-            if (child instanceof Element el) {
-                if (isComponent(el)) {
-                	handleChildComponent(el, ctx, pool, all, namespacePrefix);
-                } else {
-                    processElementAttributes(el, ctx, namespacePrefix);
-                    processNodeTree(child, ctx, pool, all, namespacePrefix);
-                }
-            } else if (child instanceof TextNode textNode) {
-                // Solo namespacing para texto (el JS hace el resto)
-                processTextNode(textNode, ctx, namespacePrefix);
+    private void processNodeTree(
+            Node node,
+            HtmlComponent ctx,
+            List<HtmlComponent> pool,
+            Map<String, ReactiveVar<?>> all,
+            String namespacePrefix
+    ) {
+        // 1) Procesar el nodo actual (ROOT incluido)
+        if (node instanceof Element el) {
+            // Si el ROOT es un componente, delega y corta
+            if (isComponent(el)) {
+                handleChildComponent(el, ctx, pool, all, namespacePrefix);
+                return;
             }
+            processElementAttributes(el, ctx, namespacePrefix);
+        } else if (node instanceof TextNode text) {
+            processTextNode(text, ctx, namespacePrefix);
+            return;
+        }
+
+        // 2) Procesar hijos (snapshot para evitar concurrent modification)
+        List<Node> children = new ArrayList<>(node.childNodes());
+        for (Node child : children) {
+            processNodeTree(child, ctx, pool, all, namespacePrefix);
         }
     }
+
 
     
     private void handleChildComponent(Element el, HtmlComponent ctx, List<HtmlComponent> pool, Map<String, ReactiveVar<?>> all, String namespacePrefix) {
@@ -291,6 +301,15 @@ public class JsoupComponentEngine extends AbstractComponentEngine {
             // Si es una directiva :prop (ej: :disabled), usamos el nombre real
             if (attrKey.startsWith(":")) {
                 String realKey = attrKey.substring(1); 
+                
+                if (isBooleanAttr(realKey)) {
+                    boolean on = evalBoolExpr(currentVal); // soporte true/false con || && !
+                    if (on) el.attr(realKey, realKey);     // o ""
+                    else    el.removeAttr(realKey);
+                    el.removeAttr(attrKey);
+                    return;
+                }
+                
                 el.attr(realKey, currentVal);
                 el.removeAttr(attrKey); 
             } else {
@@ -305,6 +324,16 @@ public class JsoupComponentEngine extends AbstractComponentEngine {
             el.removeAttr(attrKey);
         }
     }
+    
+    
+    
+    private static boolean isBooleanAttr(String k) {
+    	  return switch (k) {
+    	    case "disabled","checked","required","selected","readonly","multiple","hidden" -> true;
+    	    default -> false;
+    	  };
+    	}
+
 
     private boolean isComponent(Element el) {
         return !el.tagName().isEmpty() && Character.isUpperCase(el.tagName().charAt(0));
@@ -317,6 +346,120 @@ public class JsoupComponentEngine extends AbstractComponentEngine {
                         m.isAnnotationPresent(com.ciro.jreactive.annotations.Call.class)
                 );
     }
+    
+ // Soporta: true/false, ||, &&, !, paréntesis.
+ // También tolera null, "", espacios y cosas raras (por defecto -> false).
+ private static boolean evalBoolExpr(String expr) {
+     if (expr == null) return false;
+     String s = expr.trim();
+     if (s.isEmpty()) return false;
+
+     // Normaliza mayúsculas y posibles comillas
+     s = s.replace("\"", "").replace("'", "").trim().toLowerCase();
+
+     // Fast paths
+     if (s.equals("true")) return true;
+     if (s.equals("false")) return false;
+     
+     final String finalS=s;
+
+     // Parser recursivo simple
+     class P {
+         final String in = finalS;
+         int i = 0;
+
+         void skipWs() {
+             while (i < in.length() && Character.isWhitespace(in.charAt(i))) i++;
+         }
+
+         boolean match(String tok) {
+             skipWs();
+             if (in.startsWith(tok, i)) {
+                 i += tok.length();
+                 return true;
+             }
+             return false;
+         }
+
+         char peek() {
+             skipWs();
+             return (i < in.length()) ? in.charAt(i) : '\0';
+         }
+
+         // grammar:
+         // expr   := orExpr
+         // orExpr := andExpr ( "||" andExpr )*
+         // andExpr:= unary ( "&&" unary )*
+         // unary  := "!" unary | primary
+         // primary:= "true" | "false" | "(" expr ")"
+         boolean parseExpr() { return parseOr(); }
+
+         boolean parseOr() {
+             boolean v = parseAnd();
+             while (true) {
+                 if (match("||")) v = v || parseAnd();
+                 else break;
+             }
+             return v;
+         }
+
+         boolean parseAnd() {
+             boolean v = parseUnary();
+             while (true) {
+                 if (match("&&")) v = v && parseUnary();
+                 else break;
+             }
+             return v;
+         }
+
+         boolean parseUnary() {
+             if (match("!")) return !parseUnary();
+             return parsePrimary();
+         }
+
+         boolean parsePrimary() {
+             skipWs();
+
+             // Paréntesis
+             if (match("(")) {
+                 boolean v = parseExpr();
+                 // consume ')'
+                 match(")");
+                 return v;
+             }
+
+             // Literales true/false
+             if (in.startsWith("true", i)) {
+                 i += 4;
+                 return true;
+             }
+             if (in.startsWith("false", i)) {
+                 i += 5;
+                 return false;
+             }
+
+             // Si llega algo desconocido (ej: "null", "0", "disabled", etc.)
+             // lo tratamos como false para evitar deshabilitar accidentalmente.
+             // (Puedes cambiar esto si quieres otra semántica.)
+             // Avanza hasta un separador razonable para no quedar en loop.
+             while (i < in.length()) {
+                 char c = in.charAt(i);
+                 if (Character.isWhitespace(c) || c == ')' || c == '|' || c == '&') break;
+                 i++;
+             }
+             return false;
+         }
+     }
+
+     try {
+         P p = new P();
+         boolean v = p.parseExpr();
+         return v;
+     } catch (Exception e) {
+         return false;
+     }
+ }
+
 
     
 }
