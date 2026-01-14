@@ -5,319 +5,129 @@ import com.ciro.jreactive.spi.JrxSession;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
 import java.io.IOException;
+import java.lang.reflect.Field;
 import java.util.*;
 import java.util.concurrent.*;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.*;
 import java.util.function.Consumer;
 
 public class JrxProtocolHandler {
-
     private static final Logger log = LoggerFactory.getLogger(JrxProtocolHandler.class);
-
     private final Map<String, ReactiveVar<?>> bindings;
     private final Set<JrxSession> sessions = ConcurrentHashMap.newKeySet();
-    
     private final ObjectMapper mapper;
     private final ScheduledExecutorService scheduler;
-
-    /* --- Config --- */
     private final boolean backpressureEnabled;
-    private final int     maxQueue;
-    private final int     flushIntervalMs;
-
-    /* --- Back-pressure structures --- */
+    private final int maxQueue, flushIntervalMs;
     private final ConcurrentLinkedQueue<Event> queue = new ConcurrentLinkedQueue<>();
     private final AtomicInteger queueSize = new AtomicInteger(0);
     private final AtomicBoolean flushScheduled = new AtomicBoolean(false);
-    
-    // Hooks generales (ReactiveVar.onChange)
     private final List<Runnable> disposables = new ArrayList<>();
-    
-    // 🔥 FIX MEMORY LEAK: Mapa para rastrear y eliminar listeners de colecciones antiguas
     private final Map<String, Runnable> activeSmartCleanups = new ConcurrentHashMap<>();
+    private final Map<Class<?>, Map<String, Field>> fieldCache = new ConcurrentHashMap<>();
 
     private record Event(String k, Object v) {}
     private record DeltaPacket(String type, List<?> changes) {}
 
-    public JrxProtocolHandler(ViewNode root,
-                              ObjectMapper mapper,
-                              ScheduledExecutorService scheduler,
-                              boolean backpressureEnabled,
-                              int maxQueue,
-                              int flushIntervalMs) {
-        this.mapper = mapper;
-        this.scheduler = scheduler;
-        this.backpressureEnabled = backpressureEnabled;
-        this.maxQueue = maxQueue;
-        this.flushIntervalMs = flushIntervalMs;
-
-        /* Recoge recursivamente TODO el árbol */
+    public JrxProtocolHandler(ViewNode root, ObjectMapper m, ScheduledExecutorService s, boolean bp, int mq, int fi) {
+        this.mapper = m; this.scheduler = s; this.backpressureEnabled = bp; this.maxQueue = mq; this.flushIntervalMs = fi;
         this.bindings = collect(root);
-
-        /* Suscripción a variables reactivas */
         bindings.forEach((k, v) -> {
-            
-            // 1. Hook inicial: Conecta a la colección actual y guarda el cleanup
             updateSmartSubscription(k, v.get());
-
-            // 2. Hook cambio de referencia: Limpia el listener viejo y conecta el nuevo
-            Runnable unsubscribe = v.onChange(val -> {
-                updateSmartSubscription(k, val); // <--- Rotación de listeners aquí
-                broadcast(k, val); // Envía snapshot completo del nuevo objeto
-            });
-            disposables.add(unsubscribe);
+            disposables.add(v.onChange(val -> { updateSmartSubscription(k, val); broadcast(k, val); }));
         });
     }
-    
-    /**
-     * Gestiona la suscripción a SmartCollections evitando fugas de memoria.
-     * Si ya existía un listener para esta clave (de una lista anterior), lo elimina antes de crear el nuevo.
-     */
-    private void updateSmartSubscription(String key, Object value) {
-        // 1. LIMPIEZA: Si hay un listener activo en una instancia previa, lo matamos.
-        Runnable oldCleanup = activeSmartCleanups.remove(key);
-        if (oldCleanup != null) {
-            oldCleanup.run();
-        }
 
-        // 2. SUSCRIPCIÓN: Si el nuevo valor es Smart, nos enganchamos.
-        Runnable newCleanup = null;
-
-        if (value instanceof SmartList<?> list) {
-            Consumer<SmartList.Change> l = ch -> broadcastDelta(key, "list", ch);
-            list.subscribe(l);
-            newCleanup = () -> list.unsubscribe(l);
-        } 
-        else if (value instanceof SmartMap<?,?> map) {
-            Consumer<SmartMap.Change> l = ch -> broadcastDelta(key, "map", ch);
-            map.subscribe(l);
-            newCleanup = () -> map.unsubscribe(l);
-        } 
-        else if (value instanceof SmartSet<?> set) {
-            Consumer<SmartSet.Change> l = ch -> broadcastDelta(key, "set", ch);
-            set.subscribe(l);
-            newCleanup = () -> set.unsubscribe(l);
-        }
-
-        // 3. REGISTRO: Guardamos el cleanup nuevo para usarlo en el futuro (rotación o cierre)
-        if (newCleanup != null) {
-            activeSmartCleanups.put(key, newCleanup);
-        }
-    }
-
-    private void broadcastDelta(String key, String type, Object change) {
-        DeltaPacket packet = new DeltaPacket(type, List.of(change));
-        
-        if (backpressureEnabled) {
-            enqueue(key, packet);
-            scheduleFlushIfNeeded();
-        } else {
-            sendImmediateDelta(key, packet);
-        }
-    }
-
-    // --- CICLO DE VIDA ---
-
-    public void onOpen(JrxSession s) {
-        sessions.add(s);
-        // Enviar estado inicial (Snapshots)
-        for (var e : bindings.entrySet()) {
-            if (s.isOpen()) {
-                try {
-                    s.sendText(jsonSingle(e.getKey(), e.getValue().get()));
-                } catch (Exception ex) {
-                    log.error("Error sending init state for key: " + e.getKey(), ex);
-                }
-            }
-        }
-    }
-
-    public void onClose(JrxSession s) {
-        sessions.remove(s);
-        if (sessions.isEmpty()) {
-            queue.clear();
-            queueSize.set(0);
-            if (log.isDebugEnabled()) {
-                log.debug("ProtocolHandler closed. Cleaning up listeners.");
-            }
-            
-            // 1. Limpiar listeners de colecciones activas
-            activeSmartCleanups.values().forEach(Runnable::run);
-            activeSmartCleanups.clear();
-
-            // 2. Limpiar hooks de ReactiveVar
-            disposables.forEach(Runnable::run);
-            disposables.clear();
-        }
+    private void updateSmartSubscription(String key, Object val) {
+        Runnable old = activeSmartCleanups.remove(key);
+        if (old != null) old.run();
+        Runnable next = null;
+        if (val instanceof SmartList<?> l) { Consumer<SmartList.Change> c = ch -> broadcastDelta(key, "list", ch); l.subscribe(c); next = () -> l.unsubscribe(c); }
+        else if (val instanceof SmartMap<?,?> m) { Consumer<SmartMap.Change> c = ch -> broadcastDelta(key, "map", ch); m.subscribe(c); next = () -> m.unsubscribe(c); }
+        else if (val instanceof SmartSet<?> s) { Consumer<SmartSet.Change> c = ch -> broadcastDelta(key, "set", ch); s.subscribe(c); next = () -> s.unsubscribe(c); }
+        if (next != null) activeSmartCleanups.put(key, next);
     }
 
     public void onMessage(JrxSession s, String payload) {
         try {
-            @SuppressWarnings("unchecked")
-            Map<String, Object> m = mapper.readValue(payload, Map.class);
-            @SuppressWarnings("unchecked")
-            ReactiveVar<Object> rv = (ReactiveVar<Object>) bindings.get(m.get("k"));
-            if (rv != null) rv.set(m.get("v"));
-        } catch (Exception e) {
-            log.error("Error processing message", e);
+            Map m = mapper.readValue(payload, Map.class);
+            String k = (String) m.get("k"); Object v = m.get("v");
+            ReactiveVar<Object> rv = (ReactiveVar<Object>) bindings.get(k);
+            if (rv != null) rv.set(v);
+            else if (k.contains(".")) updateDeep(k, v);
+        } catch (Exception e) { log.error("Protocol error", e); }
+    }
+
+    private void updateDeep(String fk, Object v) {
+        String[] p = fk.split("\\.");
+        ReactiveVar<Object> root = null; int start = -1;
+        for (int i = p.length - 1; i > 0; i--) {
+            root = (ReactiveVar<Object>) bindings.get(String.join(".", Arrays.copyOfRange(p, 0, i)));
+            if (root != null) { start = i; break; }
         }
-    }
-
-    // --- LÓGICA DE ENVÍO ---
-
-    private void broadcast(String k, Object v) {
-        if (!backpressureEnabled) {
-            sendImmediate(k, v);
-            return;
+        if (root == null) {
+            for (var e : bindings.entrySet()) if (e.getKey().endsWith("." + p[0])) { root = (ReactiveVar<Object>) e.getValue(); start = 1; break; }
         }
-        enqueue(k, v);
-        scheduleFlushIfNeeded();
-    }
-
-    private void sendImmediate(String k, Object v) {
-        sendRawJson(k, v, null);
-    }
-    
-    private void sendImmediateDelta(String k, DeltaPacket dp) {
-        sendRawJson(k, null, dp);
-    }
-    
-    private void sendRawJson(String k, Object v, DeltaPacket dp) {
-        String msg;
+        if (root == null || root.get() == null) return;
+        Object o = root.get();
         try {
-            msg = buildJsonMessage(k, v, dp);
-        } catch (Exception e) {
-            log.warn("Failed to serialize message", e);
-            return;
-        }
-        sessions.removeIf(sess -> {
-            if (!sess.isOpen()) return true;
-            try {
-                synchronized (sess) { sess.sendText(msg); }
-            } catch (Exception ex) {
-                return true;
+            for (int i = start; i < p.length - 1; i++) {
+                Field f = getF(o.getClass(), p[i]);
+                if (f == null) return;
+                o = f.get(o);
             }
-            return false;
+            Field f = getF(o.getClass(), p[p.length - 1]);
+            if (f != null) {
+                f.set(o, mapper.convertValue(v, mapper.constructType(f.getGenericType())));
+                root.set(root.get());
+            }
+        } catch (Exception e) { log.error("Deep update fail: " + fk, e); }
+    }
+
+    private Field getF(Class<?> c, String n) {
+        return fieldCache.computeIfAbsent(c, x -> new ConcurrentHashMap<>()).computeIfAbsent(n, x -> {
+            Class<?> curr = c;
+            while (curr != null && curr != Object.class) {
+                try { Field f = curr.getDeclaredField(n); f.setAccessible(true); return f; }
+                catch (NoSuchFieldException e) { curr = curr.getSuperclass(); }
+            }
+            return null;
         });
     }
-    
-    private String buildJsonMessage(String k, Object v, DeltaPacket dp) throws IOException {
-        Map<String, Object> payload = new HashMap<>();
-        payload.put("k", k);
-        
-        if (dp != null) {
-            payload.put("delta", true);
-            payload.put("type", dp.type());
-            payload.put("changes", dp.changes());
-        } else {
-            payload.put("v", v); 
-        }
-        return mapper.writeValueAsString(payload);
+
+    public void onOpen(JrxSession s) { sessions.add(s); bindings.forEach((k, v) -> { try { s.sendText(jsonS(k, v.get())); } catch (Exception e) {} }); }
+    public void onClose(JrxSession s) { sessions.remove(s); if (sessions.isEmpty()) { queue.clear(); activeSmartCleanups.values().forEach(Runnable::run); activeSmartCleanups.clear(); disposables.forEach(Runnable::run); disposables.clear(); } }
+    private void broadcast(String k, Object v) { if (!backpressureEnabled) sendI(k, v); else { enq(k, v); sched(); } }
+    private void broadcastDelta(String k, String t, Object c) { DeltaPacket p = new DeltaPacket(t, List.of(c)); if (backpressureEnabled) { enq(k, p); sched(); } else sendRaw(k, null, p); }
+    private void sendI(String k, Object v) { sendRaw(k, v, null); }
+    private void sendRaw(String k, Object v, DeltaPacket dp) {
+        try { String m = buildM(k, v, dp); sessions.removeIf(s -> { if (!s.isOpen()) return true; try { synchronized(s){s.sendText(m);} return false; } catch(Exception e){return true;} }); } catch(Exception e){}
     }
-
-    private void enqueue(String k, Object v) {
-        int size = queueSize.incrementAndGet();
-        if (size > maxQueue) {
-            int toDrop = size - maxQueue;
-            while (toDrop-- > 0) {
-                if (queue.poll() != null) queueSize.decrementAndGet();
-            }
-        }
-        queue.offer(new Event(k, v));
-    }
-
-    private void scheduleFlushIfNeeded() {
-        if (flushScheduled.compareAndSet(false, true)) {
-            scheduler.schedule(this::flushQueue, flushIntervalMs, TimeUnit.MILLISECONDS);
-        }
-    }
-
-    private void flushQueue() {
-        flushScheduled.set(false);
-        if (queue.isEmpty()) return;
-
-        Map<String, Object> lastByKey = new LinkedHashMap<>();
-        
-        Event e;
+    private String buildM(String k, Object v, DeltaPacket dp) throws IOException { Map p = new HashMap(); p.put("k", k); if (dp != null) { p.put("delta", true); p.put("type", dp.type()); p.put("changes", dp.changes()); } else p.put("v", v); return mapper.writeValueAsString(p); }
+    private void enq(String k, Object v) { if (queueSize.incrementAndGet() > maxQueue && queue.poll() != null) queueSize.decrementAndGet(); queue.offer(new Event(k, v)); }
+    private void sched() { if (flushScheduled.compareAndSet(false, true)) scheduler.schedule(this::flush, flushIntervalMs, TimeUnit.MILLISECONDS); }
+    private void flush() {
+        flushScheduled.set(false); if (queue.isEmpty()) return;
+        Map<String, Object> last = new LinkedHashMap<>(); Event e;
         while ((e = queue.poll()) != null) {
-            queueSize.decrementAndGet();
-            
-            Object newValue = e.v();
-            String key = e.k();
-
-            if (newValue instanceof DeltaPacket newDp) {
-                Object existing = lastByKey.get(key);
-                
-                if (existing instanceof DeltaPacket oldDp && oldDp.type().equals(newDp.type())) {
-                    List<Object> merged = new ArrayList<>(oldDp.changes());
-                    merged.addAll(newDp.changes());
-                    lastByKey.put(key, new DeltaPacket(newDp.type(), merged));
-                } 
-                else if (existing != null && !(existing instanceof DeltaPacket)) {
-                    // Snapshot prevalece sobre delta
-                } 
-                else {
-                    lastByKey.put(key, newDp);
-                }
-            } else {
-                lastByKey.put(key, newValue);
-            }
+            queueSize.decrementAndGet(); String k = e.k(); Object nv = e.v();
+            if (nv instanceof DeltaPacket nDp) {
+                Object ex = last.get(k);
+                if (ex instanceof DeltaPacket oDp && oDp.type().equals(nDp.type())) { List m = new ArrayList(oDp.changes()); m.addAll(nDp.changes()); last.put(k, new DeltaPacket(nDp.type(), m)); }
+                else if (ex == null || ex instanceof DeltaPacket) last.put(k, nDp);
+            } else last.put(k, nv);
         }
-
-        String jsonPayload;
         try {
-            List<Map<String, Object>> payload = new ArrayList<>(lastByKey.size());
-            for (var entry : lastByKey.entrySet()) {
-                String k = entry.getKey();
-                Object v = entry.getValue();
-                
-                Map<String, Object> m = new HashMap<>();
-                m.put("k", k);
-
-                if (v instanceof DeltaPacket dp) {
-                    m.put("delta", true);
-                    m.put("type", dp.type());
-                    m.put("changes", dp.changes());
-                } else {
-                    m.put("v", v);
-                }
-                payload.add(m);
-            }
-            jsonPayload = mapper.writeValueAsString(payload);
-        } catch (IOException ex) {
-            log.error("Error serializing flush queue", ex);
-            return;
-        }
-
-        sessions.removeIf(sess -> {
-            if (!sess.isOpen()) return true;
-            try {
-                synchronized (sess) { sess.sendText(jsonPayload); }
-            } catch (Exception ex) {
-                return true; 
-            }
-            return false;
-        });
+            List list = new ArrayList(); last.forEach((k, v) -> { Map m = new HashMap(); m.put("k", k); if (v instanceof DeltaPacket d) { m.put("delta", true); m.put("type", d.type()); m.put("changes", d.changes()); } else m.put("v", v); list.add(m); });
+            String pay = mapper.writeValueAsString(list); sessions.removeIf(s -> { if (!s.isOpen()) return true; try { synchronized(s){s.sendText(pay);} return false; } catch(Exception ex){return true;} });
+        } catch(Exception ex) {}
     }
-
-    private String jsonSingle(String k, Object v) throws IOException {
-        return buildJsonMessage(k, v, null);
-    }     
-
-    private Map<String, ReactiveVar<?>> collect(ViewNode node) {
-        Map<String, ReactiveVar<?>> map = new HashMap<>();
-        if (node instanceof ViewLeaf leaf) {
-            map.putAll(leaf.bindings());
-            return map;
-        }
-        if (node instanceof ViewComposite comp) {
-            for (ViewNode child : comp.children()) {
-                map.putAll(collect(child));
-            }
-        }
-        return map;
+    private String jsonS(String k, Object v) throws IOException { return buildM(k, v, null); }
+    private Map<String, ReactiveVar<?>> collect(ViewNode n) {
+        Map<String, ReactiveVar<?>> m = new HashMap<>();
+        if (n instanceof ViewLeaf l) m.putAll(l.bindings());
+        else if (n instanceof ViewComposite c) c.children().forEach(ch -> m.putAll(collect(ch)));
+        return m;
     }
 }
