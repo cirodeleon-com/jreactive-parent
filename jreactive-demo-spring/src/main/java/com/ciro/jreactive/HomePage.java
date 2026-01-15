@@ -25,10 +25,13 @@ public class HomePage extends HtmlComponent {
 	        <a href="/signup-country" data-router>Ir a signup página country</a>
 	        <a href="/signup2" data-router>Ir a signup2 página</a>
 	        <a href="/uploadTest" data-router>Ir a upload test</a>
+	        <a href="/delta-test" data-router>ir a delta test</a>
 	        <HelloLeaf />
 	        <HelloLeaf ref="hello"/>
 	        <ClockLeaf ref="reloj" :greet="hello.newFruit" /> 
 			<FireTestLeaf/>   
+			// ... dentro del template de HomePage ...
+            <CounterLeaf />
 	      </div>
 	      """;
 	}

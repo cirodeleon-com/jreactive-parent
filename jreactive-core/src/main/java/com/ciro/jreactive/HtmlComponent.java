@@ -274,11 +274,20 @@ public abstract class HtmlComponent extends ViewLeaf {
     
     public Map<String, Method> getCallableMethods() {
         Map<String, Method> callables = new HashMap<>();
-        for (Method m : this.getClass().getDeclaredMethods()) {
-            if (m.isAnnotationPresent(com.ciro.jreactive.annotations.Call.class)) {
-                m.setAccessible(true);
-                callables.put(m.getName(), m);
+        Class<?> current = this.getClass();
+
+        // Subimos por la jerarquía para descubrir métodos @Call heredados
+        while (current != null && current != HtmlComponent.class) {
+            for (Method m : current.getDeclaredMethods()) {
+                if (m.isAnnotationPresent(com.ciro.jreactive.annotations.Call.class)) {
+                    // putIfAbsent respeta el Polimorfismo: si el hijo sobreescribe, gana el hijo
+                    if (!callables.containsKey(m.getName())) {
+                        m.setAccessible(true);
+                        callables.put(m.getName(), m);
+                    }
+                }
             }
+            current = current.getSuperclass();
         }
         return callables;
     }

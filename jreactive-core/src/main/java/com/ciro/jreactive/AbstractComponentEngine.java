@@ -220,9 +220,20 @@ public abstract class AbstractComponentEngine implements ComponentEngine.Strateg
 
     private ViewLeaf newInstance(HtmlComponent ctx, String className) {
         try {
-            Class<?> raw = Class.forName(ctx.getClass().getPackageName() + "." + className);
+            Class<?> raw;
+            try {
+                // 1. Intento rápido: mismo paquete que el padre
+                String localPackageClass = ctx.getClass().getPackageName() + "." + className;
+                raw = Class.forName(localPackageClass);
+            } catch (ClassNotFoundException e) {
+                // 2. Fallback: Buscar por nombre global (reutilización entre paquetes)
+                raw = Class.forName(className); 
+            }
             return (ViewLeaf) componentFactory.create((Class<? extends ViewLeaf>) raw);
-        } catch (Exception e) { throw new RuntimeException("Error instantiating " + className, e); }
+        } catch (Exception e) { 
+            throw new RuntimeException("Error: No se encontró el componente '" + className + 
+                "'. Verifica el nombre o usa el paquete completo (ej: com.app.ui." + className + ")", e); 
+        }
     }
 
     protected void disposeUnused(List<HtmlComponent> pool) {

@@ -1,6 +1,7 @@
 package com.ciro.jreactive.tools;
 
 import com.ciro.jreactive.Bind;
+import com.ciro.jreactive.State;
 import com.google.auto.service.AutoService;
 import com.sun.source.tree.BlockTree;
 import com.sun.source.tree.ExpressionTree;
@@ -29,9 +30,13 @@ import javax.lang.model.element.ElementKind;
 import javax.lang.model.element.ExecutableElement;
 import javax.lang.model.element.Modifier;
 import javax.lang.model.element.TypeElement;
+import javax.lang.model.type.TypeKind;
+import javax.lang.model.type.TypeMirror;
 import javax.tools.Diagnostic;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.regex.Matcher;
@@ -150,10 +155,6 @@ public final class TemplateProcessor extends AbstractProcessor {
         }
     }
 
-    /**
-     * template() debe retornar un literal string ( "..." o """...""" )
-     * Si no, error claro en compilación.
-     */
     private String extractTemplateLiteralOrError(TypeElement cls, ExecutableElement tpl, BlockTree body) {
         ReturnTree returnTree = null;
 
@@ -184,6 +185,21 @@ public final class TemplateProcessor extends AbstractProcessor {
         }
 
         return (String) lt.getValue();
+    }
+
+    // =========================
+    // 🔥 NUEVO: Soporte para Herencia
+    // =========================
+    private List<Element> getAllMembers(TypeElement te) {
+        List<Element> elements = new ArrayList<>();
+        TypeElement current = te;
+        while (current != null && !current.getQualifiedName().toString().equals("java.lang.Object")) {
+            elements.addAll(current.getEnclosedElements());
+            TypeMirror superclass = current.getSuperclass();
+            if (superclass.getKind() == TypeKind.NONE) break;
+            current = (TypeElement) processingEnv.getTypeUtils().asElement(superclass);
+        }
+        return elements;
     }
 
     // =========================
@@ -338,7 +354,8 @@ public final class TemplateProcessor extends AbstractProcessor {
 
         // @Bind
         Map<String, String> bindKeys = new HashMap<>();
-        cls.getEnclosedElements().stream()
+        // 🔥 CAMBIO: getAllMembers en lugar de getEnclosedElements
+        getAllMembers(cls).stream()
                 .filter(f -> f.getKind() == ElementKind.FIELD)
                 .forEach(f -> {
                     Bind b = f.getAnnotation(Bind.class);
@@ -352,10 +369,11 @@ public final class TemplateProcessor extends AbstractProcessor {
 
         // @State
         Map<String, String> stateKeys = new HashMap<>();
-        cls.getEnclosedElements().stream()
+        // 🔥 CAMBIO: getAllMembers en lugar de getEnclosedElements
+        getAllMembers(cls).stream()
                 .filter(f -> f.getKind() == ElementKind.FIELD)
                 .forEach(f -> {
-                    com.ciro.jreactive.State s = f.getAnnotation(com.ciro.jreactive.State.class);
+                    State s = f.getAnnotation(State.class);
                     if (s != null) {
                         String key = (s.value() != null && !s.value().isBlank())
                                 ? s.value().trim()
@@ -409,7 +427,7 @@ public final class TemplateProcessor extends AbstractProcessor {
             if (!ok) {
                 errorWithContext(
                         tpl,
-                        "Variable '{{" + cleanV + "}}' no declarada en " + cls.getSimpleName(),
+                        "Variable '{{" + cleanV + "}}' no declarada en " + cls.getSimpleName() + " ni heredada.",
                         html,
                         "{{" + cleanV + "}}"
                 );
@@ -424,7 +442,8 @@ public final class TemplateProcessor extends AbstractProcessor {
 
         if (callsToCheck == null || callsToCheck.isEmpty()) return;
 
-        Set<String> callMethods = cls.getEnclosedElements().stream()
+        // 🔥 CAMBIO: getAllMembers en lugar de getEnclosedElements
+        Set<String> callMethods = getAllMembers(cls).stream()
                 .filter(e -> e.getKind() == ElementKind.METHOD)
                 .filter(e -> hasAnnotationByName(e, CALL_ANNOTATION_FQCN))
                 .map(e -> ((ExecutableElement) e).getSimpleName().toString())
@@ -435,7 +454,7 @@ public final class TemplateProcessor extends AbstractProcessor {
             if (!callMethods.contains(call)) {
                 errorWithContext(
                         tpl,
-                        "Evento referencia método '" + call + "' que no existe o no está anotado con @Call (" + CALL_ANNOTATION_FQCN + ")",
+                        "Evento referencia método '" + call + "' que no existe o no tiene @Call.",
                         html,
                         call
                 );
@@ -473,9 +492,9 @@ public final class TemplateProcessor extends AbstractProcessor {
                 .collect(Collectors.toSet());
 
         Set<String> stateKeys = cls.getEnclosedElements().stream()
-                .filter(f -> f.getKind() == ElementKind.FIELD && f.getAnnotation(com.ciro.jreactive.State.class) != null)
+                .filter(f -> f.getKind() == ElementKind.FIELD && f.getAnnotation(State.class) != null)
                 .map(f -> {
-                    com.ciro.jreactive.State s = f.getAnnotation(com.ciro.jreactive.State.class);
+                    State s = f.getAnnotation(State.class);
                     return (s.value() != null && !s.value().isBlank()) ? s.value().trim() : f.getSimpleName().toString();
                 })
                 .collect(Collectors.toSet());
