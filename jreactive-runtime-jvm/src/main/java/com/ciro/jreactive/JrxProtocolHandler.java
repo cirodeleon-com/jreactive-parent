@@ -64,7 +64,6 @@ public class JrxProtocolHandler {
         ReactiveVar<Object> root = null;
         int start = -1;
         
-        // 1. Buscamos la raíz (igual que antes)
         for (int i = p.length - 1; i > 0; i--) {
             root = (ReactiveVar<Object>) bindings.get(String.join(".", Arrays.copyOfRange(p, 0, i)));
             if (root != null) { start = i; break; }
@@ -72,33 +71,31 @@ public class JrxProtocolHandler {
         if (root == null) {
             for (var e : bindings.entrySet()) if (e.getKey().endsWith("." + p[0])) { root = (ReactiveVar<Object>) e.getValue(); start = 1; break; }
         }
+        
+        // Si el root existe, ya es seguro porque buildBindings() solo mete campos @State/@Bind
         if (root == null || root.get() == null) return;
         
         Object o = root.get();
         try {
-            // 2. Navegamos hasta el penúltimo objeto (igual que antes)
             for (int i = start; i < p.length - 1; i++) {
+                // 🔥 SEGURIDAD: Bloqueamos acceso explícito a metadatos de Java
+                if (p[i].equals("class") || p[i].equals("classLoader")) return;
+
                 Field f = getF(o.getClass(), p[i]);
                 if (f == null) return;
                 o = f.get(o);
-                if (o == null) return; // Pequeña protección extra
+                if (o == null) return; 
             }
             
-            // 3. Obtenemos el campo final
             Field f = getF(o.getClass(), p[p.length - 1]);
             if (f != null) {
-                // --- 🔥 AQUÍ ESTÁ EL CAMBIO ---
-                
-                // Paso A: Convertimos el JSON al tipo de dato Java (ArrayList, HashMap, etc.)
-                // Guardamos esto en 'incoming' en lugar de hacer f.set() directamente.
+                // 🔥 SEGURIDAD: Bloqueamos escritura en campos sensibles
+                if (f.getName().equals("class")) return;
+
                 Object incoming = mapper.convertValue(v, mapper.constructType(f.getGenericType()));
-                
-                // Paso B: Obtenemos lo que había antes para ver si era Smart
                 Object current = f.get(o);
 
-                // Paso C: Decidimos cómo guardarlo
                 if (current instanceof SmartList && incoming instanceof List<?> list) {
-                    // Si era SmartList, envolvemos la nueva lista para no perder la magia
                     f.set(o, new SmartList<>(list));
                 } 
                 else if (current instanceof SmartSet && incoming instanceof Collection<?> col) {
@@ -108,18 +105,15 @@ public class JrxProtocolHandler {
                     f.set(o, new SmartMap<>(map));
                 } 
                 else {
-                    // Si no era Smart, guardamos el valor tal cual (tu comportamiento original)
                     f.set(o, incoming);
                 }
-
-                // Notificamos al root para que reactive los listeners
                 root.set(root.get());
             }
         } catch (Exception e) { 
             log.error("Deep update fail: " + fk, e); 
         }
     }
-
+    
     private Field getF(Class<?> c, String n) {
         return fieldCache.computeIfAbsent(c, x -> new ConcurrentHashMap<>()).computeIfAbsent(n, x -> {
             Class<?> curr = c;

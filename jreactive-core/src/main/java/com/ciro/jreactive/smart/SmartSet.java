@@ -33,27 +33,27 @@ public class SmartSet<E> extends HashSet<E> {
 
     @Override
     public synchronized boolean add(E e) {
-        if (super.add(e)) {
+        boolean result = super.add(e);
+        if (result) {
             fire("ADD", e);
-            return true;
         }
-        return false;
+        return result;
     }
 
     @Override
     public synchronized boolean remove(Object o) {
-        if (super.remove(o)) {
+        boolean result = super.remove(o);
+        if (result) {
             fire("REMOVE", o);
-            return true;
         }
-        return false;
+        return result;
     }
 
     @Override
     public synchronized void clear() {
         if (!this.isEmpty()) {
-            fire("CLEAR", null);
             super.clear();
+            fire("CLEAR", null);
         }
     }
 

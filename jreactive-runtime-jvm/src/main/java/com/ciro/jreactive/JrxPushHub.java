@@ -8,6 +8,7 @@ import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 
 public class JrxPushHub {
@@ -39,12 +40,9 @@ public class JrxPushHub {
     private final ConcurrentLinkedQueue<Long> bufferSeq = new ConcurrentLinkedQueue<>();
     private final Set<JrxSink> sinks = ConcurrentHashMap.newKeySet();
     
-    // 🔥 Suscripciones a los ReactiveVar (cambios de referencia)
     private final List<Runnable> disposables = new ArrayList<>();
-    
-    // 🔥 NUEVO: Suscripciones internas a SmartCollections (deltas)
-    // Mantiene un mapeo de 'Clave' -> 'Acción de limpieza'
     private final Map<String, Runnable> activeSmartCleanups = new ConcurrentHashMap<>();
+    private final AtomicInteger activeSinks = new AtomicInteger(0);
 
     public JrxPushHub(ViewNode root, ObjectMapper mapper, int maxBuffer) {
         this.mapper = mapper;
@@ -52,13 +50,11 @@ public class JrxPushHub {
         this.bindings = collect(root);
 
         bindings.forEach((k, rv) -> {
-            // 1) Hook al valor inicial
             Object initial = rv.get();
             updateSmartSubscription(k, initial);
 
-            // 2) Hook cuando cambia la referencia
             Runnable unsub = rv.onChange(val -> {
-                updateSmartSubscription(k, val); // 🔥 Limpia la anterior antes de suscribir la nueva
+                updateSmartSubscription(k, val); 
                 onSnapshot(k, val); 
             });
 
@@ -66,18 +62,12 @@ public class JrxPushHub {
         });
     }
 
-    /**
-     * 🔥 NUEVO MÉTODO: Gestiona la suscripción a deltas de forma segura.
-     * Si ya existe una suscripción para esta clave, la cancela primero.
-     */
     private void updateSmartSubscription(String key, Object value) {
-        // 1. Limpiar suscripción anterior si existe para esta clave
         Runnable oldCleanup = activeSmartCleanups.remove(key);
         if (oldCleanup != null) {
             oldCleanup.run();
         }
 
-        // 2. Si el nuevo valor es una colección inteligente, suscribirse
         Runnable cleanup = null;
         if (value instanceof SmartList<?> list) {
             Consumer<SmartList.Change> l = ch -> onDelta(key, "list", ch);
@@ -95,18 +85,14 @@ public class JrxPushHub {
             cleanup = () -> set.unsubscribe(l);
         }
 
-        // 3. Guardar el nuevo cleanup
         if (cleanup != null) {
             activeSmartCleanups.put(key, cleanup);
         }
     }
 
     public void close() {
-        // 🔥 Limpiar suscripciones a ReactiveVars
         disposables.forEach(Runnable::run);
         disposables.clear();
-        
-        // 🔥 Limpiar suscripciones a SmartCollections
         activeSmartCleanups.values().forEach(Runnable::run);
         activeSmartCleanups.clear();
 
@@ -118,8 +104,6 @@ public class JrxPushHub {
         bufferSeq.clear();
     }
 
-    // ... (El resto del código se mantiene igual: set, snapshot, poll, etc.)
-    
     @SuppressWarnings("unchecked")
     public void set(String k, Object v) {
         ReactiveVar<Object> rv = (ReactiveVar<Object>) bindings.get(k);
@@ -135,6 +119,7 @@ public class JrxPushHub {
                 Object rootObj = rv.get();
                 if (rootObj != null) {
                     try {
+                        // 🔥 VALIDACIÓN DE SEGURIDAD INTERNA
                         applyPath(rootObj, parts, 1, v);
                         rv.set(rootObj); 
                     } catch (Exception e) {
@@ -173,6 +158,7 @@ public class JrxPushHub {
     }
 
     public void subscribe(JrxSink sink, long since) {
+        activeSinks.incrementAndGet();
         sinks.add(sink);
         try {
             Batch initial = (since <= 0) ? snapshot() : poll(since);
@@ -181,11 +167,14 @@ public class JrxPushHub {
         } catch (Exception e) {
             try { sink.close(); } catch (Exception ignored) {}
             sinks.remove(sink);
+            activeSinks.decrementAndGet();
         }
     }
 
     public void unsubscribe(JrxSink sink) {
-        sinks.remove(sink);
+        if (sinks.remove(sink)) {
+            activeSinks.decrementAndGet();
+        }
         try { sink.close(); } catch (Exception ignored) {}
     }
 
@@ -268,29 +257,31 @@ public class JrxPushHub {
     private void applyPath(Object target, String[] parts, int idx, Object value) throws Exception {
         if (target == null) return;
         String fieldName = parts[idx];
+        
+        // 🔥 SEGURIDAD: Bloqueamos acceso a metadatos
+        if (fieldName.equals("class") || fieldName.equals("classLoader")) return;
+
+        java.lang.reflect.Field f = findField(target.getClass(), fieldName);
+        if (f == null) return;
+
         if (idx == parts.length - 1) {
-            setField(target, fieldName, value);
+            setField(target, f, value);
             return;
         }
-        java.lang.reflect.Field f = findField(target.getClass(), fieldName);
-        if (f != null) {
-            f.setAccessible(true);
-            Object child = f.get(target);
-            if (child == null) {
-                child = f.getType().getDeclaredConstructor().newInstance();
-                f.set(target, child);
-            }
-            applyPath(child, parts, idx + 1, value);
+
+        f.setAccessible(true);
+        Object child = f.get(target);
+        if (child == null) {
+            child = f.getType().getDeclaredConstructor().newInstance();
+            f.set(target, child);
         }
+        applyPath(child, parts, idx + 1, value);
     }
 
-    private void setField(Object target, String fieldName, Object rawValue) throws Exception {
-        java.lang.reflect.Field f = findField(target.getClass(), fieldName);
-        if (f != null) {
-            f.setAccessible(true);
-            Object typedValue = mapper.convertValue(rawValue, mapper.constructType(f.getGenericType()));
-            f.set(target, typedValue);
-        }
+    private void setField(Object target, java.lang.reflect.Field f, Object rawValue) throws Exception {
+        f.setAccessible(true);
+        Object typedValue = mapper.convertValue(rawValue, mapper.constructType(f.getGenericType()));
+        f.set(target, typedValue);
     }
 
     private java.lang.reflect.Field findField(Class<?> clazz, String name) {

@@ -47,14 +47,9 @@ public class SmartMap<K, V> extends HashMap<K, V> {
 
     @Override
     public synchronized V remove(Object key) {
-        // Verificamos si existe antes, para saber si debemos disparar evento
         if (containsKey(key)) {
-            // 1. 🔥 PRIMERO: Mutamos el estado real (Borramos y guardamos el valor)
             V value = super.remove(key);
-            
-            // 2. ✅ LUEGO: Notificamos
             fire("REMOVE", key, null);
-            
             return value;
         }
         return null;
@@ -63,8 +58,8 @@ public class SmartMap<K, V> extends HashMap<K, V> {
     @Override
     public synchronized void clear() {
         if (!isEmpty()) {
-            fire("CLEAR", null, null);
             super.clear();
+            fire("CLEAR", null, null);
         }
     }
 

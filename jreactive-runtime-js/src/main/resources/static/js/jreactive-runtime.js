@@ -14,7 +14,7 @@ const globalState     = Object.create(null);   // estado global logical: user, t
 const storeListeners  = new Map();  
 let es = null;              // EventSource
 let lastSeq = 0;            // cursor incremental
-let transport = 'ws';       // 'ws' | 'sse' | 'poll'
+let transport = 'poll';       // 'ws' | 'sse' | 'poll'
 // --- Variables Globales Nuevas ---
 let wsRetryCount = 0;       // Contador de intentos fallidos
 const MAX_WS_RETRIES = 5;   // Intentar 5 veces antes de rendirse a SSE
