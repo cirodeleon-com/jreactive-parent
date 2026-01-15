@@ -14,7 +14,7 @@ const globalState     = Object.create(null);   // estado global logical: user, t
 const storeListeners  = new Map();  
 let es = null;              // EventSource
 let lastSeq = 0;            // cursor incremental
-let transport = 'ws';       // 'ws' | 'sse' | 'poll'
+let transport = 'poll';       // 'ws' | 'sse' | 'poll'
 // --- Variables Globales Nuevas ---
 let wsRetryCount = 0;       // Contador de intentos fallidos
 const MAX_WS_RETRIES = 5;   // Intentar 5 veces antes de rendirse a SSE
@@ -1751,51 +1751,42 @@ function updateDomForKey(k, v) {
     if (simple !== k) nodes = bindings.get(simple);
   }
 
-  // Preparamos los valores que manda el servidor
   const strValue  = v == null ? '' : String(v);
   const boolValue = !!v;
 
   (nodes || []).forEach(el => {
-    // A. Si es texto plano ({{...}}), renderizamos siempre (no tiene interacción)
     if (el.nodeType === Node.TEXT_NODE) {
       renderText(el);
       return; 
     }
     
-    // --- 🛡️ ZONA DE PROTECCIÓN (Aplica a Checkbox, Radio, Input, Select) ---
+    // --- 🛡️ ZONA DE PROTECCIÓN QUIRÚRGICA ---
 
-    // B. REGLA DE ORO: Si tiene foco, el usuario manda.
-    if (document.activeElement === el) {
+    // B. REGLA DE ORO REFINADA: 
+    // Solo protegemos si es un campo de texto activo (donde el cursor importa).
+    // Los Selects, Checkbox y Radio se actualizan siempre.
+    const isTextInput = (el.tagName === 'INPUT' && ['text', 'password', 'email', 'number', 'tel', 'url'].includes(el.type)) || el.tagName === 'TEXTAREA';
+    
+    if (document.activeElement === el && isTextInput) {
         return; 
     }
 
-    // C. ESCUDO TEMPORAL ADAPTATIVO (Solo Polling/SSE)
+    // C. ESCUDO TEMPORAL ADAPTATIVO (Se mantiene igual)
     if (transport !== 'ws') {
         const lastEditTime = lastEdits.get(el.name) || lastEdits.get(el.id) || 0;
         const now = Date.now();
-        
-        // 🟢 AJUSTE AQUÍ:
-        // Si es Polling (lento/desordenado), usamos 2000ms.
-        // Si es SSE (rápido/ordenado), usamos solo 350ms.
         const safetyTime = (transport === 'poll') ? 750 : 350;
         
-        // Si fue hace menos del tiempo de seguridad...
-        if (now - lastEditTime < safetyTime) {
-            
-            // CASO 1: Checkbox/Radio
-            if (el.type === 'checkbox' || el.type === 'radio') {
-                 if (el.checked !== boolValue) return;
-            }
-            // CASO 2: Inputs de Texto
-            else {
-                 // Si el servidor manda vacío (limpieza) y yo tengo texto, protejo solo si estoy dentro del safetyTime
-                 if (el.value !== strValue) return; 
-            }
+        // 🔥 CIRUGÍA: Si es un SELECT, CHECKBOX o RADIO, no bloqueamos por tiempo.
+        // Esto permite que SSE/Poll actualicen el valor inmediatamente tras el click.
+        const isDiscreteInput = el.tagName === 'SELECT' || el.type === 'checkbox' || el.type === 'radio';
+
+        if (!isDiscreteInput && (now - lastEditTime < safetyTime)) {
+            if (el.value !== strValue) return; 
         }
     }
 
-    // --- 🚀 APLICAR CAMBIOS (Si pasó los filtros) ---
-
+    // --- 🚀 APLICAR CAMBIOS ---
     if (el.type === 'checkbox' || el.type === 'radio') {
       if (el.checked !== boolValue) el.checked = boolValue;
     } else {
@@ -1805,18 +1796,13 @@ function updateDomForKey(k, v) {
 }
 
 function applyStateForKey(k, v) {
-  // 1) Estado
+  // 1) Estado: Guardamos siempre con la clave completa (Namespace real)
   state[k] = v;
 
   const parts = k.split('.');
   const last  = parts.at(-1);
 
-  // 2) Alias corto
-  if (parts.length > 1) {
-    state[last] = v;
-  }
-
-  // 3) Caso especial store
+  // 2) Caso especial store (Se mantiene igual)
   if (last === 'store' && v && typeof v === 'object') {
     Object.entries(v).forEach(([childKey, childVal]) => {
       const globalKey = `store.${childKey}`;
@@ -1824,33 +1810,23 @@ function applyStateForKey(k, v) {
     });
   }
 
-  // ✅ 4) Primero monta/desmonta lo condicional y resuelve #each
-  // (así el DOM existe antes de intentar renderizar textos)
+  // 3) Primero monta/desmonta lo condicional y resuelve #each
   updateIfBlocks();
   updateEachBlocks();
 
-  // ✅ 5) Ahora sí actualiza DOM (esto reindexa si hace falta y renderiza)
+  // 4) ✅ Actualizamos el DOM usando la CLAVE COMPLETA.
+  // Se eliminó el updateDomForKey(last, v) para evitar colisiones.
   updateDomForKey(k, v);
-  if (parts.length > 1) {
-    updateDomForKey(last, v);
-  }
   
-  // 🔥 6) MAGIA: Propagación en Cascada (El Fix para 'limpiar')
-  // Si 'v' es un objeto (y no es null ni array), recorremos sus propiedades
-  // para actualizar los bindings hijos (ej. form.name, form.email)
+  // 5) MAGIA: Propagación en Cascada (El Fix para 'limpiar')
   if (v && typeof v === 'object' && !Array.isArray(v)) {
       Object.keys(v).forEach(subKey => {
-          // Construimos la clave completa: "form.name"
           const childKey = `${k}.${subKey}`; 
           const childVal = v[subKey];
-          
-          // Llamada recursiva: Esto hará que updateDomForKey("form.name") se ejecute
           applyStateForKey(childKey, childVal);
       });
   }
-  
 }
-
 
 
 /* ──────────────────────────────────────────────────────────────
