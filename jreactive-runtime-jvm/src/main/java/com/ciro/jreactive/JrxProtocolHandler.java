@@ -61,7 +61,10 @@ public class JrxProtocolHandler {
 
     private void updateDeep(String fk, Object v) {
         String[] p = fk.split("\\.");
-        ReactiveVar<Object> root = null; int start = -1;
+        ReactiveVar<Object> root = null;
+        int start = -1;
+        
+        // 1. Buscamos la raíz (igual que antes)
         for (int i = p.length - 1; i > 0; i--) {
             root = (ReactiveVar<Object>) bindings.get(String.join(".", Arrays.copyOfRange(p, 0, i)));
             if (root != null) { start = i; break; }
@@ -70,19 +73,51 @@ public class JrxProtocolHandler {
             for (var e : bindings.entrySet()) if (e.getKey().endsWith("." + p[0])) { root = (ReactiveVar<Object>) e.getValue(); start = 1; break; }
         }
         if (root == null || root.get() == null) return;
+        
         Object o = root.get();
         try {
+            // 2. Navegamos hasta el penúltimo objeto (igual que antes)
             for (int i = start; i < p.length - 1; i++) {
                 Field f = getF(o.getClass(), p[i]);
                 if (f == null) return;
                 o = f.get(o);
+                if (o == null) return; // Pequeña protección extra
             }
+            
+            // 3. Obtenemos el campo final
             Field f = getF(o.getClass(), p[p.length - 1]);
             if (f != null) {
-                f.set(o, mapper.convertValue(v, mapper.constructType(f.getGenericType())));
+                // --- 🔥 AQUÍ ESTÁ EL CAMBIO ---
+                
+                // Paso A: Convertimos el JSON al tipo de dato Java (ArrayList, HashMap, etc.)
+                // Guardamos esto en 'incoming' en lugar de hacer f.set() directamente.
+                Object incoming = mapper.convertValue(v, mapper.constructType(f.getGenericType()));
+                
+                // Paso B: Obtenemos lo que había antes para ver si era Smart
+                Object current = f.get(o);
+
+                // Paso C: Decidimos cómo guardarlo
+                if (current instanceof SmartList && incoming instanceof List<?> list) {
+                    // Si era SmartList, envolvemos la nueva lista para no perder la magia
+                    f.set(o, new SmartList<>(list));
+                } 
+                else if (current instanceof SmartSet && incoming instanceof Collection<?> col) {
+                    f.set(o, new SmartSet<>(col));
+                } 
+                else if (current instanceof SmartMap && incoming instanceof Map<?,?> map) {
+                    f.set(o, new SmartMap<>(map));
+                } 
+                else {
+                    // Si no era Smart, guardamos el valor tal cual (tu comportamiento original)
+                    f.set(o, incoming);
+                }
+
+                // Notificamos al root para que reactive los listeners
                 root.set(root.get());
             }
-        } catch (Exception e) { log.error("Deep update fail: " + fk, e); }
+        } catch (Exception e) { 
+            log.error("Deep update fail: " + fk, e); 
+        }
     }
 
     private Field getF(Class<?> c, String n) {
@@ -108,20 +143,73 @@ public class JrxProtocolHandler {
     private void enq(String k, Object v) { if (queueSize.incrementAndGet() > maxQueue && queue.poll() != null) queueSize.decrementAndGet(); queue.offer(new Event(k, v)); }
     private void sched() { if (flushScheduled.compareAndSet(false, true)) scheduler.schedule(this::flush, flushIntervalMs, TimeUnit.MILLISECONDS); }
     private void flush() {
-        flushScheduled.set(false); if (queue.isEmpty()) return;
-        Map<String, Object> last = new LinkedHashMap<>(); Event e;
+        flushScheduled.set(false);
+        if (queue.isEmpty()) return;
+
+        Map<String, Object> last = new LinkedHashMap<>();
+        Event e;
+        
         while ((e = queue.poll()) != null) {
-            queueSize.decrementAndGet(); String k = e.k(); Object nv = e.v();
+            queueSize.decrementAndGet();
+            String k = e.k();
+            Object nv = e.v(); // Nuevo valor (puede ser Objeto o DeltaPacket)
+
             if (nv instanceof DeltaPacket nDp) {
-                Object ex = last.get(k);
-                if (ex instanceof DeltaPacket oDp && oDp.type().equals(nDp.type())) { List m = new ArrayList(oDp.changes()); m.addAll(nDp.changes()); last.put(k, new DeltaPacket(nDp.type(), m)); }
-                else if (ex == null || ex instanceof DeltaPacket) last.put(k, nDp);
-            } else last.put(k, nv);
+                Object ex = last.get(k); // Valor existente en el buffer
+
+                // Caso A: Ya había un Delta del mismo tipo -> Fusionar cambios
+                if (ex instanceof DeltaPacket oDp && oDp.type().equals(nDp.type())) {
+                    List m = new ArrayList(oDp.changes());
+                    m.addAll(nDp.changes());
+                    last.put(k, new DeltaPacket(nDp.type(), m));
+                }
+                // Caso B: No había nada O lo que había era un Delta de otro tipo (raro) -> Reemplazar
+                else if (ex == null || ex instanceof DeltaPacket) {
+                    last.put(k, nDp);
+                }
+                // 🔥 FIX BUG #2: Conflicto Snapshot vs Delta
+                // Caso C: 'ex' es un Snapshot (Objeto completo) y 'nv' es un Delta.
+                // No podemos aplicar el delta al snapshot serializado fácilmente.
+                // ESTRATEGIA: Forzar un nuevo Snapshot con el valor real actual del servidor.
+                else {
+                    ReactiveVar<?> rv = bindings.get(k);
+                    if (rv != null) {
+                        last.put(k, rv.get());
+                    }
+                }
+            } else {
+                // Si llega un Snapshot (valor completo), siempre reemplaza lo anterior
+                last.put(k, nv);
+            }
         }
+
         try {
-            List list = new ArrayList(); last.forEach((k, v) -> { Map m = new HashMap(); m.put("k", k); if (v instanceof DeltaPacket d) { m.put("delta", true); m.put("type", d.type()); m.put("changes", d.changes()); } else m.put("v", v); list.add(m); });
-            String pay = mapper.writeValueAsString(list); sessions.removeIf(s -> { if (!s.isOpen()) return true; try { synchronized(s){s.sendText(pay);} return false; } catch(Exception ex){return true;} });
-        } catch(Exception ex) {}
+            List list = new ArrayList();
+            last.forEach((k, v) -> {
+                Map m = new HashMap();
+                m.put("k", k);
+                if (v instanceof DeltaPacket d) {
+                    m.put("delta", true);
+                    m.put("type", d.type());
+                    m.put("changes", d.changes());
+                } else {
+                    m.put("v", v);
+                }
+                list.add(m);
+            });
+            
+            String pay = mapper.writeValueAsString(list);
+            
+            sessions.removeIf(s -> {
+                if (!s.isOpen()) return true;
+                try {
+                    synchronized (s) { s.sendText(pay); }
+                    return false;
+                } catch (Exception ex) { return true; }
+            });
+        } catch (Exception ex) {
+            log.error("Flush failed", ex);
+        }
     }
     private String jsonS(String k, Object v) throws IOException { return buildM(k, v, null); }
     private Map<String, ReactiveVar<?>> collect(ViewNode n) {

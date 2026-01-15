@@ -1,4 +1,3 @@
-/* === File: jreactive-runtime-jvm\src\main\java\com\ciro\jreactive\JrxPushHub.java === */
 package com.ciro.jreactive;
 
 import com.ciro.jreactive.smart.*;
@@ -34,15 +33,18 @@ public class JrxPushHub {
 
     private final ObjectMapper mapper;
     private final Map<String, ReactiveVar<?>> bindings;
-
     private final AtomicLong seq = new AtomicLong(0);
-
     private final int maxBuffer;
     private final ConcurrentLinkedQueue<Map<String,Object>> buffer = new ConcurrentLinkedQueue<>();
     private final ConcurrentLinkedQueue<Long> bufferSeq = new ConcurrentLinkedQueue<>();
-
     private final Set<JrxSink> sinks = ConcurrentHashMap.newKeySet();
+    
+    // 🔥 Suscripciones a los ReactiveVar (cambios de referencia)
     private final List<Runnable> disposables = new ArrayList<>();
+    
+    // 🔥 NUEVO: Suscripciones internas a SmartCollections (deltas)
+    // Mantiene un mapeo de 'Clave' -> 'Acción de limpieza'
+    private final Map<String, Runnable> activeSmartCleanups = new ConcurrentHashMap<>();
 
     public JrxPushHub(ViewNode root, ObjectMapper mapper, int maxBuffer) {
         this.mapper = mapper;
@@ -52,39 +54,62 @@ public class JrxPushHub {
         bindings.forEach((k, rv) -> {
             // 1) Hook al valor inicial
             Object initial = rv.get();
-            attachSmartListener(k, initial);
+            updateSmartSubscription(k, initial);
 
             // 2) Hook cuando cambia la referencia
             Runnable unsub = rv.onChange(val -> {
-                attachSmartListener(k, val);
-                onSnapshot(k, val); // Si cambia referencia, mandamos snapshot
+                updateSmartSubscription(k, val); // 🔥 Limpia la anterior antes de suscribir la nueva
+                onSnapshot(k, val); 
             });
 
             disposables.add(unsub);
         });
     }
 
-    private void attachSmartListener(String key, Object value) {
+    /**
+     * 🔥 NUEVO MÉTODO: Gestiona la suscripción a deltas de forma segura.
+     * Si ya existe una suscripción para esta clave, la cancela primero.
+     */
+    private void updateSmartSubscription(String key, Object value) {
+        // 1. Limpiar suscripción anterior si existe para esta clave
+        Runnable oldCleanup = activeSmartCleanups.remove(key);
+        if (oldCleanup != null) {
+            oldCleanup.run();
+        }
+
+        // 2. Si el nuevo valor es una colección inteligente, suscribirse
+        Runnable cleanup = null;
         if (value instanceof SmartList<?> list) {
             Consumer<SmartList.Change> l = ch -> onDelta(key, "list", ch);
             list.subscribe(l);
-            disposables.add(() -> list.unsubscribe(l));
+            cleanup = () -> list.unsubscribe(l);
         } 
         else if (value instanceof SmartMap<?,?> map) {
             Consumer<SmartMap.Change> l = ch -> onDelta(key, "map", ch);
             map.subscribe(l);
-            disposables.add(() -> map.unsubscribe(l));
+            cleanup = () -> map.unsubscribe(l);
         } 
         else if (value instanceof SmartSet<?> set) {
             Consumer<SmartSet.Change> l = ch -> onDelta(key, "set", ch);
             set.subscribe(l);
-            disposables.add(() -> set.unsubscribe(l));
+            cleanup = () -> set.unsubscribe(l);
+        }
+
+        // 3. Guardar el nuevo cleanup
+        if (cleanup != null) {
+            activeSmartCleanups.put(key, cleanup);
         }
     }
 
     public void close() {
+        // 🔥 Limpiar suscripciones a ReactiveVars
         disposables.forEach(Runnable::run);
         disposables.clear();
+        
+        // 🔥 Limpiar suscripciones a SmartCollections
+        activeSmartCleanups.values().forEach(Runnable::run);
+        activeSmartCleanups.clear();
+
         sinks.forEach(s -> {
             try { s.close(); } catch (Exception ignored) {}
         });
@@ -93,6 +118,8 @@ public class JrxPushHub {
         bufferSeq.clear();
     }
 
+    // ... (El resto del código se mantiene igual: set, snapshot, poll, etc.)
+    
     @SuppressWarnings("unchecked")
     public void set(String k, Object v) {
         ReactiveVar<Object> rv = (ReactiveVar<Object>) bindings.get(k);
@@ -120,7 +147,6 @@ public class JrxPushHub {
 
     public Batch snapshot() {
         List<Map<String,Object>> out = new ArrayList<>(bindings.size());
-        // Aquí pedimos snapshots limpios
         bindings.forEach((k, rv) -> out.add(encodeSnapshot(k, rv.get())));
         return new Batch(seq.get(), out);
     }
@@ -162,8 +188,6 @@ public class JrxPushHub {
         sinks.remove(sink);
         try { sink.close(); } catch (Exception ignored) {}
     }
-
-    // --- Manejo de Eventos ---
 
     private void onSnapshot(String k, Object v) {
         pushToBuffer(encodeSnapshot(k, v));

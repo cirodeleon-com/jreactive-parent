@@ -1,3 +1,4 @@
+/* === File: jreactive-core\src\main\java\com\ciro\jreactive\HtmlComponent.java === */
 package com.ciro.jreactive;
 
 import java.lang.reflect.Field;
@@ -33,7 +34,8 @@ public abstract class HtmlComponent extends ViewLeaf {
 
     private String slotHtml = "";
     
-    public void _captureStateSnapshot() {
+    // 🔥 FIX: Sincronizado para evitar que dos hilos limpien/escriban snapshots a la vez
+    public synchronized void _captureStateSnapshot() {
         if (map == null) buildBindings();
         
         _structureHashes.clear();
@@ -49,15 +51,12 @@ public abstract class HtmlComponent extends ViewLeaf {
                 if (val == null) {
                     _simpleSnapshots.put(key, null);
                 } 
-                // A) Familia Smart: No guardamos estado, confiamos en los eventos en tiempo real
                 else if (val instanceof SmartList || val instanceof SmartSet || val instanceof SmartMap) {
-                    // NO-OP: El sistema de eventos maneja los cambios internos
+                    // NO-OP: El sistema de eventos maneja los deltas
                 }
-                // B) Tipos inmutables simples
                 else if (val instanceof String || val instanceof Number || val instanceof Boolean) {
                     _simpleSnapshots.put(key, val);
                 }
-                // C) POJOs Mutables y Colecciones normales
                 else {
                     _structureHashes.put(key, getPojoHash(val));
                 }
@@ -75,8 +74,18 @@ public abstract class HtmlComponent extends ViewLeaf {
         return slotHtml;
     }
     
-    void _addChild(HtmlComponent child) { _children.add(child); }
-    List<HtmlComponent> _children()     { return _children; }
+    // 🔥 FIX: Sincronizado por seguridad en la gestión de hijos
+    void _addChild(HtmlComponent child) { 
+        synchronized(_children) {
+            _children.add(child); 
+        }
+    }
+
+    List<HtmlComponent> _children() { 
+        synchronized(_children) {
+            return new ArrayList<>(_children); 
+        }
+    }
 
     protected void onMount() {}
     protected void onUnmount() {}
@@ -85,13 +94,13 @@ public abstract class HtmlComponent extends ViewLeaf {
         if (_state.compareAndSet(ComponentState.UNMOUNTED, ComponentState.MOUNTED)) {
             onMount();
         }
-        for (HtmlComponent child : _children) {
+        for (HtmlComponent child : _children()) {
             child._mountRecursive();
         }
     }
 
     public void _unmountRecursive() {
-        for (HtmlComponent child : _children) {
+        for (HtmlComponent child : _children()) {
             child._unmountRecursive();
         }
         if (_state.compareAndSet(ComponentState.MOUNTED, ComponentState.UNMOUNTED)) {
@@ -111,13 +120,21 @@ public abstract class HtmlComponent extends ViewLeaf {
 
     @Override
     public Map<String, ReactiveVar<?>> bindings() {
-        if (cached == null) cached = ComponentEngine.render(this);
+        if (cached == null) {
+            synchronized(this) {
+                if (cached == null) cached = ComponentEngine.render(this);
+            }
+        }
         return cached.bindings();
     }
 
     @Override
     public String render() {
-        if (cached == null) cached = ComponentEngine.render(this);
+        if (cached == null) {
+            synchronized(this) {
+                if (cached == null) cached = ComponentEngine.render(this);
+            }
+        }
         return cached.html();
     }
 
@@ -128,7 +145,9 @@ public abstract class HtmlComponent extends ViewLeaf {
         return map;
     }
 
-    private void buildBindings() {
+    // 🔥 FIX: buildBindings debe ser atómico para no duplicar llaves en stateKeys
+    private synchronized void buildBindings() {
+        if (map != null) return;
         map = new HashMap<>();
         stateKeys.clear();
 
@@ -189,7 +208,8 @@ public abstract class HtmlComponent extends ViewLeaf {
         }
     }
 
-    public void _syncState() {
+    // 🔥 FIX: Sincronizado para asegurar consistencia entre el valor real y el ReactiveVar
+    public synchronized void _syncState() {
         if (map == null) buildBindings();
 
         for (String key : stateKeys) {
@@ -213,28 +233,22 @@ public abstract class HtmlComponent extends ViewLeaf {
     }
 
     private boolean hasChanged(String key, Object newVal) {
-        
         Integer oldIdentity = _identitySnapshots.get(key);
         int newIdentity = System.identityHashCode(newVal);
         
-        // Si la referencia en memoria es distinta, DEFINITIVAMENTE cambió (o se reasignó la lista).
         if (oldIdentity != null && oldIdentity != newIdentity) {
             return true; 
         }
         
-        // A) Familia Smart: Si es la MISMA instancia (identidad igual), 
-        // asumimos que los listeners ya enviaron los deltas. No hacemos nada.
         if (newVal instanceof SmartList<?> || newVal instanceof SmartSet<?> || newVal instanceof SmartMap<?,?>) {
             return false;
         }
 
-        // B) Tipos Simples Inmutables
         if (newVal instanceof String || newVal instanceof Number || newVal instanceof Boolean) {
             Object oldVal = _simpleSnapshots.get(key);
             return !Objects.equals(newVal, oldVal);
         }
 
-        // C) POJOs Mutables y Colecciones Normales -> Deep Hash
         int newHash = getPojoHash(newVal);
         Integer oldHash = _structureHashes.get(key);
         return oldHash == null || oldHash != newHash;
@@ -318,7 +332,7 @@ public abstract class HtmlComponent extends ViewLeaf {
     }
     
     @SuppressWarnings("unchecked")
-    protected void updateState(String fieldName) {
+    protected synchronized void updateState(String fieldName) {
         try {
             Class<?> c = getClass();
             Field found = null;
