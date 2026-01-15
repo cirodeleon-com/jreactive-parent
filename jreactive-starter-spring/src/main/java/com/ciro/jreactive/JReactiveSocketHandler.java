@@ -14,22 +14,30 @@ import java.util.concurrent.ScheduledExecutorService;
 
 /**
  * ADAPTADOR: Spring WebSocket -> JReactive Core.
- * No contiene lógica de negocio, solo traducción.
+ * Ahora inyecta el HubManager para recuperación de historial.
  */
 public class JReactiveSocketHandler extends TextWebSocketHandler {
 
     private final JrxProtocolHandler protocol;
+    
+    // 👇 Nuevos campos para contexto
+    private final JrxHubManager hubManager;
+    private final String path;
+    private final String sessionId;
 
-    // Cache de wrappers para mantener la identidad (equals/hashCode) correcta
-    // Usamos esto para que el mismo objeto WebSocketSession siempre devuelva el mismo JrxSession
-    // y el Set<JrxSession> en el Core pueda removerlo correctamente.
     private final Map<WebSocketSession, JrxSession> wrappers = new ConcurrentHashMap<>();
 
     public JReactiveSocketHandler(ViewNode root,
                                   ObjectMapper mapper,
                                   ScheduledExecutorService scheduler,
-                                  WsConfig cfg) {
-        // Inicializamos el Core con valores primitivos
+                                  WsConfig cfg,
+                                  JrxHubManager hubManager, // <--- Nuevo param
+                                  String path,              // <--- Nuevo param
+                                  String sessionId) {       // <--- Nuevo param
+        this.hubManager = hubManager;
+        this.path = path;
+        this.sessionId = sessionId;
+
         this.protocol = new JrxProtocolHandler(
             root,
             mapper,
@@ -44,7 +52,29 @@ public class JReactiveSocketHandler extends TextWebSocketHandler {
     public void afterConnectionEstablished(WebSocketSession session) throws Exception {
         JrxSession wrapper = new SpringWsWrapper(session);
         wrappers.put(session, wrapper);
-        protocol.onOpen(wrapper);
+
+        // 👇 1. Extraer 'since' de la URL (ej: ws://...?since=123)
+        long since = 0;
+        try {
+            String query = session.getUri().getQuery();
+            if (query != null) {
+                // Parsing manual simple para no depender de libs externas
+                for (String param : query.split("&")) {
+                    if (param.startsWith("since=")) {
+                        since = Long.parseLong(param.substring(6));
+                        break;
+                    }
+                }
+            }
+        } catch (Exception e) {
+            // Ignoramos since malformado
+        }
+
+        // 👇 2. Obtener el Hub para esta sesión (si existe)
+        JrxPushHub hub = (hubManager != null) ? hubManager.hub(sessionId, path) : null;
+
+        // 👇 3. Pasamos todo al protocolo
+        protocol.onOpen(wrapper, hub, since);
     }
 
     @Override
@@ -63,9 +93,7 @@ public class JReactiveSocketHandler extends TextWebSocketHandler {
         }
     }
 
-    /**
-     * Implementación interna de la SPI usando Spring
-     */
+    // ... (La clase interna SpringWsWrapper se queda IGUAL, no la copies si no quieres, pero aquí va completa por seguridad) ...
     private static class SpringWsWrapper implements JrxSession {
         private final WebSocketSession session;
 
@@ -113,7 +141,6 @@ public class JReactiveSocketHandler extends TextWebSocketHandler {
             return session.getAttributes().get(key);
         }
 
-        // IMPORTANTE: Identidad basada en la sesión subyacente
         @Override
         public boolean equals(Object o) {
             if (this == o) return true;

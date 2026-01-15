@@ -1,7 +1,7 @@
-/* === File: jreactive-standalone/src/main/java/com/ciro/jreactive/standalone/JReactiveServer.java === */
 package com.ciro.jreactive.standalone;
 
 import com.ciro.jreactive.CallGuard;
+import com.ciro.jreactive.JrxHubManager; // <--- Importar
 import com.ciro.jreactive.PageResolver;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.undertow.Undertow;
@@ -28,6 +28,9 @@ public class JReactiveServer {
 
     private final ObjectMapper mapper;
     private final CallGuard callGuard;
+    
+    // 👇 Nuevo campo
+    private final JrxHubManager hubManager;
 
     private final ScheduledExecutorService scheduler;
     private final StandaloneSessionManager sessionManager;
@@ -39,6 +42,9 @@ public class JReactiveServer {
         this.pageResolver = new PageResolver(registry);
 
         this.mapper = ObjectMapperFactory.create();
+
+        // 👇 Inicializar el HubManager aquí
+        this.hubManager = new JrxHubManager(pageResolver, mapper);
 
         Validator validator;
         try {
@@ -61,31 +67,28 @@ public class JReactiveServer {
 
         ClassLoader cl = Main.class.getClassLoader();
 
-        // ✅ /js/* -> classpath:/static/js/*
         ResourceHandler jsHandler = new ResourceHandler(
                 new ClassPathResourceManager(cl, "static/js")
         );
         jsHandler.setCacheTime(0);
 
-        // Opcional: /static/* -> classpath:/static/*
         ResourceHandler staticHandler = new ResourceHandler(
                 new ClassPathResourceManager(cl, "static")
         );
         staticHandler.setCacheTime(0);
 
-        // Endpoints
-        WsEndpoint wsEndpoint = new WsEndpoint(pageResolver, mapper, scheduler, sessionManager);
+        // 👇 Pasamos el hubManager al constructor de WsEndpoint
+        WsEndpoint wsEndpoint = new WsEndpoint(pageResolver, mapper, scheduler, sessionManager, hubManager);
+        
         PageEndpoint pageEndpoint = new PageEndpoint(registry, sessionManager);
         CallEndpoint callEndpoint = new CallEndpoint(pageResolver, callGuard, mapper, sessionManager);
 
-        // ✅ Fallback REAL: si no matchea ningún prefix, cae aquí (esto SÍ existe en Undertow 2.3.x)
         HttpHandler fallback = exchange -> {
             sessionManager.ensureSession(exchange);
             sessionManager.touchNoCache(exchange);
             pageEndpoint.handleRequest(exchange);
         };
 
-        // ✅ PathHandler con fallback por constructor
         PathHandler routes = new PathHandler(fallback);
 
         routes.addPrefixPath("/ws", websocket(wsEndpoint::onConnect));

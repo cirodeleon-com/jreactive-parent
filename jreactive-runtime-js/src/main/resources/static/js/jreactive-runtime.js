@@ -1083,6 +1083,11 @@ function reindexBindings() {
       //evt = (transport === 'ws') ? 'input' : 'change';
       evt = 'input';
     }
+    
+    el.addEventListener('blur', () => {
+        const keyToSave = el.name || el.id || k;
+        lastEdits.delete(keyToSave); // Borramos la marca de tiempo
+    });
 
     el.addEventListener(evt, async () => {
 		
@@ -1772,7 +1777,7 @@ function updateDomForKey(k, v) {
         // 🟢 AJUSTE AQUÍ:
         // Si es Polling (lento/desordenado), usamos 2000ms.
         // Si es SSE (rápido/ordenado), usamos solo 350ms.
-        const safetyTime = (transport === 'poll') ? 2000 : 350;
+        const safetyTime = (transport === 'poll') ? 750 : 350;
         
         // Si fue hace menos del tiempo de seguridad...
         if (now - lastEditTime < safetyTime) {

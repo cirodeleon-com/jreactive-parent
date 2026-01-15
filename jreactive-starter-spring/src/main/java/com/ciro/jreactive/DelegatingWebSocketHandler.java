@@ -15,16 +15,19 @@ public class DelegatingWebSocketHandler implements WebSocketHandler {
     private final ObjectMapper mapper;
     private final ScheduledExecutorService scheduler;
     private final WsConfig wsConfig;
+    // 👇 Nuevo
+    private final JrxHubManager hubManager; 
 
     public DelegatingWebSocketHandler(PageResolver pageResolver,
-    		ObjectMapper mapper,
-    		ScheduledExecutorService scheduler,
-    		WsConfig wsConfig) {
-    	
+                                      ObjectMapper mapper,
+                                      ScheduledExecutorService scheduler,
+                                      WsConfig wsConfig,
+                                      JrxHubManager hubManager) { // <--- Inyectado por Spring
         this.pageResolver = pageResolver;
         this.mapper = mapper;
         this.scheduler = scheduler;
         this.wsConfig = wsConfig;
+        this.hubManager = hubManager;
     }
 
     @Override
@@ -34,21 +37,24 @@ public class DelegatingWebSocketHandler implements WebSocketHandler {
 
         String sessionId = (String) session.getAttributes().get("sessionId");
         if (sessionId == null) {
-            // Fallback: por si acaso no vino del interceptor
             sessionId = session.getId();
             session.getAttributes().put("sessionId", sessionId);
         }
 
         HtmlComponent page = pageResolver.getPage(sessionId, path);
 
-        JReactiveSocketHandler delegate = new JReactiveSocketHandler(page, mapper, scheduler, wsConfig);
+        // 🔥 CAMBIO: Ahora pasamos hubManager, path y sessionId
+        JReactiveSocketHandler delegate = new JReactiveSocketHandler(
+            page, mapper, scheduler, wsConfig,
+            hubManager, path, sessionId
+        );
+        
         delegate.afterConnectionEstablished(session);
 
-        // Guardamos el delegate para reenviar mensajes
         session.getAttributes().put("delegate", delegate);
     }
 
-
+    // ... (El resto de métodos handleMessage, handleTransportError, etc. QUEDAN IGUALES) ...
     @Override
     public void handleMessage(WebSocketSession session, WebSocketMessage<?> message) throws Exception {
         var delegate = (WebSocketHandler) session.getAttributes().get("delegate");
@@ -69,17 +75,13 @@ public class DelegatingWebSocketHandler implements WebSocketHandler {
         String path = (String) session.getAttributes().get("path");
         String sessionId = (String) session.getAttributes().get("sessionId");
 
-        // Sólo hacemos evict cuando cerramos por cambio de ruta,
-        // y SOLO para esa sesión concreta
         if (path != null && sessionId != null  && "route-change".equals(status.getReason())) {
             pageResolver.evict(sessionId, path);
         }
     }
-
 
     @Override
     public boolean supportsPartialMessages() {
         return false;
     }
 }
-

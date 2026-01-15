@@ -131,7 +131,40 @@ public class JrxProtocolHandler {
         });
     }
 
-    public void onOpen(JrxSession s) { sessions.add(s); bindings.forEach((k, v) -> { try { s.sendText(jsonS(k, v.get())); } catch (Exception e) {} }); }
+ // 🔥 CAMBIO: Ahora aceptamos el Hub y el cursor 'since' opcionales
+    public void onOpen(JrxSession s, JrxPushHub hub, long since) {
+        sessions.add(s);
+
+        // 1. RECUPERACIÓN DE HISTORIAL (Solo si es una reconexión)
+        if (hub != null && since > 0) {
+            try {
+                // Pedimos los mensajes perdidos al Hub
+                var missedBatch = hub.poll(since);
+                
+                // Si hay mensajes que el cliente se perdió, se los enviamos YA.
+                if (!missedBatch.getBatch().isEmpty()) {
+                    Map<String, Object> envelope = new HashMap<>();
+                    envelope.put("seq", missedBatch.getSeq());
+                    envelope.put("batch", missedBatch.getBatch());
+                    
+                    s.sendText(mapper.writeValueAsString(envelope));
+                    log.info("Recovered {} missed messages for session {}", missedBatch.getBatch().size(), s.getId());
+                }
+            } catch (Exception e) {
+                log.warn("Failed to recover history for session " + s.getId(), e);
+            }
+        }
+
+        // 2. ENVÍO DE ESTADO ACTUAL (Snapshot)
+        // El comportamiento estándar de siempre
+        bindings.forEach((k, v) -> {
+            try {
+                s.sendText(jsonS(k, v.get()));
+            } catch (Exception e) {
+                // ignorar errores de envío inicial
+            }
+        });
+    }
     public void onClose(JrxSession s) { sessions.remove(s); if (sessions.isEmpty()) { queue.clear(); activeSmartCleanups.values().forEach(Runnable::run); activeSmartCleanups.clear(); disposables.forEach(Runnable::run); disposables.clear(); } }
     private void broadcast(String k, Object v) { if (!backpressureEnabled) sendI(k, v); else { enq(k, v); sched(); } }
     private void broadcastDelta(String k, String t, Object c) { DeltaPacket p = new DeltaPacket(t, List.of(c)); if (backpressureEnabled) { enq(k, p); sched(); } else sendRaw(k, null, p); }
