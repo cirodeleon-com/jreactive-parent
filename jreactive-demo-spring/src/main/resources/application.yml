@@ -1,0 +1,36 @@
+# ==========================================
+#  CONFIGURACIÓN BASE (Por defecto / DEV)
+# ==========================================
+server:
+  port: 8080
+
+jreactive:
+  # En DEV usamos RAM: es rápido, no requiere instalar Redis y limpia todo al reiniciar.
+  store:
+    type: ram
+  
+  # Ajustes finos del WebSocket (Backpressure para que el cliente no se ahogue)
+  ws:
+    enabled-backpressure: true
+    max-queue: 1024
+    flush-interval-ms: 16
+
+---
+# ==========================================
+#  PERFIL DE PRODUCCIÓN (PROD)
+# ==========================================
+# Se activa con: java -jar app.jar --spring.profiles.active=prod
+spring:
+  config:
+    activate:
+      on-profile: prod
+
+jreactive:
+  # En PROD usamos Híbrido: Velocidad de RAM + Persistencia de Redis
+  store:
+    type: hybrid
+  
+  redis:
+    # Cambia esto por la IP real de tu Redis en producción
+    host: localhost 
+    port: 6379
