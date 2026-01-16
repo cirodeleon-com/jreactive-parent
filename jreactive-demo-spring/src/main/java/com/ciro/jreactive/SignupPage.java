@@ -6,6 +6,9 @@ import jakarta.validation.Valid;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
+
+import java.io.Serializable;
+
 import org.springframework.stereotype.Component;
 
 @Component
@@ -13,7 +16,7 @@ import org.springframework.stereotype.Component;
 public class SignupPage extends HtmlComponent {
 
     // 1) DTO con Bean Validation
-    public static class SignupForm {
+    public static class SignupForm implements Serializable {
 
         @NotBlank(message = "El nombre es obligatorio")
         public String name;
@@ -28,7 +31,7 @@ public class SignupPage extends HtmlComponent {
     }
 
     // 2) Estado de la página (para mostrar mensajes)
-    public static class PageState {
+    public static class PageState implements Serializable{
         public String lastMessage;
     }
 

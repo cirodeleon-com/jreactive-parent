@@ -16,6 +16,7 @@
     <java.version>17</java.version>
     <spring-boot.version>3.2.5</spring-boot.version>
     <auto-service.version>1.1.1</auto-service.version>
+    <archunit.version>1.3.0</archunit.version>
   </properties>
 
   <!-- import del BOM de Spring-Boot -->
@@ -28,6 +29,14 @@
         <type>pom</type>
         <scope>import</scope>
       </dependency>  
+      
+      <dependency>
+          <groupId>com.tngtech.archunit</groupId>
+          <artifactId>archunit-junit5</artifactId>
+          <version>${archunit.version}</version>
+          <scope>test</scope>
+      </dependency>
+      
     </dependencies>
   </dependencyManagement>
 
@@ -40,6 +49,7 @@
     <module>jreactive-demo-spring</module>
     <module>jreactive-standalone</module>
     <module>jreactive-runtime-jvm</module>
+    <module>jreactive-store-redis</module>
   </modules>
 
   <build>

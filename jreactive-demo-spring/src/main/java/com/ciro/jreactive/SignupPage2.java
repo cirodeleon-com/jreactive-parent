@@ -21,7 +21,7 @@ public class SignupPage2 extends HtmlComponent {
         public boolean acceptTerms;
     }
 
-    public static class PageState {
+    public static class PageState implements Serializable{
         public String lastMessage;
     }
 

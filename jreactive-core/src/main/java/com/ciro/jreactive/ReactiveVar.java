@@ -5,7 +5,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Consumer;
 import java.util.function.BooleanSupplier;
 
-public final class ReactiveVar<T> {
+public final class ReactiveVar<T> implements java.io.Serializable{
     private T value;
     private final List<Consumer<T>> listeners = new CopyOnWriteArrayList<>();
     

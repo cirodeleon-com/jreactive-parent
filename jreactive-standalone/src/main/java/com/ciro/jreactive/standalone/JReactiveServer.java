@@ -3,6 +3,8 @@ package com.ciro.jreactive.standalone;
 import com.ciro.jreactive.CallGuard;
 import com.ciro.jreactive.JrxHubManager; // <--- Importar
 import com.ciro.jreactive.PageResolver;
+import com.ciro.jreactive.store.CaffeineStateStore;
+import com.ciro.jreactive.store.StateStore;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.undertow.Undertow;
 import io.undertow.server.HttpHandler;
@@ -28,6 +30,7 @@ public class JReactiveServer {
 
     private final ObjectMapper mapper;
     private final CallGuard callGuard;
+    private final StateStore stateStore;
     
     // 👇 Nuevo campo
     private final JrxHubManager hubManager;
@@ -39,7 +42,8 @@ public class JReactiveServer {
         this.port = port;
 
         this.registry = new SimpleRouteRegistry();
-        this.pageResolver = new PageResolver(registry);
+        this.stateStore = new CaffeineStateStore();
+        this.pageResolver = new PageResolver(registry,stateStore);
 
         this.mapper = ObjectMapperFactory.create();
 

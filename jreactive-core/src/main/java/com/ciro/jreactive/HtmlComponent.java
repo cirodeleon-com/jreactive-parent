@@ -16,7 +16,7 @@ import com.ciro.jreactive.smart.SmartList;
 import com.ciro.jreactive.smart.SmartSet;
 import com.ciro.jreactive.smart.SmartMap;
 
-public abstract class HtmlComponent extends ViewLeaf {
+public abstract class HtmlComponent extends ViewLeaf implements java.io.Serializable {
 
     private Map<String, ReactiveVar<?>> map;
     private ComponentEngine.Rendered cached;

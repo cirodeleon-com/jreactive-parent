@@ -1,6 +1,8 @@
 package com.ciro.jreactive;
 
 
+import java.io.Serializable;
+
 import org.springframework.stereotype.Component;
 
 import com.ciro.jreactive.HtmlComponent;
@@ -15,18 +17,18 @@ public class StoreTestPage extends HtmlComponent {
     @State
     public StoreState store = new StoreState();
 
-    public static class StoreState {
+    public static class StoreState implements Serializable {
         public Ui ui = new Ui();
         public User user = new User();
     }
 
-    public static class Ui {
+    public static class Ui implements Serializable{
         public String theme  = "light";
         public String lang   = "es";
         public String source = "initial";
     }
 
-    public static class User {
+    public static class User implements Serializable{
         public String name = "Invitado";
         public String role = "GUEST";
     }

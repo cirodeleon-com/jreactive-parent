@@ -10,7 +10,7 @@ public class ClockLeaf extends HtmlComponent {
 	@Bind public Type<String> greet = $("Hello");
 	@Bind public Type<String> clock = $("--:--:--");
 	
-	private Timer timer;
+	private transient Timer timer;
 
     public ClockLeaf() {
     	System.out.println("🕒 Instanciado ClockLeaf con id: " + this.getId());

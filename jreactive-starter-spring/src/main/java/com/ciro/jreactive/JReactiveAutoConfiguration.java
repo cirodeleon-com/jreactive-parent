@@ -1,9 +1,12 @@
 package com.ciro.jreactive;
 
+import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 import com.ciro.jreactive.router.RouteProvider;
+import com.ciro.jreactive.store.CaffeineStateStore;
+import com.ciro.jreactive.store.StateStore;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import jakarta.annotation.PostConstruct;
@@ -16,6 +19,12 @@ public class JReactiveAutoConfiguration {
     public void installEngine() {
         JsoupComponentEngine.installAsDefault();
     }
+	
+	@Bean
+    @ConditionalOnMissingBean(StateStore.class)
+    public StateStore stateStore() {
+        return new CaffeineStateStore();
+    }
 
     @Bean
     public CallGuard callGuard(Validator validator, ObjectMapper mapper) {
@@ -23,8 +32,8 @@ public class JReactiveAutoConfiguration {
     }
     
     @Bean
-    public PageResolver pageResolver(RouteProvider routeProvider) {
-        return new PageResolver(routeProvider);
+    public PageResolver pageResolver(RouteProvider routeProvider, StateStore store) {
+        return new PageResolver(routeProvider, store);
     }
     
     @Bean

@@ -36,9 +36,9 @@ public class PageController {
         String sessionId = req.getSession(true).getId();
 
         // Mantener comportamiento actual (aunque evict hoy sea NO-OP)
-        if (partial == null) {
-            pageResolver.evict(sessionId, path);
-        }
+        //if (partial == null) {
+        //    pageResolver.evict(sessionId, path);
+        //}
 
         String html = api.render(sessionId, path);
 

@@ -1,5 +1,6 @@
 package com.ciro.jreactive;
 
+import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -21,7 +22,7 @@ public class NewStateTestPage extends HtmlComponent {
     @State
     public String newItem = "";
 
-    public static class PageState {
+    public static class PageState implements Serializable{
         public String title = "Demo @State sin Type";
         public List<String> items = new ArrayList<>(
             List.of("Uno", "Dos", "Tres")

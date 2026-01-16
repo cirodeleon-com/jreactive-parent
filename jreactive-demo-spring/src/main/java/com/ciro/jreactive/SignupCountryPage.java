@@ -3,6 +3,7 @@ package com.ciro.jreactive;
 
 import static com.ciro.jreactive.Type.$;
 
+import java.io.Serializable;
 import java.util.List;
 import java.util.Objects;
 
@@ -15,7 +16,7 @@ import com.ciro.jreactive.router.Route;
 @Route(path = "/signup-country")
 public class SignupCountryPage extends HtmlComponent {
 
-    public static class SignupForm {
+    public static class SignupForm implements Serializable{
         public String country;
     }
 
