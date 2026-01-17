@@ -12,7 +12,7 @@ import com.ciro.jreactive.State;
 
 @Component
 @Route(path = "/store-test")
-public class StoreTestPage extends HtmlComponent {
+public class StoreTestPage extends AppPage {
 
     @State
     public StoreState store = new StoreState();

@@ -12,7 +12,7 @@ import java.io.Serializable;
 
 @Component
 @Route(path = "/signup2")
-public class SignupPage2 extends HtmlComponent {
+public class SignupPage2 extends AppPage {
 
     public static class SignupForm implements Serializable {
         @NotBlank public String name;

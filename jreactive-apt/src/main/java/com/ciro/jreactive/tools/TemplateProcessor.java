@@ -166,19 +166,18 @@ public final class TemplateProcessor extends AbstractProcessor {
         }
 
         if (returnTree == null) {
-            processingEnv.getMessager().printMessage(
-                    Diagnostic.Kind.ERROR,
-                    "[JReactive] " + cls.getSimpleName() + ".template() debe tener un 'return' con literal string.",
-                    tpl
-            );
+            // Si no hay return, no validamos nada (el compilador de Java dará error por su cuenta si falta)
             return null;
         }
 
         ExpressionTree expr = returnTree.getExpression();
+        
+        // 🔥 CORRECCIÓN: Si no es un literal (ej: concatenación string + slot()), 
+        // emitimos WARNING y retornamos null para saltar la validación, PERO NO ERROR.
         if (!(expr instanceof LiteralTree lt) || !(lt.getValue() instanceof String)) {
             processingEnv.getMessager().printMessage(
-                    Diagnostic.Kind.ERROR,
-                    "[JReactive] " + cls.getSimpleName() + ".template() debe retornar literal string: return \"...\"; o return \"\"\"...\"\"\";",
+                    Diagnostic.Kind.WARNING,
+                    "[JReactive] Template dinámico detectado en " + cls.getSimpleName() + ". Se omitirá la validación de bindings en tiempo de compilación.",
                     tpl
             );
             return null;

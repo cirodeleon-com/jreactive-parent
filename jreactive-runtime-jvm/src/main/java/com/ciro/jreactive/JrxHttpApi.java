@@ -1,6 +1,7 @@
 package com.ciro.jreactive;
 
 import com.ciro.jreactive.annotations.Call;
+import com.ciro.jreactive.router.Layout;
 import com.ciro.jreactive.router.Param;
 import com.fasterxml.jackson.databind.JavaType;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -24,8 +25,37 @@ public class JrxHttpApi {
     }
 
     /** Render HTML del componente asociado a sessionId + path */
-    public String render(String sessionId, String path) {
+    public String render(String sessionId, String path, boolean renderLayout) {
         HtmlComponent page = pageResolver.getPage(sessionId, path);
+        
+        // 1. Si es petición parcial (AJAX/SPA), devolvemos solo la página
+        if (!renderLayout) {
+            return page.render();
+        }
+
+        // 2. Si es carga completa, buscamos si tiene @Layout
+        Layout layoutAnn = page.getClass().getAnnotation(Layout.class);
+        
+        if (layoutAnn != null) {
+            try {
+                // Creamos una instancia fresca del Layout
+                // (Nota: En una versión futura podríamos cachearlo o inyectarlo con Spring)
+                HtmlComponent layout = layoutAnn.value().getDeclaredConstructor().newInstance();
+                
+                // 🔥 Inyección: Renderizamos la página y se la pasamos al layout como slot
+                layout._setSlotHtml(page.render());
+                
+                // Renderizamos el layout (que ahora contiene la página adentro)
+                return layout.render();
+                
+            } catch (Exception e) {
+                e.printStackTrace();
+                // Si falla el layout, devolvemos la página "cruda" como fallback
+                return page.render();
+            }
+        }
+
+        // 3. Si no tiene layout, se devuelve cruda (útil para popups o páginas simples)
         return page.render();
     }
 

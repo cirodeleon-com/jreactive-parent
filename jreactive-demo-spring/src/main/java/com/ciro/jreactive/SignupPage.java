@@ -13,7 +13,7 @@ import org.springframework.stereotype.Component;
 
 @Component
 @Route(path = "/signup")
-public class SignupPage extends HtmlComponent {
+public class SignupPage extends AppPage {
 
     // 1) DTO con Bean Validation
     public static class SignupForm implements Serializable {

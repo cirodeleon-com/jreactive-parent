@@ -4,6 +4,7 @@ package com.ciro.jreactive;
 import static com.ciro.jreactive.Type.$;
 
 import java.io.Serializable;
+import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
 
@@ -14,7 +15,7 @@ import com.ciro.jreactive.router.Route;
 
 @Component
 @Route(path = "/signup-country")
-public class SignupCountryPage extends HtmlComponent {
+public class SignupCountryPage extends AppPage {
 
     public static class SignupForm implements Serializable{
         public String country;
@@ -26,15 +27,23 @@ public class SignupCountryPage extends HtmlComponent {
 
     // Opciones para el select
     @Bind
-    public Type<List<JSelect.Option>> countries = $(List.of(
-        new JSelect.Option("co", "Colombia"),
-        new JSelect.Option("ve", "Venezuela"),
-        new JSelect.Option("cl", "Chile")
-    ));
+    public Type<List<JSelect.Option>> countries = $(Collections.emptyList());
 
     // 🔥 State derivado: el nombre bonito del país
     @State
     String selectedCountryLabel = "";
+    
+    @Override
+    protected void onInit() {
+        // Simulamos llamada al servicio de geografía
+        List<JSelect.Option> fromDb = List.of(
+            new JSelect.Option("co", "Colombia"),
+            new JSelect.Option("ve", "Venezuela"),
+            new JSelect.Option("cl", "Chile"),
+            new JSelect.Option("ar", "Argentina (Nuevo)") // Agregamos uno más
+        );
+        this.countries.set(fromDb);
+    }
 
     @Call
     public void register(SignupForm form) {

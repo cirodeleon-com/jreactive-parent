@@ -11,6 +11,12 @@ public class ClockLeaf extends HtmlComponent {
 	@Bind public Type<String> clock = $("--:--:--");
 	
 	private transient Timer timer;
+	
+	@Override
+    public void onInit() {
+        // 1. Ponemos la hora del servidor INMEDIATAMENTE para el primer render
+        clock.set(LocalTime.now().withNano(0).toString());
+    }
 
     public ClockLeaf() {
     	System.out.println("🕒 Instanciado ClockLeaf con id: " + this.getId());

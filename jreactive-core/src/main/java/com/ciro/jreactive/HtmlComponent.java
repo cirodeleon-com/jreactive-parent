@@ -1,14 +1,17 @@
 /* === File: jreactive-core\src\main\java\com\ciro\jreactive\HtmlComponent.java === */
 package com.ciro.jreactive;
 
+import java.io.InputStream;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.Collection;
 import java.util.Objects;
@@ -31,8 +34,47 @@ public abstract class HtmlComponent extends ViewLeaf implements java.io.Serializ
     private final Map<String, Integer> _structureHashes = new HashMap<>();
     private final Map<String, Object> _simpleSnapshots = new HashMap<>();
     private final Map<String, Integer> _identitySnapshots = new HashMap<>();
+    private static final Map<Class<?>, String> RESOURCE_CACHE = new ConcurrentHashMap<>();
 
     private String slotHtml = "";
+    
+    private boolean _initialized = false;
+    
+    String _getBundledResources() {
+        return RESOURCE_CACHE.computeIfAbsent(this.getClass(), clazz -> {
+            StringBuilder bundle = new StringBuilder();
+            String baseName = clazz.getSimpleName(); // Ej: "UserPage"
+
+            // 1. Intentar cargar CSS (UserPage.css)
+            try (InputStream is = clazz.getResourceAsStream(baseName + ".css")) {
+                if (is != null) {
+                    String css = new String(is.readAllBytes(), StandardCharsets.UTF_8);
+                    // Inyectamos con un data-resource para facilitar depuración en DevTools
+                    bundle.append("\n<style data-resource=\"").append(baseName).append("\">\n")
+                          .append(css)
+                          .append("\n</style>\n");
+                }
+            } catch (Exception e) {
+                System.err.println("⚠️ JReactive: Error leyendo CSS para " + baseName + ": " + e.getMessage());
+            }
+
+            // 2. Intentar cargar JS (UserPage.js)
+            try (InputStream is = clazz.getResourceAsStream(baseName + ".js")) {
+                if (is != null) {
+                    String js = new String(is.readAllBytes(), StandardCharsets.UTF_8);
+                    bundle.append("\n<script data-resource=\"").append(baseName).append("\">\n")
+                          .append("/*<![CDATA[*/\n")
+                          .append(js)
+                          .append("\n/*]]>*/\n")
+                          .append("\n</script>\n");
+                }
+            } catch (Exception e) {
+                System.err.println("⚠️ JReactive: Error leyendo JS para " + baseName + ": " + e.getMessage());
+            }
+
+            return bundle.toString();
+        });
+    }
     
     // 🔥 FIX: Sincronizado para evitar que dos hilos limpien/escriban snapshots a la vez
     public synchronized void _captureStateSnapshot() {
@@ -86,9 +128,17 @@ public abstract class HtmlComponent extends ViewLeaf implements java.io.Serializ
             return new ArrayList<>(_children); 
         }
     }
+    
+    public void _initIfNeeded() {
+        if (!_initialized) {
+            onInit();
+            _initialized = true;
+        }
+    }
 
     protected void onMount() {}
     protected void onUnmount() {}
+    protected void onInit() {}
     
     public void _mountRecursive() {
         if (_state.compareAndSet(ComponentState.UNMOUNTED, ComponentState.MOUNTED)) {

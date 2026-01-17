@@ -25,9 +25,18 @@ public class JsoupComponentEngine extends AbstractComponentEngine {
         List<HtmlComponent> pool = new ArrayList<>(ctx._children());
         ctx._children().clear();
         Map<String, ReactiveVar<?>> all = new HashMap<>();
-
+        
+     // 🔥 1. CICLO DE VIDA (Pre-Render)
+        // Ejecutamos la lógica de carga de datos del usuario
+        ctx._initIfNeeded();
+        
+        // 🔥 2. SINCRONIZACIÓN
+        // Aseguramos que los cambios en los POJOs (@State) pasen a las ReactiveVars
+        // ANTES de que el template las lea.
+        ctx._syncState();
+        String resources = ctx._getBundledResources();
         // 1. Pre-procesamiento de bloques (con el fix de anidamiento)
-        String rawTemplate = ctx.template();
+        String rawTemplate = resources + ctx.template();
         String htmlWithControlBlocks = processControlBlocks(rawTemplate);
         
         String xmlFriendly = HTML5_VOID_FIX.matcher(htmlWithControlBlocks).replaceAll("<$1$2/>");
@@ -93,11 +102,15 @@ public class JsoupComponentEngine extends AbstractComponentEngine {
         // createAndBindComponent ya gestiona el parentRx.onChange(...) interno
         HtmlComponent childComp = createAndBindComponent(ctx, pool, all, className, attrs, namespacedSlot);
         
+        childComp._initIfNeeded();    
+        childComp._syncState();
+        
         String childId = childComp.getId();
         String childNs = childId + ".";
 
+        String childResources = childComp._getBundledResources();
         // 3. Procesar plantilla del hijo
-        String childRawTpl = childComp.template();
+        String childRawTpl = childResources + childComp.template();
         String childProcessedTpl = processControlBlocks(childRawTpl);
         String childXml = HTML5_VOID_FIX.matcher(childProcessedTpl).replaceAll("<$1$2/>");
 
@@ -116,8 +129,11 @@ public class JsoupComponentEngine extends AbstractComponentEngine {
         }
         el.remove();
         
-        // Registrar bindings del hijo en el mapa global para que el JS los vea
-        childComp.bindings().forEach((k, v) -> all.put(childNs + k, v));
+     // Registrar bindings del hijo en el mapa global para que el JS los vea
+     // USAMOS selfBindings() para evitar re-renderizar el componente innecesariamente
+     // antes usaba childComp.bindings().forEach((k, v) -> all.put(childNs + k, v));
+        childComp.selfBindings().forEach((k, v) -> all.put(childNs + k, v));
+     // childComp.bindings().forEach((k, v) -> all.put(childNs + k, v));
     }
     
     private void processElementAttributes(Element el, HtmlComponent ctx, String ns) {

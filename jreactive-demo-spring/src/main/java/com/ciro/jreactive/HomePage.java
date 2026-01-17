@@ -4,13 +4,14 @@ import java.util.ArrayList;
 import java.util.List;
 import org.springframework.stereotype.Component;
 import com.ciro.jreactive.annotations.Call;
+import com.ciro.jreactive.router.Layout;
 import com.ciro.jreactive.router.Route;
 import static com.ciro.jreactive.Type.$;
 
 
 @Component
 @Route(path = "/")
-public class HomePage extends HtmlComponent {
+public class HomePage extends AppPage {
 	
 	
 	@Override
@@ -26,12 +27,15 @@ public class HomePage extends HtmlComponent {
 	        <a href="/signup2" data-router>Ir a signup2 página</a>
 	        <a href="/uploadTest" data-router>Ir a upload test</a>
 	        <a href="/delta-test" data-router>ir a delta test</a>
+	        <a href="/hook-test" data-router>ir a hook test</a>
+	        
 	        <HelloLeaf />
 	        <HelloLeaf ref="hello"/>
 	        <ClockLeaf ref="reloj" :greet="hello.newFruit" /> 
 			<FireTestLeaf/>   
 			// ... dentro del template de HomePage ...
             <CounterLeaf />
+            <ColorBox />
 	      </div>
 	      """;
 	}

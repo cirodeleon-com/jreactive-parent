@@ -12,7 +12,7 @@ import com.ciro.jreactive.router.Route;
 
 @Component
 @Route(path = "/newStateTest")
-public class NewStateTestPage extends HtmlComponent {
+public class NewStateTestPage extends AppPage {
 
     // 1) @State SIN Type ni $()
     @State

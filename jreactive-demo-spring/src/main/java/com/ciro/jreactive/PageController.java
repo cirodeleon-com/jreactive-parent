@@ -10,7 +10,7 @@ import java.util.Map;
 @RestController
 public class PageController {
 
-    private final PageResolver pageResolver;
+    private final PageResolver pageResolver; // (Opcional mantenerlo si no se usa aquí, pero JrxHttpApi lo usa internamente)
     private final JrxHttpApi api;
 
     public PageController(PageResolver pageResolver,
@@ -22,40 +22,24 @@ public class PageController {
 
     @GetMapping(value = {
             "/",
-            "/{x:^(?!js|ws).*$}",
-            "/{x:^(?!js|ws).*$}/**"
+            "/{x:^(?!js|ws|css|static).*$}",        // He añadido 'static' por si acaso sirves css/img
+            "/{x:^(?!js|ws|css|static).*$}/**"
     }, produces = MediaType.TEXT_HTML_VALUE)
     public String page(HttpServletRequest req,
                        @RequestHeader(value = "X-Partial", required = false) String partial) {
-        return render(req, partial);
-    }
-
-    /** Lógica común de render. */
-    private String render(HttpServletRequest req, String partial) {
+        
+        // 1. Capturar contexto
         String path = req.getRequestURI();
         String sessionId = req.getSession(true).getId();
 
-        // Mantener comportamiento actual (aunque evict hoy sea NO-OP)
-        //if (partial == null) {
-        //    pageResolver.evict(sessionId, path);
-        //}
+        // 2. Lógica de SPA:
+        // Si X-Partial == "1" (viene del JS) -> renderLayout = false
+        // Si es carga normal (viene del navegador) -> renderLayout = true
+        boolean renderLayout = !"1".equals(partial);
 
-        String html = api.render(sessionId, path);
-
-        if (partial != null) return html;
-
-        return """
-        <!DOCTYPE html>
-        <html>
-          <head><meta charset="UTF-8"><title>JReactive Demo</title></head>
-          <body>
-            <header><a data-router href="/">🏠 Home</a> | <a data-router href="/other">📄 Other</a></header>
-            <main id="app">%s</main>
-            <footer><label>este es el fooooter</label></footer>
-            <script src="/js/jreactive-runtime.js"></script>
-          </body>
-        </html>
-        """.formatted(html);
+        // 3. Delegación total:
+        // La API buscará el componente y su @Layout si corresponde.
+        return api.render(sessionId, path, renderLayout);
     }
 
     @PostMapping(
@@ -69,11 +53,9 @@ public class PageController {
 
         System.out.println("➡️ JRX CALL qualified=" + qualified + " body=" + body);
 
-        // reconstruir la página desde el Referer (fallback "/")
         String ref = req.getHeader("Referer");
         String path = (ref == null) ? "/" : ref.replaceFirst("https?://[^/]+", "");
 
-        // Normalizar: quitar query y hash
         int q = path.indexOf('?');
         if (q != -1) path = path.substring(0, q);
         int hash = path.indexOf('#');

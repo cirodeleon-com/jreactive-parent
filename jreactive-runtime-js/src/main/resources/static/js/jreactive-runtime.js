@@ -877,7 +877,65 @@ function applySetChange(arr, ch) {
 
 
 
+/* ------------------------------------------------------------------
+ * 8. CLIENT HOOKS (Nuevo: Vigilante del DOM)
+ * ------------------------------------------------------------------ */
 
+// 1. El Vigilante (Detecta cambios en el HTML)
+const domObserver = new MutationObserver((mutations) => {
+    mutations.forEach((mutation) => {
+        // A) Elementos NUEVOS (Mount)
+        mutation.addedNodes.forEach((node) => {
+            if (node.nodeType === 1) { 
+                checkMount(node); 
+                if (node.querySelectorAll) {
+                    node.querySelectorAll('[client\\:mount]').forEach(checkMount);
+                }
+            }
+        });
+        // B) Elementos BORRADOS (Unmount)
+        mutation.removedNodes.forEach((node) => {
+            if (node.nodeType === 1) {
+                checkUnmount(node);
+                if (node.querySelectorAll) {
+                    node.querySelectorAll('[client\\:unmount]').forEach(checkUnmount);
+                }
+            }
+        });
+    });
+});
+
+// 2. Ejecutar código JS de forma segura
+function executeHook(el, attrName) {
+    const code = el.getAttribute(attrName);
+    if (!code) return;
+    try {
+        // Creamos la función donde 'this' es el elemento HTML
+        const fn = new Function(code);
+        fn.call(el); 
+    } catch (e) {
+        console.error(`❌ Hook Error (${attrName}):`, e, el);
+    }
+}
+
+// 3. Chequeo individual (Evita repeticiones)
+function checkMount(el) {
+    if (el.hasAttribute && el.hasAttribute('client:mount')) {
+        if (!el._jrxMounted) {
+            el._jrxMounted = true;
+            executeHook(el, 'client:mount');
+        }
+    }
+}
+
+function checkUnmount(el) {
+    if (el.hasAttribute && el.hasAttribute('client:unmount')) {
+        if (el._jrxMounted) {
+            executeHook(el, 'client:unmount');
+            el._jrxMounted = false;
+        }
+    }
+}
 
   /* ------------------------------------------------------------------
    * 6. Primera pasada cuando el DOM está listo
@@ -891,6 +949,10 @@ document.addEventListener('DOMContentLoaded', () => {
   setupEventBindings();
   setupGlobalErrorFeedback();
   //connectWs(window.location.pathname);
+  
+  domObserver.observe(document.body, { childList: true, subtree: true });
+  document.querySelectorAll('[client\\:mount]').forEach(checkMount);
+  
   connectTransport(window.location.pathname);
   
 });
