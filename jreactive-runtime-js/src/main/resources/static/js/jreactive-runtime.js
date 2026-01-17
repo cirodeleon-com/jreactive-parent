@@ -458,9 +458,33 @@ function getKey(item, idx) {
 
 /** Crea nodos DOM a partir del HTML procesado */
 function htmlToNodes(html) {
-  const span = document.createElement('span');
-  span.innerHTML = html;
-  return [...span.childNodes];
+  const cleanHtml = html.trim();
+  
+  // 1. Detectamos si es una celda (th/td) o una sección estructural (tr/thead/etc)
+  const isCell = /^<(td|th)/i.test(cleanHtml);
+  const isTableSection = /^<(tr|thead|tbody|tfoot)/i.test(cleanHtml);
+  
+  // 2. Creamos el contenedor inteligente
+  const container = document.createElement(isCell || isTableSection ? 'table' : 'div');
+  
+  if (isCell) {
+    // 🔥 ESCUDO DE CELDAS: Envolvemos la celda en un TR temporal para que 
+    // el navegador no genere filas automáticas por cada una.
+    container.innerHTML = `<tr>${cleanHtml}</tr>`;
+  } else {
+    container.innerHTML = cleanHtml;
+  }
+
+  // 3. Extracción precisa de los nodos
+  let target = container;
+  if (isCell) {
+    // Extraemos solo el contenido de la fila (los TH o TD limpios)
+    target = container.querySelector('tr'); 
+  } else if (isTableSection) {
+    target = container.querySelector('tbody') || container;
+  }
+
+  return Array.from(target.childNodes);
 }
 
 /** Rellena {{index}} y placeholders de alias en un fragmento HTML  */
@@ -490,7 +514,7 @@ function renderTemplate(rawHtml, item, i, alias) {
       () => escapeHtml(String(item ?? ''))
     );
   }
-  return html;
+  return html.trim();
 }
 
 
@@ -556,94 +580,94 @@ function updateEachBlocks() {
       }
 
       /* 3-a) si no existía (o forzamos null arriba), renderiza nodos */
-      if (!entry) {
-        const html  = renderTemplate(tpl.innerHTML, item, idx, alias);
-        const nodes = htmlToNodes(html);
+     if (!entry) {
+        const html = renderTemplate(tpl.innerHTML, item, idx, alias);
+        
+        // --- 🛡️ ESCUDO DE TABLAS Y CELDAS ---
+        const cleanHtml = html.trim();
+        const isCell = /^<(td|th)/i.test(cleanHtml);
+        const isTablePart = /^<(tr|thead|tbody|tfoot)/i.test(cleanHtml);
+        
+        const tempContainer = document.createElement(isCell || isTablePart ? 'table' : 'div');
+        if (isCell) tempContainer.innerHTML = `<tr>${cleanHtml}</tr>`;
+        else tempContainer.innerHTML = cleanHtml;
 
-        /* ---- 3-a-1) #each anidados que usan el alias padre -------- */
-        nodes.forEach(n => {
-          if (n.nodeType !== 1) return; // no es ELEMENT_NODE
+        const searchRoot = isCell ? tempContainer.querySelector('tr') :
+                           (isTablePart && tempContainer.querySelector('tbody')) ? tempContainer.querySelector('tbody') :
+                           tempContainer;
 
-          n.querySelectorAll?.('template[data-each]').forEach(innerTpl => {
+        const nodes = Array.from(searchRoot.childNodes);
+
+        /* 1. Procesar #each anidados (Ahora sobre searchRoot) */
+        searchRoot.querySelectorAll('template[data-each]').forEach(innerTpl => {
             const cfg = (innerTpl.dataset.each || '').split(':');
             const innerListExprRaw = (cfg[0] || '').trim();
-            const innerAliasRaw    = (cfg[1] || '').trim();
-            const innerAlias       = innerAliasRaw || 'this';
+            const innerAlias = (cfg[1] || '').trim() || 'this';
 
-            // Solo procesamos los que hacen referencia al alias padre:
-            if (!innerListExprRaw ||
-                (innerListExprRaw !== alias &&
-                 !innerListExprRaw.startsWith(alias + '.'))) {
-              return;
-            }
+            if (!innerListExprRaw || (innerListExprRaw !== alias && !innerListExprRaw.startsWith(alias + '.'))) return;
 
             const innerData = resolveListInContext(innerListExprRaw, alias, item);
             const innerFrag = document.createDocumentFragment();
 
             innerData.forEach((childItem, childIdx) => {
-              const innerHtml  = renderTemplate(innerTpl.innerHTML, childItem, childIdx, innerAlias);
-              const innerNodes = htmlToNodes(innerHtml);
+                const innerHtml = renderTemplate(innerTpl.innerHTML, childItem, childIdx, innerAlias);
+                const innerNodes = htmlToNodes(innerHtml);
 
-              // #if / #else internos
-              innerNodes.forEach(nn => {
-                if (nn.nodeType !== 1) return;
-                nn.querySelectorAll?.('template[data-if], template[data-else]')
-                  .forEach(t => {
-                    const cond   = t.dataset.if || t.dataset.else;
-                    const isElse = t.hasAttribute('data-else');
+                innerNodes.forEach(nn => {
+                    if (nn.nodeType !== 1) return;
+                    nn.querySelectorAll?.('template[data-if], template[data-else]').forEach(t => {
+                        const cond = t.dataset.if || t.dataset.else;
+                        const isElse = t.hasAttribute('data-else');
+                        let show;
+                        if (cond === innerAlias) show = !!childItem;
+                        else if (cond && cond.startsWith(innerAlias + '.')) {
+                            const path = cond.split('.').slice(1);
+                            let v = childItem;
+                            for (const k2 of path) { if (v == null) break; v = v[k2]; }
+                            show = !!v;
+                        } else show = resolveInContext(cond, alias, item);
 
-                    let show;
-                    if (cond === innerAlias) {
-                      show = !!childItem;
-                    } else if (cond && cond.startsWith(innerAlias + '.')) {
-                      const path = cond.split('.').slice(1);
-                      let v = childItem;
-                      for (const key2 of path) {
-                        if (v == null) break;
-                        v = v[key2];
-                      }
-                      show = !!v;
-                    } else {
-                      show = resolveInContext(cond, alias, item);
-                    }
-
-                    if ((show && !isElse) || (!show && isElse)) mount(t);
-                    else                                        unmount(t);
-                    t.remove();
-                  });
-              });
-
-              innerFrag.append(...innerNodes);
+                        if ((show && !isElse) || (!show && isElse)) mount(t);
+                        else unmount(t);
+                        t.remove();
+                    });
+                });
+                innerFrag.append(...innerNodes);
             });
-
             innerTpl.replaceWith(innerFrag);
-          });
         });
 
-        /* ---- 3-a-2) evalúa data-if / data-else en contexto del alias padre ---- */
+        /* 2. Procesar #if / #else anidados (Ahora sobre searchRoot) */
+        searchRoot.querySelectorAll('template[data-if], template[data-else]').forEach(innerTpl => {
+            const cond = innerTpl.dataset.if || innerTpl.dataset.else;
+            const isElse = innerTpl.hasAttribute('data-else');
+            const show = resolveInContext(cond, alias, item);
+            if ((show && !isElse) || (!show && isElse)) mount(innerTpl);
+            else unmount(innerTpl);
+            innerTpl.remove();
+        });
+
+        // 🔥 ACTIVA LA INTERACTIVIDAD (ELIMINAR)
         nodes.forEach(n => {
-          if (n.nodeType === 1) {   // ELEMENT_NODE
-            n.querySelectorAll?.('template[data-if], template[data-else]')
-             .forEach(innerTpl => {
-               const cond   = innerTpl.dataset.if || innerTpl.dataset.else;
-               const isElse = innerTpl.hasAttribute('data-else');
-               const show   = resolveInContext(cond, alias, item);
-
-               if ((show && !isElse) || (!show && isElse)) mount(innerTpl);
-               else                                        unmount(innerTpl);
-
-               innerTpl.remove();
-             });
+          if (n.nodeType === 1) { 
+            n._jrxScope = { [alias]: item }; // Inyectamos 'row' en el nodo
+            hydrateEventDirectives(n); 
+            setupEventBindings(n); 
+          }
+        });
+        
+        nodes.forEach(n => {
+          if (n.nodeType === 1) { // Solo elementos HTML
+            n._jrxScope = { [alias]: item }; // Guardamos { row: userObject }
+            hydrateEventDirectives(n); 
+            setupEventBindings(n); 
           }
         });
 
-        // Guardamos 'item' para comparar en el futuro
         entry = { nodes, item };
       } else {
-         // Si reutilizamos, actualizamos la referencia
-         entry.item = item;
+        entry.item = item;
       }
-
       frag.append(...entry.nodes);
       next.set(key, entry);
       prev.delete(key);
@@ -1256,7 +1280,18 @@ function parseValue(el) {
  *  buildValue  – ahora prioriza LO QUE HAY EN EL FORMULARIO
  *                 y sólo si no existe, recurre al estado
  * ────────────────────────────────────────────────────────────── */
-async function buildValue(nsRoot) {
+async function buildValue(nsRoot, el) {
+	
+	//  BUSCAR EN EL ALCANCE LOCAL (Para resolver 'row')
+  if (el) {
+    let current = el;
+    while (current) {
+        if (current._jrxScope && current._jrxScope[nsRoot] !== undefined) {
+            return deepClone(current._jrxScope[nsRoot]);
+        }
+        current = current.parentElement;
+    }
+  }
 
   // 0) root lógico = última parte (ej. "HelloLeaf#1.order" → "order")
   const logicalRoot = nsRoot.split('.').at(-1);
@@ -1408,7 +1443,7 @@ function setupEventBindings() {
         // 👇 Igual que antes: construir args con buildValue (soporta archivos)
         const args = [];
         for (const p of paramList) {
-          args.push(await buildValue(p));
+          args.push(await buildValue(p,el));
         }
 
         let ok      = true;
@@ -1523,7 +1558,7 @@ function setupEventBindings() {
 
       const args = [];
       for (const p of paramList) {
-        args.push(await buildValue(p));
+        args.push(await buildValue(p,el));
       }
 
       const qualified = el.dataset.call;

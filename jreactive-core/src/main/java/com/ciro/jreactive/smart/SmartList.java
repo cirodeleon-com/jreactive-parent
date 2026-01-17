@@ -5,6 +5,7 @@ import java.util.Collection;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Consumer;
+import java.util.function.Predicate; // 🔥 Necesario para removeIf
 
 public class SmartList<E> extends ArrayList<E> {
 
@@ -31,15 +32,13 @@ public class SmartList<E> extends ArrayList<E> {
         }
     }
 
-    // --- Operaciones Unitarias Corregidas ---
+    // --- Operaciones Unitarias ---
 
     @Override
     public synchronized boolean add(E e) {
         int index = this.size();
         boolean result = super.add(e);
-        if (result) {
-            fire("ADD", index, e);
-        }
+        if (result) fire("ADD", index, e);
         return result;
     }
 
@@ -52,7 +51,7 @@ public class SmartList<E> extends ArrayList<E> {
     @Override
     public synchronized E remove(int index) {
         E removed = super.remove(index);
-        fire("REMOVE", index, null);
+        fire("REMOVE", index, null); // 🔔 Este es el que avisa al JS
         return removed;
     }
 
@@ -60,8 +59,7 @@ public class SmartList<E> extends ArrayList<E> {
     public synchronized boolean remove(Object o) {
         int index = this.indexOf(o);
         if (index >= 0) {
-            super.remove(index);
-            fire("REMOVE", index, null);
+            this.remove(index); // Llamamos a remove(int) para centralizar el fire
             return true;
         }
         return false;
@@ -81,21 +79,23 @@ public class SmartList<E> extends ArrayList<E> {
             fire("CLEAR", 0, null);
         }
     }
-    
-    public synchronized void update(int index) {
-        if (index >= 0 && index < this.size()) {
-            this.set(index, this.get(index));
-        }
-    }
 
-    // --- Soporte para subList y Operaciones Masivas ---
+    // --- 🔥 LA CIRUGÍA: removeIf Reactivo ---
 
     @Override
-    protected synchronized void removeRange(int fromIndex, int toIndex) {
-        for (int i = toIndex - 1; i >= fromIndex; i--) {
-            this.remove(i); 
+    public synchronized boolean removeIf(Predicate<? super E> filter) {
+        boolean modified = false;
+        // Iteramos hacia atrás para que los índices no se muevan mientras borramos
+        for (int i = size() - 1; i >= 0; i--) {
+            if (filter.test(get(i))) {
+                this.remove(i); // 🔥 Al llamar a this.remove(i), se dispara el fire("REMOVE")
+                modified = true;
+            }
         }
+        return modified;
     }
+
+    // --- Operaciones Masivas (Ya las tenías bien, pero aseguramos integridad) ---
 
     @Override
     public synchronized boolean removeAll(Collection<?> c) {
