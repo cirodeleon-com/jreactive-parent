@@ -31,11 +31,14 @@ public class TableTestPage extends AppPage {
         new UserData(1, "Ciro", "ciro@jreactive.com"),
         new UserData(2, "Compa AI", "bot@jreactive.com")
     ));
+    
+    @State
+    private int idCounter = 100;
 
     @Call
     public void addUser() {
-        int nextId = users.size() + 1;
-        users.add(new UserData(nextId, "Nuevo " + nextId, "user" + nextId + "@test.com"));
+    	idCounter++;
+        users.add(new UserData(idCounter, "Nuevo " + idCounter, "user" + idCounter + "@test.com"));
     }
 
     @Call

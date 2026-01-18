@@ -118,8 +118,24 @@ public class JrxProtocolHandler {
         return fieldCache.computeIfAbsent(c, x -> new ConcurrentHashMap<>()).computeIfAbsent(n, x -> {
             Class<?> curr = c;
             while (curr != null && curr != Object.class) {
-                try { Field f = curr.getDeclaredField(n); f.setAccessible(true); return f; }
-                catch (NoSuchFieldException e) { curr = curr.getSuperclass(); }
+                try {
+                    Field f = curr.getDeclaredField(n);
+                    
+                    // 🔥 LA CLAVE DE SEGURIDAD:
+                    // Solo permitimos campos que el desarrollador marcó como reactivos.
+                    // Esto evita que modifiquen campos internos como 'password' o 'isAdmin'.
+                    if (f.isAnnotationPresent(com.ciro.jreactive.State.class) || 
+                        f.isAnnotationPresent(com.ciro.jreactive.Bind.class)) {
+                        
+                        f.setAccessible(true);
+                        return f;
+                    } else {
+                        log.warn("🚨 Intento de acceso no autorizado al campo: {} en la clase {}", n, c.getName());
+                        return null; 
+                    }
+                } catch (NoSuchFieldException e) {
+                    curr = curr.getSuperclass();
+                }
             }
             return null;
         });

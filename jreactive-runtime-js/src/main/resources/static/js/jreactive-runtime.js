@@ -459,29 +459,34 @@ function getKey(item, idx) {
 /** Crea nodos DOM a partir del HTML procesado */
 function htmlToNodes(html) {
   const cleanHtml = html.trim();
-  
-  // 1. Detectamos si es una celda (th/td) o una sección estructural (tr/thead/etc)
   const isCell = /^<(td|th)/i.test(cleanHtml);
-  const isTableSection = /^<(tr|thead|tbody|tfoot)/i.test(cleanHtml);
+  const isTablePart = /^<(tr|thead|tbody|tfoot)/i.test(cleanHtml);
   
-  // 2. Creamos el contenedor inteligente
-  const container = document.createElement(isCell || isTableSection ? 'table' : 'div');
+  // 1. Creamos el útero correcto
+  const container = document.createElement(isCell || isTablePart ? 'table' : 'div');
   
   if (isCell) {
-    // 🔥 ESCUDO DE CELDAS: Envolvemos la celda en un TR temporal para que 
-    // el navegador no genere filas automáticas por cada una.
-    container.innerHTML = `<tr>${cleanHtml}</tr>`;
-  } else {
-    container.innerHTML = cleanHtml;
+    // Si es celda, la blindamos en un TR para que el navegador no la mueva
+    container.innerHTML = `<tbody><tr>${cleanHtml}</tr></tbody>`;
+    return Array.from(container.querySelector('tr').childNodes);
   }
 
-  // 3. Extracción precisa de los nodos
+  container.innerHTML = cleanHtml;
+
+  // 2. Extracción Inteligente
+  // Si insertamos un TR, el navegador lo metió dentro de un TBODY.
+  // Pero si el usuario ya mandó un THEAD/TBODY/TFOOT, no hay que buscar el TBODY automático.
   let target = container;
-  if (isCell) {
-    // Extraemos solo el contenido de la fila (los TH o TD limpios)
-    target = container.querySelector('tr'); 
-  } else if (isTableSection) {
-    target = container.querySelector('tbody') || container;
+  
+  if (isTablePart) {
+    const firstTag = cleanHtml.match(/^<([a-z0-9]+)/i)?.[1].toLowerCase();
+    if (firstTag === 'tr') {
+      // Si mandamos un tr, el padre real es el tbody que creó el navegador
+      target = container.querySelector('tbody');
+    } else {
+      // Si mandamos thead/tbody/tfoot, el padre es el table (container)
+      target = container;
+    }
   }
 
   return Array.from(target.childNodes);
@@ -547,63 +552,60 @@ function resolveInContext(expr, alias, item) {
 function updateEachBlocks() {
   document.querySelectorAll('template[data-each]').forEach(tpl => {
 
-    /* 1· clave de la lista y alias ---------------------------------- */
+    /* 1. Extracción de configuración */
     const [listExprRaw, aliasRaw] = tpl.dataset.each.split(':');
     const listExpr = listExprRaw ? listExprRaw.trim() : '';
     const alias    = aliasRaw ? aliasRaw.trim() : 'this';
 
-    // Puede ser "FireTestLeaf#1.orders" o "user.orders" o "ord.items"
     let raw = resolveExpr(listExpr);
     const data = Array.isArray(raw) ? raw : [];
 
-    /* 2· sentinelas & mapas ---------------------------------------- */
+    /* 2. Inicialización de centinelas */
     if (!tpl._start) {
       tpl._start = document.createComment('each-start');
       tpl._end   = document.createComment('each-end');
       tpl.after(tpl._end);
       tpl.after(tpl._start);
     }
-    const prev = tpl._keyMap || new Map();       // key → {nodes, item}
+    const prev = tpl._keyMap || new Map();
     const next = new Map();
     const frag = document.createDocumentFragment();
 
-    /* 3 · recorrido con reuse --------------------------------------- */
+    /* 3 · recorrido con reuse inteligente --------------------------- */
     data.forEach((item, idx) => {
-      const key = getKey(item, idx);            // helper: usa item.id o idx
+      const key = getKey(item, idx); 
       let entry = prev.get(key);
 
-      // 🔥 FIX: Detectar si el contenido cambió (SET/Update)
-      // Si el nodo existe (entry) pero el dato es diferente, lo borramos para regenerarlo.
+      // 🔥 FIX: Detectar si el contenido real cambió (SET/Update)
+      // Si el nodo existe pero el valor es diferente, forzamos la regeneración.
+      // Esto arregla el "SET" en el Laboratorio de Deltas.
       if (entry && entry.item !== item) {
           entry.nodes.forEach(n => n.remove());
           entry = null; 
       }
 
-      /* 3-a) si no existía (o forzamos null arriba), renderiza nodos */
-     if (!entry) {
+      if (!entry) {
         const html = renderTemplate(tpl.innerHTML, item, idx, alias);
         
-        // --- 🛡️ ESCUDO DE TABLAS Y CELDAS ---
+        // --- 🛡️ ESCUDO DE TABLAS (Arregla las columnas horizontales) ---
         const cleanHtml = html.trim();
         const isCell = /^<(td|th)/i.test(cleanHtml);
         const isTablePart = /^<(tr|thead|tbody|tfoot)/i.test(cleanHtml);
         
         const tempContainer = document.createElement(isCell || isTablePart ? 'table' : 'div');
-        if (isCell) tempContainer.innerHTML = `<tr>${cleanHtml}</tr>`;
+        if (isCell) tempContainer.innerHTML = `<tbody><tr>${cleanHtml}</tr></tbody>`;
         else tempContainer.innerHTML = cleanHtml;
 
-        const searchRoot = isCell ? tempContainer.querySelector('tr') :
-                           (isTablePart && tempContainer.querySelector('tbody')) ? tempContainer.querySelector('tbody') :
+        // Buscador inteligente para que las columnas no salgan verticales
+        const searchRoot = isCell ? tempContainer.querySelector('tr') : 
+                           (isTablePart && tempContainer.querySelector('tbody')) ? tempContainer.querySelector('tbody') : 
                            tempContainer;
 
-        const nodes = Array.from(searchRoot.childNodes);
-
-        /* 1. Procesar #each anidados (Ahora sobre searchRoot) */
+        /* 3-a-1) Procesar #each anidados (Búsqueda profunda) */
         searchRoot.querySelectorAll('template[data-each]').forEach(innerTpl => {
             const cfg = (innerTpl.dataset.each || '').split(':');
             const innerListExprRaw = (cfg[0] || '').trim();
             const innerAlias = (cfg[1] || '').trim() || 'this';
-
             if (!innerListExprRaw || (innerListExprRaw !== alias && !innerListExprRaw.startsWith(alias + '.'))) return;
 
             const innerData = resolveListInContext(innerListExprRaw, alias, item);
@@ -612,32 +614,12 @@ function updateEachBlocks() {
             innerData.forEach((childItem, childIdx) => {
                 const innerHtml = renderTemplate(innerTpl.innerHTML, childItem, childIdx, innerAlias);
                 const innerNodes = htmlToNodes(innerHtml);
-
-                innerNodes.forEach(nn => {
-                    if (nn.nodeType !== 1) return;
-                    nn.querySelectorAll?.('template[data-if], template[data-else]').forEach(t => {
-                        const cond = t.dataset.if || t.dataset.else;
-                        const isElse = t.hasAttribute('data-else');
-                        let show;
-                        if (cond === innerAlias) show = !!childItem;
-                        else if (cond && cond.startsWith(innerAlias + '.')) {
-                            const path = cond.split('.').slice(1);
-                            let v = childItem;
-                            for (const k2 of path) { if (v == null) break; v = v[k2]; }
-                            show = !!v;
-                        } else show = resolveInContext(cond, alias, item);
-
-                        if ((show && !isElse) || (!show && isElse)) mount(t);
-                        else unmount(t);
-                        t.remove();
-                    });
-                });
                 innerFrag.append(...innerNodes);
             });
             innerTpl.replaceWith(innerFrag);
         });
 
-        /* 2. Procesar #if / #else anidados (Ahora sobre searchRoot) */
+        /* 3-a-2) Procesar #if / #else anidados (Búsqueda profunda) */
         searchRoot.querySelectorAll('template[data-if], template[data-else]').forEach(innerTpl => {
             const cond = innerTpl.dataset.if || innerTpl.dataset.else;
             const isElse = innerTpl.hasAttribute('data-else');
@@ -647,38 +629,30 @@ function updateEachBlocks() {
             innerTpl.remove();
         });
 
-        // 🔥 ACTIVA LA INTERACTIVIDAD (ELIMINAR)
+        const nodes = Array.from(searchRoot.childNodes);
+
+        // Activar eventos y alcance (Scope) para el botón Eliminar
         nodes.forEach(n => {
           if (n.nodeType === 1) { 
-            n._jrxScope = { [alias]: item }; // Inyectamos 'row' en el nodo
-            hydrateEventDirectives(n); 
-            setupEventBindings(n); 
-          }
-        });
-        
-        nodes.forEach(n => {
-          if (n.nodeType === 1) { // Solo elementos HTML
-            n._jrxScope = { [alias]: item }; // Guardamos { row: userObject }
+            n._jrxScope = { [alias]: item };
             hydrateEventDirectives(n); 
             setupEventBindings(n); 
           }
         });
 
         entry = { nodes, item };
-      } else {
-        entry.item = item;
       }
+
       frag.append(...entry.nodes);
       next.set(key, entry);
       prev.delete(key);
     });
-
-    /* 4· remueve nodos que ya no existen --------------------------- */
+    /* 4. Limpieza de nodos eliminados (Aquí se arregla el bug del último elemento) */
     prev.forEach(e => e.nodes.forEach(n => n.remove()));
 
-    /* 5· inserta fragmento resultante ------------------------------ */
+    /* 5. Inserción en el DOM real */
     tpl._end.before(frag);
-    tpl._keyMap = next;              // reemplaza mapa viejo
+    tpl._keyMap = next;
   });
 }
 

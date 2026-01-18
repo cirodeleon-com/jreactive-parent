@@ -33,7 +33,7 @@ public class HomePage extends AppPage {
 	        <HelloLeaf ref="hello"/>
 	        <ClockLeaf ref="reloj" :greet="hello.newFruit" /> 
 			<FireTestLeaf/>   
-			// ... dentro del template de HomePage ...
+			
             <CounterLeaf />
             <ColorBox />
 	      </div>
