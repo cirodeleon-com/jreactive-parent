@@ -816,7 +816,26 @@ function resolveTarget(key) {
   
 function applyDelta(key, type, changes) {
   const target = resolveTarget(key);
-  if (!target) return;
+  if (!target && type !== 'json') return;
+  
+  if (type === 'json') {
+      // 🔥 PARCHE CSR: Fusionar los cambios en el estado local
+      // 'changes' aquí es el mapa {count: 6}
+      const deltas = Array.isArray(changes) ? changes[0] : changes;
+      
+      // Actualizamos el estado global para cada sub-llave
+      Object.keys(deltas).forEach(subKey => {
+          const fullKey = `${key}.${subKey}`;
+          state[fullKey] = deltas[subKey];
+          
+          // También actualizamos el objeto padre en el state por si el renderizador lo usa
+          if (state[key]) state[key][subKey] = deltas[subKey];
+      });
+
+      // Forzamos el renderizado del componente @Client
+      applyStateForKey(key, state[key]); 
+      return;
+  }
 
   if (!Array.isArray(changes)) changes = [];
 

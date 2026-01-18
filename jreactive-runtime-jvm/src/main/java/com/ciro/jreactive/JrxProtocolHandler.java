@@ -26,16 +26,39 @@ public class JrxProtocolHandler {
     private final List<Runnable> disposables = new ArrayList<>();
     private final Map<String, Runnable> activeSmartCleanups = new ConcurrentHashMap<>();
     private final Map<Class<?>, Map<String, Field>> fieldCache = new ConcurrentHashMap<>();
+    private final Map<ReactiveVar<?>, HtmlComponent> owners = new IdentityHashMap<>();
 
     private record Event(String k, Object v) {}
     private record DeltaPacket(String type, List<?> changes) {}
 
     public JrxProtocolHandler(ViewNode root, ObjectMapper m, ScheduledExecutorService s, boolean bp, int mq, int fi) {
         this.mapper = m; this.scheduler = s; this.backpressureEnabled = bp; this.maxQueue = mq; this.flushIntervalMs = fi;
-        this.bindings = collect(root);
+        
+        // 🔥 Actualizamos la llamada a collect para llenar el mapa de dueños
+        this.bindings = collect(root); 
+
         bindings.forEach((k, v) -> {
             updateSmartSubscription(k, v.get());
-            disposables.add(v.onChange(val -> { updateSmartSubscription(k, val); broadcast(k, val); }));
+            disposables.add(v.onChange(val -> {
+                updateSmartSubscription(k, val);
+                
+                // 🕵️ Buscamos si esta variable pertenece a un componente @Client
+                HtmlComponent owner = owners.get(v);
+                
+                if (owner != null && owner.getClass().isAnnotationPresent(com.ciro.jreactive.annotations.Client.class)) {
+                    // Extraemos la clave local (ej: "CounterLeaf#1.count" -> "count")
+                    String localKey = k.contains(".") ? k.substring(k.lastIndexOf('.') + 1) : k;
+                    
+                    // 🚀 ENVIAMOS DELTA JSON (Formato Fase 3)
+                    Map<String, Object> delta = Map.of(localKey, val);
+                    broadcastDelta(owner.getId(), "json", delta);
+                    
+                    System.out.println("⚛️ JSON Delta enviado para: " + owner.getId() + " -> " + delta);
+                } else {
+                    // Comportamiento normal (SSR o variables globales)
+                    broadcast(k, val);
+                }
+            }));
         });
     }
 
@@ -255,10 +278,30 @@ public class JrxProtocolHandler {
         }
     }
     private String jsonS(String k, Object v) throws IOException { return buildM(k, v, null); }
+    
+    /* === En JrxProtocolHandler.java === */
+
     private Map<String, ReactiveVar<?>> collect(ViewNode n) {
         Map<String, ReactiveVar<?>> m = new HashMap<>();
-        if (n instanceof ViewLeaf l) m.putAll(l.bindings());
-        else if (n instanceof ViewComposite c) c.children().forEach(ch -> m.putAll(collect(ch)));
+
+        // 🕵️ PASO 1: Si es un HtmlComponent, registramos sus variables y navegamos a sus hijos
+        if (n instanceof HtmlComponent hc) {
+            // Registramos variables propias
+            Map<String, ReactiveVar<?>> selfBinds = hc.bindings();
+            selfBinds.values().forEach(rv -> owners.put(rv, hc));
+            m.putAll(selfBinds);
+
+            // 🔥 CRITICAL: Navegamos por los hijos del componente (esto faltaba)
+            for (HtmlComponent child : hc._children()) {
+                m.putAll(collect(child));
+            }
+        }
+
+        // 🕵️ PASO 2: Mantener compatibilidad con estructuras ViewComposite puras
+        if (n instanceof ViewComposite c) {
+            c.children().forEach(ch -> m.putAll(collect(ch)));
+        }
+        
         return m;
     }
 }

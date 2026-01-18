@@ -485,4 +485,23 @@ public abstract class HtmlComponent extends ViewLeaf implements java.io.Serializ
         }
         return result;
     }
+    
+    /* === En HtmlComponent.java === */
+
+    /**
+     * Calcula qué campos @State han cambiado y devuelve un mapa con los deltas.
+     * Útil para optimizar el tráfico de componentes @Client.
+     */
+    public synchronized Map<String, Object> _getStateDeltas() {
+        Map<String, Object> deltas = new HashMap<>();
+        for (String key : stateKeys) {
+            try {
+                Object newValue = getFieldValueByName(key);
+                if (hasChanged(key, newValue)) {
+                    deltas.put(key, newValue);
+                }
+            } catch (Exception ignored) {}
+        }
+        return deltas;
+    }
 }
