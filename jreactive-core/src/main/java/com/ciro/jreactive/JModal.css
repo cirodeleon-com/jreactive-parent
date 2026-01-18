@@ -1,0 +1,39 @@
+/* JModal.css */
+.jrx-modal-backdrop {
+    position: fixed;
+    top: 0; left: 0;
+    width: 100vw; height: 100vh;
+    background: rgba(0, 0, 0, 0.5);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 10000;
+    backdrop-filter: blur(2px);
+}
+
+.jrx-modal-content {
+    background: white;
+    padding: 0;
+    border-radius: 8px;
+    box-shadow: 0 10px 25px rgba(0,0,0,0.2);
+    min-width: 300px;
+    max-width: 90%;
+    animation: jrx-modal-slide 0.3s ease-out;
+}
+
+.jrx-modal-header {
+    padding: 15px;
+    border-bottom: 1px solid #eee;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.jrx-modal-body {
+    padding: 20px;
+}
+
+@keyframes jrx-modal-slide {
+    from { transform: translateY(-20px); opacity: 0; }
+    to { transform: translateY(0); opacity: 1; }
+}

@@ -1,4 +1,3 @@
-/* === File: jreactive-core\src\main\java\com\ciro\jreactive\HtmlComponent.java === */
 package com.ciro.jreactive;
 
 import java.io.InputStream;
@@ -105,6 +104,9 @@ public abstract class HtmlComponent extends ViewLeaf implements java.io.Serializ
             } catch (Exception e) {
                 // Ignorar
             }
+        }
+        for (HtmlComponent child : _children()) {
+            child._captureStateSnapshot();
         }
     }
 
@@ -280,6 +282,11 @@ public abstract class HtmlComponent extends ViewLeaf implements java.io.Serializ
                 System.err.println("Error Smart-Sync '" + key + "': " + e.getMessage());
             }
         }
+        
+        for (HtmlComponent child : _children()) {
+            child._syncState();
+        }
+        
     }
 
     private boolean hasChanged(String key, Object newVal) {
@@ -388,6 +395,20 @@ public abstract class HtmlComponent extends ViewLeaf implements java.io.Serializ
         try { return target.getConstructor(String.class).newInstance(raw); }
         catch (Exception ignore) {}
         return raw;
+    }
+    
+    @SuppressWarnings("unchecked")
+    public <T extends HtmlComponent> T findChild(String ref, Class<T> type) {
+        for (HtmlComponent child : _children()) {
+            // En JReactive, el atributo 'ref' del template se convierte en el ID del componente
+            if (ref.equals(child.getId()) && type.isInstance(child)) {
+                return (T) child;
+            }
+            // Búsqueda recursiva en profundidad
+            T found = child.findChild(ref, type);
+            if (found != null) return found;
+        }
+        return null;
     }
     
     @SuppressWarnings("unchecked")

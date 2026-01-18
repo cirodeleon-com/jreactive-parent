@@ -29,6 +29,7 @@ public class HomePage extends AppPage {
 	        <a href="/delta-test" data-router>ir a delta test</a>
 	        <a href="/hook-test" data-router>ir a hook test</a>
 	        <a href="/table-test" data-router>ir a table test</a>
+	        <a href="/modal-test" data-router>ir a modal test</a>
 	        <HelloLeaf />
 	        <HelloLeaf ref="hello"/>
 	        <ClockLeaf ref="reloj" :greet="hello.newFruit" /> 

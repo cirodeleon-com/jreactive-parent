@@ -283,12 +283,18 @@ public class JrxPushHub {
         Object typedValue = mapper.convertValue(rawValue, mapper.constructType(f.getGenericType()));
         f.set(target, typedValue);
     }
-
+    
     private java.lang.reflect.Field findField(Class<?> clazz, String name) {
         Class<?> current = clazz;
         while (current != null && current != Object.class) {
             try {
-                return current.getDeclaredField(name);
+                java.lang.reflect.Field f = current.getDeclaredField(name);
+                // 🛡️ Filtro de seguridad obligatorio para consistencia total
+                if (f.isAnnotationPresent(State.class) || 
+                    f.isAnnotationPresent(Bind.class)) {
+                    return f;
+                }
+                return null;
             } catch (NoSuchFieldException e) {
                 current = current.getSuperclass();
             }

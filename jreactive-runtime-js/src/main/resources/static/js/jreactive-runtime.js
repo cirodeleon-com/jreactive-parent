@@ -354,6 +354,13 @@ function mount(tpl) {
    */
   // 1. Re-indexar los {{variables}} para que updateDomForKey los encuentre
   reindexBindings();
+  
+  // 2. 🔥 LA CLAVE: Forzar renderizado inicial de los nuevos nodos texto
+  bindings.forEach((nodes, key) => {
+    nodes.forEach(node => {
+      if (node.nodeType === Node.TEXT_NODE) renderText(node);
+    });
+  });
 
   // 2. Convertir los @click nuevos en data-call
   hydrateEventDirectives();
