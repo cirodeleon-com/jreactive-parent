@@ -1,5 +1,8 @@
 package com.ciro.jreactive;
 
+import com.ciro.jreactive.annotations.Client;
+
+@Client
 public class CounterLeaf extends BaseCounter {
 
     @Override

@@ -117,6 +117,19 @@ public class JsoupComponentEngine extends AbstractComponentEngine {
         // 4. PARSEAR E INYECTAR RECURSIVAMENTE
         // IMPORTANTE: Ahora pasamos el childComp y su propio childNs
         List<Node> childNodes = Parser.parseXmlFragment(childXml, "");
+        
+        if (childComp.getClass().isAnnotationPresent(com.ciro.jreactive.annotations.Client.class)) {
+            for (Node n : childNodes) {
+                if (n instanceof Element sel) {
+                    // data-jrx-client le dice al JS qué renderizador usar
+                    sel.attr("data-jrx-client", childComp.getClass().getSimpleName());
+                    // El ID es vital para que applyStateForKey encuentre el elemento exacto
+                    sel.attr("id", childComp.getId());
+                    break; // Solo marcamos el primer elemento raíz del componente
+                }
+            }
+        }
+        
         for (Node n : childNodes) {
             processNodeTree(n, childComp, new ArrayList<>(), all, childNs); 
         }

@@ -18,6 +18,7 @@ import org.jsoup.nodes.TextNode;
 import org.jsoup.parser.Parser;
 
 import javax.annotation.processing.AbstractProcessor;
+import javax.annotation.processing.Filer;
 import javax.annotation.processing.ProcessingEnvironment;
 import javax.annotation.processing.Processor;
 import javax.annotation.processing.RoundEnvironment;
@@ -62,8 +63,10 @@ public final class TemplateProcessor extends AbstractProcessor {
 	 * jreactive-core/src/main/java/com/ciro/jreactive/annotations/Call.java
 	 */
 	private static final String CALL_ANNOTATION_FQCN = "com.ciro.jreactive.annotations.Call";
+	private static final String CLIENT_ANNOTATION_FQCN = "com.ciro.jreactive.annotations.Client";
 
 	private Trees trees;
+	private Filer filer;
 
 	// =========================
 	// Patterns (templating)
@@ -103,6 +106,7 @@ public final class TemplateProcessor extends AbstractProcessor {
 	public synchronized void init(ProcessingEnvironment env) {
 		super.init(env);
 		this.trees = Trees.instance(env);
+		this.filer = env.getFiler();
 	}
 
 	@Override
@@ -129,11 +133,20 @@ public final class TemplateProcessor extends AbstractProcessor {
 		BlockTree body = mt.getBody();
 		if (body == null)
 			return;
+		
+		
 
 		// 1) Extraer template: SOLO literal string
 		String rawHtml = extractTemplateLiteralOrError(cls, tpl, body);
 		if (rawHtml == null)
 			return;
+		
+		if (hasAnnotationByName(cls, CLIENT_ANNOTATION_FQCN)) {
+	        processingEnv.getMessager().printMessage(javax.tools.Diagnostic.Kind.NOTE, 
+	            "🚀 [JReactive] Optimizando para modo @Client (CSR): " + cls.getSimpleName());
+	        
+	        generateClientJs(cls, rawHtml);
+	    }
 
 		// 2) Parsear
 		ParseResult res = USE_JSOUP_ENGINE ? parseWithJsoup(rawHtml, tpl) : parseWithRegex(rawHtml, tpl);
@@ -532,5 +545,36 @@ public final class TemplateProcessor extends AbstractProcessor {
 	}
 
 	private record ParseResult(Set<String> vars, Set<String> refs, Set<String> calls) {
+	}
+	
+
+
+	private void generateClientJs(TypeElement cls, String html) {
+	    String className = cls.getSimpleName().toString();
+	    String fileName = "static/js/jrx/" + className + ".jrx.js";
+
+	    try {
+	        javax.tools.FileObject resource = filer.createResource(
+	            javax.tools.StandardLocation.CLASS_OUTPUT, "", fileName);
+
+	        try (java.io.Writer writer = resource.openWriter()) {
+	            writer.write("// ✨ Generado automáticamente por JReactive APT\n");
+	            writer.write("if(!window.JRX_RENDERERS) window.JRX_RENDERERS = {};\n\n");
+	            
+	            writer.write("window.JRX_RENDERERS['" + className + "'] = function(el, state) {\n");
+	            // Guardamos el HTML en una constante
+	            String escapedHtml = html.replace("`", "\\`").replace("${", "\\${");
+	            writer.write("  const html = `" + escapedHtml + "`;\n");
+	            
+	            // 🔥 LA CLAVE: Usar el helper central del runtime que ya sabe manejar el número 0
+	            writer.write("  el.innerHTML = window.JRX.renderTemplate(html, state);\n");
+	            
+	            writer.write("  console.log('🎨 Renderizando " + className + " en el cliente:', state);\n");
+	            writer.write("};\n");
+	        }
+	    } catch (java.io.IOException e) {
+	        processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR, 
+	            "❌ Error generando JS para " + className + ": " + e.getMessage());
+	    }
 	}
 }

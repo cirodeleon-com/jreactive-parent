@@ -5,6 +5,23 @@
   const bindings = new Map();            // clave → [nodos texto / inputs]
   const state    = Object.create(null);  // último valor conocido
   const lastEdits = new Map();
+  
+  /* --- Bloque CSR: Registro de Motores --- */
+const loadedCsrScripts = new Set();
+window.JRX_RENDERERS = {}; 
+
+// Helper para que los scripts generados por el APT puedan resolver {{variables}}
+window.JRX = window.JRX || {};
+window.JRX.renderTemplate = function(html, state) {
+  return html.replace(/{{\s*([\w.-]+)\s*}}/g, (m, key) => {
+    // 1. Resolvemos la ruta (ej: "user.name") contra el objeto de estado local
+    const val = key.split('.').reduce((o, i) => (o && o[i] !== undefined ? o[i] : undefined), state);
+    
+    // 2. 🔥 FIX: Si el valor es 0, debe mostrar "0". Solo ponemos "" si es null o undefined.
+    return (val !== undefined && val !== null) ? val : '';
+  });
+};
+  
   const $$       = sel => [...document.querySelectorAll(sel)];
   // helpers de debug en ventana global
 window.__jrxState    = state;
@@ -1635,7 +1652,7 @@ function setupEventBindings() {
  * Convierte directivas @click, @change, @input, @submit
  *            → data-call / data-param / data-event
  * ───────────────────────────────────────────────────────── */
-function hydrateEventDirectives(root = document) {
+function hydrateEventDirectives(root = document, forceNs = "") {
   const EVENT_DIRECTIVES = ['click', 'change', 'input', 'submit'];
 
   const all = (root === document ? document.body : root).querySelectorAll('*');
@@ -1656,6 +1673,10 @@ function hydrateEventDirectives(root = document) {
         el.removeAttribute(attr);
         hydratedSet.add(evtName);
         return;
+      }
+      
+      if (forceNs && !value.includes('.') && !value.includes('#')) {
+          value = forceNs + value;
       }
 
       let compId = null;
@@ -1873,6 +1894,8 @@ function updateDomForKey(k, v) {
   });
 }
 
+/* === Reemplaza tu applyStateForKey con esta versión === */
+
 function applyStateForKey(k, v) {
   // 1) Estado: Guardamos siempre con la clave completa (Namespace real)
   state[k] = v;
@@ -1888,15 +1911,61 @@ function applyStateForKey(k, v) {
     });
   }
 
+  // 🔥 2.5) ⚡ INTERCEPCIÓN CSR (@Client) ⚡
+  const rootId = k.includes('.') ? k.split('.')[0] : k;
+  const el = document.getElementById(rootId);
+
+  if (el && el.dataset.jrxClient) {
+    const compName = el.dataset.jrxClient;
+
+    // Función interna para no repetir lógica de Render + Hidratación + Log
+    const doCsrRender = (targetEl, data) => {
+      if (window.JRX_RENDERERS[compName]) {
+		const localState = {};
+        const prefix = rootId + "."; 
+        
+        Object.keys(state).forEach(fullKey => {
+          if (fullKey.startsWith(prefix)) {
+            // "CounterLeaf#19.count" -> "count"
+            const shortKey = fullKey.substring(prefix.length);
+            localState[shortKey] = state[fullKey];
+          }
+        });
+		  
+        window.JRX_RENDERERS[compName](targetEl, localState);
+        hydrateEventDirectives(targetEl, rootId + "."); // Reconecta @click
+        setupEventBindings(targetEl);     // Activa listeners
+        console.log(`⚛️ CSR Renderizado: ${rootId}`, localState)
+      }
+    };
+
+    // A. Ejecución inmediata si ya está cargado
+    if (window.JRX_RENDERERS[compName]) {
+      doCsrRender(el, v);
+      return; // 🛑 Salto SSR
+    } 
+    
+    // B. Carga perezosa (Lazy Load) con callback completo
+    if (!loadedCsrScripts.has(compName)) {
+      loadedCsrScripts.add(compName);
+      const s = document.createElement('script');
+      s.src = `/js/jrx/${compName}.jrx.js`;
+      s.onload = () => {
+        doCsrRender(el, v); // 🔥 Ahora sí loguea y re-hidrata al cargar por primera vez
+      };
+      document.head.appendChild(s);
+    }
+    return; // 🛑 Esperamos al script
+  }
+
   // 3) Primero monta/desmonta lo condicional y resuelve #each
   updateIfBlocks();
   updateEachBlocks();
 
   // 4) ✅ Actualizamos el DOM usando la CLAVE COMPLETA.
-  // Se eliminó el updateDomForKey(last, v) para evitar colisiones.
   updateDomForKey(k, v);
   
-  // 5) MAGIA: Propagación en Cascada (El Fix para 'limpiar')
+  // 5) MAGIA: Propagación en Cascada
   if (v && typeof v === 'object' && !Array.isArray(v)) {
       Object.keys(v).forEach(subKey => {
           const childKey = `${k}.${subKey}`; 
@@ -1905,7 +1974,6 @@ function applyStateForKey(k, v) {
       });
   }
 }
-
 
 /* ──────────────────────────────────────────────────────────────
  *  Helpers de validación (Bean Validation → inputs HTML)
