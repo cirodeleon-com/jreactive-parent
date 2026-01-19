@@ -8,7 +8,8 @@
   
   /* --- Bloque CSR: Registro de Motores --- */
 const loadedCsrScripts = new Set();
-window.JRX_RENDERERS = {}; 
+window.JRX_RENDERERS = window.JRX_RENDERERS || {};
+ 
 
 // Helper para que los scripts generados por el APT puedan resolver {{variables}}
 window.JRX = window.JRX || {};
@@ -76,6 +77,176 @@ const Store = {
   let ws = null;
   let currentPath = '/';
   let firstMiss   = true;
+  
+  
+  /* ──────────────────────────────────────────────────────────────
+ * 9. REACTIVITY ENGINE (Proxy O(1))
+ * ────────────────────────────────────────────────────────────── */
+
+/**
+ * Crea un Proxy que intercepta asignaciones y actualiza solo el nodo DOM afectado.
+ */
+/* ──────────────────────────────────────────────────────────────
+ * 9. REACTIVITY ENGINE (Proxy O(1)) - Versión Mejorada
+ * ────────────────────────────────────────────────────────────── */
+
+function createReactiveProxy(rootEl, initialState) {
+    const bindingsMap = new Map();
+
+    // Helper para registrar bindings
+    const addBinding = (key, entry) => {
+        if (!bindingsMap.has(key)) bindingsMap.set(key, []);
+        bindingsMap.get(key).push(entry);
+    };
+
+    // 1. Escaneo inicial (Hydration)
+    const walker = document.createTreeWalker(rootEl, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT);
+    
+    let node;
+    while (node = walker.nextNode()) {
+        
+        // A) Nodos de Texto: "Hola {{user.name}}"
+        if (node.nodeType === Node.TEXT_NODE) {
+            const originalTpl = node.nodeValue || "";
+            if (originalTpl.includes('{{')) {
+                node._jrxTpl = originalTpl;
+                
+                const matches = originalTpl.matchAll(/{{\s*([\w.]+)\s*}}/g);
+                for (const m of matches) {
+                    addBinding(m[1], { type: 'text', node: node });
+                }
+                // 🔥 INIT: Render inicial inmediato
+                node.nodeValue = fillTemplate(originalTpl, initialState);
+            }
+        }
+        
+        // B) Elementos (Inputs y Atributos)
+        if (node.nodeType === Node.ELEMENT_NODE) {
+            
+            // --- B1. Inputs (Two-Way Binding) ---
+            const modelKey = node.getAttribute('name') || node.getAttribute('data-bind');
+            if (modelKey) {
+                addBinding(modelKey, { type: 'model', node: node });
+                
+                // 🔥 INIT: Poner valor inicial para que no salga vacío
+                const val = resolveDeep(modelKey, initialState);
+                if (node.type === 'checkbox') node.checked = !!val;
+                else node.value = (val !== undefined && val !== null) ? val : '';
+
+                // Listener inverso
+                node.addEventListener('input', () => {
+                    const newVal = (node.type === 'checkbox') ? node.checked : node.value;
+                    if (node._jrxProxyRef) {
+                        node._ignoreUpdate = true;
+                        // Nota: Para soporte deep real (user.name), aquí haría falta un setter deep helper
+                        // Por ahora asumimos claves planas en el proxy local
+                        node._jrxProxyRef[modelKey] = newVal; 
+                        node._ignoreUpdate = false;
+                    }
+                });
+            }
+
+            // --- B2. Atributos Dinámicos (class="{{...}}", disabled="{{...}}") ---
+            // Recorremos los atributos buscando {{...}}
+            for (const attr of node.attributes) {
+                if (attr.value.includes('{{')) {
+                    const attrName = attr.name;
+                    const attrTpl = attr.value;
+                    
+                    // Guardamos el template en el nodo para reusarlo (no en el atributo DOM)
+                    if (!node._jrxAttrTpls) node._jrxAttrTpls = {};
+                    node._jrxAttrTpls[attrName] = attrTpl;
+
+                    const matches = attrTpl.matchAll(/{{\s*([\w.]+)\s*}}/g);
+                    for (const m of matches) {
+                        addBinding(m[1], { type: 'attr', node: node, attrName: attrName });
+                    }
+
+                    // 🔥 INIT: Render inicial del atributo
+                    const initialAttrVal = fillTemplate(attrTpl, initialState);
+                    if (isBoolAttr(attrName)) {
+                         if (initialAttrVal === 'true') node.setAttribute(attrName, '');
+                         else node.removeAttribute(attrName);
+                    } else {
+                        node.setAttribute(attrName, initialAttrVal);
+                    }
+                }
+            }
+        }
+    }
+
+    // 2. Crear el Proxy
+    const proxy = new Proxy(initialState, {
+        set(target, prop, value) {
+            target[prop] = value;
+            
+            const listeners = bindingsMap.get(prop);
+            if (listeners) {
+                listeners.forEach(binding => {
+                    const { type, node, attrName } = binding;
+                    
+                    if (type === 'text') {
+                        node.nodeValue = fillTemplate(node._jrxTpl, target);
+                    } 
+                    else if (type === 'model') {
+                        if (node._ignoreUpdate) return;
+                        if (node.type === 'checkbox') node.checked = !!value;
+                        else node.value = (value !== undefined && value !== null) ? value : '';
+                    }
+                    else if (type === 'attr') {
+                        const tpl = node._jrxAttrTpls[attrName];
+                        const newVal = fillTemplate(tpl, target);
+                        
+                        if (isBoolAttr(attrName)) {
+                            // Manejo especial booleanos (disabled, checked, etc)
+                            // Si el template resuelve a "true" o string no vacío -> setAttribute
+                            const isTrue = newVal === 'true' || (newVal !== 'false' && newVal !== '');
+                            if (isTrue) node.setAttribute(attrName, '');
+                            else node.removeAttribute(attrName);
+                        } else {
+                            node.setAttribute(attrName, newVal);
+                        }
+                    }
+                });
+            }
+            return true;
+        }
+    });
+
+    rootEl._jrxProxy = proxy;
+    rootEl.querySelectorAll('*').forEach(el => el._jrxProxyRef = proxy);
+
+    return proxy;
+}
+
+/* ──────────────────────────────────────────────────────────────
+ * HELPERS CORREGIDOS (Soporte Flat Keys)
+ * ────────────────────────────────────────────────────────────── */
+
+// Helper para resolver valor inicial (Soporta claves planas "user.name")
+function resolveDeep(path, obj) {
+    // 1. Intento directo (Estrategia O(1) - Claves Planas)
+    if (obj[path] !== undefined) return obj[path];
+
+    // 2. Intento profundo (Fallback por si acaso llega un objeto real)
+    return path.split('.').reduce((o, i) => (o ? o[i] : undefined), obj);
+}
+
+// Helper para rellenar strings {{var}}
+function fillTemplate(tpl, state) {
+    return tpl.replace(/{{\s*([\w.]+)\s*}}/g, (_, k) => {
+        // Usa resolveDeep para manejar claves planas correctamente
+        const val = resolveDeep(k, state);
+        return (val !== undefined && val !== null) ? val : '';
+    });
+}
+
+
+// Helper de atributos booleanos
+function isBoolAttr(name) {
+    return /^(disabled|checked|readonly|required|hidden|selected)$/i.test(name);
+}
+
   
   /* --- helper global para escapar &, <, >, ", ' y / --- */
 function escapeHtml(str) {
@@ -1938,23 +2109,53 @@ function applyStateForKey(k, v) {
     const compName = el.dataset.jrxClient;
 
     // Función interna para no repetir lógica de Render + Hidratación + Log
+    // Función interna optimizada con Proxy
     const doCsrRender = (targetEl, data) => {
-      if (window.JRX_RENDERERS[compName]) {
-		const localState = {};
-        const prefix = rootId + "."; 
-        
-        Object.keys(state).forEach(fullKey => {
+      const renderer = window.JRX_RENDERERS[compName];
+      if (!renderer) return;
+
+      // Construir estado local plano (count en vez de CounterLeaf#1.count)
+      const localState = {};
+      const prefix = rootId + ".";
+      Object.keys(state).forEach(fullKey => {
           if (fullKey.startsWith(prefix)) {
-            // "CounterLeaf#19.count" -> "count"
-            const shortKey = fullKey.substring(prefix.length);
-            localState[shortKey] = state[fullKey];
+              localState[fullKey.substring(prefix.length)] = state[fullKey];
+              //localState[fullKey] = state[fullKey];
           }
-        });
-		  
-        window.JRX_RENDERERS[compName](targetEl, localState);
-        hydrateEventDirectives(targetEl, rootId + "."); // Reconecta @click
-        setupEventBindings(targetEl);     // Activa listeners
-        console.log(`⚛️ CSR Renderizado: ${rootId}`, localState)
+      });
+
+      // CASO 1: Primer Montaje (No existe proxy)
+      if (!targetEl._jrxProxy) {
+          // A. Obtener HTML crudo (requiere que el APT genere un objeto con .getTemplate())
+          // Si tu APT actual genera una función directa, úsala, pero idealmente debería retornar string.
+          // Asumiremos que el renderer puede devolver string o escribir HTML.
+          
+          if (typeof renderer.getTemplate === 'function') {
+              targetEl.innerHTML = renderer.getTemplate();
+          } else if (typeof renderer === 'function') {
+              // Fallback para tu APT actual (menos eficiente en init, pero funciona)
+              renderer(targetEl, localState); 
+          }
+
+          // B. Hidratar directivas JReactive (eventos, etc)
+          hydrateEventDirectives(targetEl, rootId + ".");
+          setupEventBindings(targetEl);
+
+          // C. Crear el Proxy Reactivo (Escanea el DOM una vez)
+          createReactiveProxy(targetEl, localState);
+          
+          console.log(`✨ CSR Montado con Proxy: ${rootId}`);
+      } 
+      // CASO 2: Actualización (Ya existe proxy) -> O(1)
+      else {
+          // Simplemente actualizamos las propiedades del proxy.
+          // El 'set' trap del proxy buscará el nodo exacto y lo cambiará.
+          const proxy = targetEl._jrxProxy;
+          Object.keys(localState).forEach(k => {
+              if (proxy[k] !== localState[k]) {
+                  proxy[k] = localState[k]; // 🔥 AQUÍ OCURRE LA MAGIA O(1)
+              }
+          });
       }
     };
 

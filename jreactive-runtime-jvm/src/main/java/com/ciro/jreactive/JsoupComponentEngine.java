@@ -30,10 +30,25 @@ public class JsoupComponentEngine extends AbstractComponentEngine {
         // Ejecutamos la lógica de carga de datos del usuario
         ctx._initIfNeeded();
         
-        // 🔥 2. SINCRONIZACIÓN
-        // Aseguramos que los cambios en los POJOs (@State) pasen a las ReactiveVars
-        // ANTES de que el template las lea.
+        
         ctx._syncState();
+        
+        if (ctx.getClass().isAnnotationPresent(com.ciro.jreactive.annotations.Client.class)) {
+            String resources = ctx._getBundledResources(); 
+            String id = ctx.getId(); // Ej: "page_focus_test"
+            String name = ctx.getClass().getSimpleName();
+            
+            String shellHtml = resources + 
+                "<div id=\"" + id + "\" data-jrx-client=\"" + name + "\"></div>";
+            
+            collectBindingsRecursive(ctx, all);      
+            
+            disposeUnused(pool);
+            ctx._mountRecursive();
+            
+            return new ComponentEngine.Rendered(shellHtml, all);
+        }
+        
         String resources = ctx._getBundledResources();
         // 1. Pre-procesamiento de bloques (con el fix de anidamiento)
         String rawTemplate = resources + ctx.template();
@@ -99,7 +114,6 @@ public class JsoupComponentEngine extends AbstractComponentEngine {
         String namespacedSlot = namespaceString(rawSlot, namespacePrefix, ctx);
 
         // 2. CREAR E INSTANCIAR 
-        // createAndBindComponent ya gestiona el parentRx.onChange(...) interno
         HtmlComponent childComp = createAndBindComponent(ctx, pool, all, className, attrs, namespacedSlot);
         
         childComp._initIfNeeded();    
@@ -108,27 +122,43 @@ public class JsoupComponentEngine extends AbstractComponentEngine {
         String childId = childComp.getId();
         String childNs = childId + ".";
 
+        // =================================================================================
+        // 🔥 INTERCEPCIÓN @Client (MODO PROXY O(1))
+        // =================================================================================
+        if (childComp.getClass().isAnnotationPresent(com.ciro.jreactive.annotations.Client.class)) {
+            // 1. Creamos un "Cascarón" (Shell) vacío.
+            // Usamos 'div' por defecto, o mantenemos el tag si prefieres custom elements.
+            Element shell = new Element("div"); 
+            
+            // 2. Le ponemos las marcas vitales para el Runtime JS
+            shell.attr("id", childId);
+            shell.attr("data-jrx-client", childComp.getClass().getSimpleName());
+            
+            // (Opcional) Copiamos clases o estilos si venían en el tag original
+            if (attrs.containsKey("class")) shell.attr("class", attrs.get("class"));
+            if (attrs.containsKey("style")) shell.attr("style", attrs.get("style"));
+
+            // 3. Reemplazamos el nodo original por este shell vacío
+            el.replaceWith(shell);
+
+            // 4. IMPORTANTE: Aunque no renderizamos HTML, SÍ registramos los bindings
+            // Esto asegura que el Backend siga enviando actualizaciones WebSocket para este componente.
+            childComp.selfBindings().forEach((k, v) -> all.put(childNs + k, v));
+
+            // 🛑 STOP: No procesamos el template del hijo en el servidor.
+            // El JS lo hará en el cliente usando el asset generado por el APT.
+            return;
+        }
+        // =================================================================================
+
         String childResources = childComp._getBundledResources();
-        // 3. Procesar plantilla del hijo
+        // 3. Procesar plantilla del hijo (MODO SSR - Clásico)
         String childRawTpl = childResources + childComp.template();
         String childProcessedTpl = processControlBlocks(childRawTpl);
         String childXml = HTML5_VOID_FIX.matcher(childProcessedTpl).replaceAll("<$1$2/>");
 
         // 4. PARSEAR E INYECTAR RECURSIVAMENTE
-        // IMPORTANTE: Ahora pasamos el childComp y su propio childNs
         List<Node> childNodes = Parser.parseXmlFragment(childXml, "");
-        
-        if (childComp.getClass().isAnnotationPresent(com.ciro.jreactive.annotations.Client.class)) {
-            for (Node n : childNodes) {
-                if (n instanceof Element sel) {
-                    // data-jrx-client le dice al JS qué renderizador usar
-                    sel.attr("data-jrx-client", childComp.getClass().getSimpleName());
-                    // El ID es vital para que applyStateForKey encuentre el elemento exacto
-                    sel.attr("id", childComp.getId());
-                    break; // Solo marcamos el primer elemento raíz del componente
-                }
-            }
-        }
         
         for (Node n : childNodes) {
             processNodeTree(n, childComp, new ArrayList<>(), all, childNs); 
@@ -142,11 +172,20 @@ public class JsoupComponentEngine extends AbstractComponentEngine {
         }
         el.remove();
         
-     // Registrar bindings del hijo en el mapa global para que el JS los vea
-     // USAMOS selfBindings() para evitar re-renderizar el componente innecesariamente
-     // antes usaba childComp.bindings().forEach((k, v) -> all.put(childNs + k, v));
+        // Registrar bindings del hijo en el mapa global
         childComp.selfBindings().forEach((k, v) -> all.put(childNs + k, v));
-     // childComp.bindings().forEach((k, v) -> all.put(childNs + k, v));
+    }
+    
+ // Método auxiliar para recolectar bindings recursivamente de un árbol de componentes
+    private void collectBindingsRecursive(HtmlComponent comp, Map<String, ReactiveVar<?>> all) {
+        // 1. Bindings propios con SU ID
+        String prefix = comp.getId() + ".";
+        comp.selfBindings().forEach((k, v) -> all.put(prefix + k, v));
+
+        // 2. Bindings de los hijos
+        for (HtmlComponent child : comp._children()) {
+            collectBindingsRecursive(child, all);
+        }
     }
     
     private void processElementAttributes(Element el, HtmlComponent ctx, String ns) {

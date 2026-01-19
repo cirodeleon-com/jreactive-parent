@@ -550,31 +550,40 @@ public final class TemplateProcessor extends AbstractProcessor {
 
 
 	private void generateClientJs(TypeElement cls, String html) {
-	    String className = cls.getSimpleName().toString();
-	    String fileName = "static/js/jrx/" + className + ".jrx.js";
+        String className = cls.getSimpleName().toString();
+        String fileName = "static/js/jrx/" + className + ".jrx.js";
 
-	    try {
-	        javax.tools.FileObject resource = filer.createResource(
-	            javax.tools.StandardLocation.CLASS_OUTPUT, "", fileName);
+        // Aquí podrías usar Jsoup para inyectar 'data-bind' o 'name' automáticamente
+        // si quisieras ayudar al runtime, pero por ahora exportamos el template crudo
+        // para que 'createReactiveProxy' lo parsee.
 
-	        try (java.io.Writer writer = resource.openWriter()) {
-	            writer.write("// ✨ Generado automáticamente por JReactive APT\n");
-	            writer.write("if(!window.JRX_RENDERERS) window.JRX_RENDERERS = {};\n\n");
-	            
-	            writer.write("window.JRX_RENDERERS['" + className + "'] = function(el, state) {\n");
-	            // Guardamos el HTML en una constante
-	            String escapedHtml = html.replace("`", "\\`").replace("${", "\\${");
-	            writer.write("  const html = `" + escapedHtml + "`;\n");
-	            
-	            // 🔥 LA CLAVE: Usar el helper central del runtime que ya sabe manejar el número 0
-	            writer.write("  el.innerHTML = window.JRX.renderTemplate(html, state);\n");
-	            
-	            writer.write("  console.log('🎨 Renderizando " + className + " en el cliente:', state);\n");
-	            writer.write("};\n");
-	        }
-	    } catch (java.io.IOException e) {
-	        processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR, 
-	            "❌ Error generando JS para " + className + ": " + e.getMessage());
-	    }
-	}
+        try {
+            javax.tools.FileObject resource = filer.createResource(
+                    javax.tools.StandardLocation.CLASS_OUTPUT, "", fileName);
+
+            try (java.io.Writer writer = resource.openWriter()) {
+                writer.write("// ✨ Componente CSR O(1) generado por JReactive\n");
+                writer.write("if(!window.JRX_RENDERERS) window.JRX_RENDERERS = {};\n\n");
+
+                writer.write("window.JRX_RENDERERS['" + className + "'] = {\n");
+                writer.write("  // Devuelve el template crudo para ser hidratado\n");
+                writer.write("  getTemplate: function() {\n");
+
+                // Escapamos backticks y ${} para que sea un template literal válido de JS
+                String escapedHtml = html
+                        .replace("\\", "\\\\") // Escapar backslashes primero
+                        .replace("`", "\\`")   // Escapar comillas invertidas
+                        .replace("${", "\\${") // Evitar interpolación JS nativa
+                        .replace("\n", "\\n") // Aplanar saltos de línea (opcional, por limpieza)
+                        .replace("\r", "");
+
+                writer.write("    return `" + escapedHtml + "`;\n");
+                writer.write("  }\n");
+                writer.write("};\n");
+            }
+        } catch (java.io.IOException e) {
+            processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR,
+                    "❌ Error generando JS para " + className + ": " + e.getMessage());
+        }
+    }
 }

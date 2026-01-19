@@ -184,7 +184,11 @@ public abstract class AbstractComponentEngine implements ComponentEngine.Strateg
             Optional<HtmlComponent> re = pool.stream().filter(c -> c.getClass().getSimpleName().equals(className)).findFirst();
             if (re.isPresent()) { leaf = (ViewLeaf) re.get(); pool.remove(re.get()); }
             else leaf = newInstance(parent, className);
-            leaf.setId(leaf.getId());
+            
+            int index = parent._children().size(); 
+            String stableId = parent.getId() + "-" + className + "-" + index;
+            
+            leaf.setId(stableId);
         }
         HtmlComponent hc = (HtmlComponent) leaf;
         if (slotHtml != null && !slotHtml.isBlank()) hc._setSlotHtml(slotHtml);

@@ -24,10 +24,27 @@ public class PageResolver {
             comp = res.component();
             comp._injectParams(res.params());
             
+            String stableId = generateStableIdFromPath(path);
+            comp.setId(stableId);
+            
             // 3. Guardar en el store
             store.put(sessionId, path, comp);
         }
         return comp;
+    }
+    
+    private String generateStableIdFromPath(String path) {
+        if (path == null || path.equals("/") || path.isBlank()) {
+            return "page_index";
+        }
+        // Reemplazamos barras y caracteres raros por guiones bajos
+        String safeId = path.replaceAll("[^a-zA-Z0-9]", "_");
+        
+        // Quitamos guiones bajos al inicio/final si quedan
+        if (safeId.startsWith("_")) safeId = safeId.substring(1);
+        if (safeId.endsWith("_")) safeId = safeId.substring(0, safeId.length() - 1);
+        
+        return "page_" + safeId;
     }
 
     public Map<String, String> getParams(String sessionId, String path) {
