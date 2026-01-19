@@ -37,12 +37,11 @@ public class HybridStateStore implements StateStore {
         l1.put(sid, path, comp);
 
         // 2. Escritura Asíncrona en Redis (Backup en background)
-        // Esto hace que el usuario NO sienta la latencia de Redis
         CompletableFuture.runAsync(() -> {
             try {
                 l2.put(sid, path, comp);
             } catch (Exception e) {
-                System.err.println("Fallo sincronizando Redis: " + e.getMessage());
+                System.err.println("Fallo sincronizando Redis (PUT): " + e.getMessage());
             }
         });
     }
@@ -50,12 +49,30 @@ public class HybridStateStore implements StateStore {
     @Override
     public void remove(String sid, String path) {
         l1.remove(sid, path);
-        CompletableFuture.runAsync(() -> l2.remove(sid, path));
+        
+        // Async remove en L2
+        CompletableFuture.runAsync(() -> {
+            try {
+                l2.remove(sid, path);
+            } catch (Exception e) {
+                System.err.println("Fallo sincronizando Redis (REMOVE): " + e.getMessage());
+            }
+        });
     }
     
     @Override 
     public void removeSession(String sid) {
+        // 1. Limpieza inmediata en RAM
         l1.removeSession(sid);
-        l2.removeSession(sid);
+        
+        // 2. Limpieza asíncrona en Redis (Fire & Forget)
+        // 🔥 MEJORA: No bloqueamos el hilo principal esperando a Redis
+        CompletableFuture.runAsync(() -> {
+            try {
+                l2.removeSession(sid);
+            } catch (Exception e) {
+                System.err.println("Fallo limpiando sesión en Redis: " + e.getMessage());
+            }
+        });
     }
 }

@@ -48,7 +48,7 @@ public class JReactiveServer {
         this.mapper = ObjectMapperFactory.create();
 
         // 👇 Inicializar el HubManager aquí
-        this.hubManager = new JrxHubManager(pageResolver, mapper);
+        this.hubManager = new JrxHubManager(pageResolver, mapper, null);
 
         Validator validator;
         try {

@@ -1,5 +1,6 @@
 package com.ciro.jreactive.store.redis;
 
+import com.ciro.jreactive.spi.JrxMessageBroker;
 import com.ciro.jreactive.store.CaffeineStateStore;
 import com.ciro.jreactive.store.StateStore;
 import org.springframework.beans.factory.annotation.Value;
@@ -41,5 +42,12 @@ public class RedisStoreConfig {
         // Reutilizamos Caffeine como L1
         CaffeineStateStore l1 = new CaffeineStateStore();
         return new HybridStateStore(l1, redisStore);
+    }
+    
+    @Bean
+    @ConditionalOnProperty(name = "jreactive.store.type", havingValue = "hybrid")
+    public JrxMessageBroker redisMessageBroker() {
+        // Esto arranca el hilo de escucha (subscribe) automáticamente
+        return new RedisMessageBroker(host, port);
     }
 }

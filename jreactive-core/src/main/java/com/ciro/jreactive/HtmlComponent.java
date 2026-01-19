@@ -19,6 +19,8 @@ import com.ciro.jreactive.smart.SmartSet;
 import com.ciro.jreactive.smart.SmartMap;
 
 public abstract class HtmlComponent extends ViewLeaf implements java.io.Serializable {
+	
+	private long _version = 0;
 
     private Map<String, ReactiveVar<?>> map;
     private ComponentEngine.Rendered cached;
@@ -504,4 +506,7 @@ public abstract class HtmlComponent extends ViewLeaf implements java.io.Serializ
         }
         return deltas;
     }
+    
+    public long _getVersion() { return _version; }
+    public void _setVersion(long v) { this._version = v; }
 }

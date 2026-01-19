@@ -1,5 +1,6 @@
 package com.ciro.jreactive;
 
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -37,8 +38,11 @@ public class JReactiveAutoConfiguration {
     }
     
     @Bean
-    public JrxHubManager jrxHubManager(PageResolver pageResolver, ObjectMapper mapper) {
-        return new JrxHubManager(pageResolver, mapper);
+    public JrxHubManager jrxHubManager(
+    		PageResolver pageResolver, 
+    		ObjectMapper mapper,
+    		@Autowired(required = false) com.ciro.jreactive.spi.JrxMessageBroker broker) {
+        return new JrxHubManager(pageResolver, mapper,broker);
     }
 
 }

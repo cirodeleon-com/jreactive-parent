@@ -1,6 +1,8 @@
+/* === File: jreactive-runtime-jvm/src/main/java/com/ciro/jreactive/JrxPushHub.java === */
 package com.ciro.jreactive;
 
 import com.ciro.jreactive.smart.*;
+import com.ciro.jreactive.spi.JrxMessageBroker; // Import
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.io.IOException;
@@ -44,9 +46,16 @@ public class JrxPushHub {
     private final Map<String, Runnable> activeSmartCleanups = new ConcurrentHashMap<>();
     private final AtomicInteger activeSinks = new AtomicInteger(0);
 
-    public JrxPushHub(ViewNode root, ObjectMapper mapper, int maxBuffer) {
+    // 👇 Campos nuevos
+    private final JrxMessageBroker broker;
+    private final String sessionId;
+
+    // 👇 Constructor actualizado
+    public JrxPushHub(ViewNode root, ObjectMapper mapper, int maxBuffer, JrxMessageBroker broker, String sessionId) {
         this.mapper = mapper;
         this.maxBuffer = Math.max(100, maxBuffer);
+        this.broker = broker; // Puede ser null (modo RAM)
+        this.sessionId = sessionId;
         this.bindings = collect(root);
 
         bindings.forEach((k, rv) -> {
@@ -64,22 +73,18 @@ public class JrxPushHub {
 
     private void updateSmartSubscription(String key, Object value) {
         Runnable oldCleanup = activeSmartCleanups.remove(key);
-        if (oldCleanup != null) {
-            oldCleanup.run();
-        }
+        if (oldCleanup != null) oldCleanup.run();
 
         Runnable cleanup = null;
         if (value instanceof SmartList<?> list) {
             Consumer<SmartList.Change> l = ch -> onDelta(key, "list", ch);
             list.subscribe(l);
             cleanup = () -> list.unsubscribe(l);
-        } 
-        else if (value instanceof SmartMap<?,?> map) {
+        } else if (value instanceof SmartMap<?,?> map) {
             Consumer<SmartMap.Change> l = ch -> onDelta(key, "map", ch);
             map.subscribe(l);
             cleanup = () -> map.unsubscribe(l);
-        } 
-        else if (value instanceof SmartSet<?> set) {
+        } else if (value instanceof SmartSet<?> set) {
             Consumer<SmartSet.Change> l = ch -> onDelta(key, "set", ch);
             set.subscribe(l);
             cleanup = () -> set.unsubscribe(l);
@@ -119,7 +124,6 @@ public class JrxPushHub {
                 Object rootObj = rv.get();
                 if (rootObj != null) {
                     try {
-                        // 🔥 VALIDACIÓN DE SEGURIDAD INTERNA
                         applyPath(rootObj, parts, 1, v);
                         rv.set(rootObj); 
                     } catch (Exception e) {
@@ -128,6 +132,17 @@ public class JrxPushHub {
                 }
             }
         }
+    }
+
+    // 🔥 NUEVO: Método para emitir mensajes que vienen de Redis (bypassea el buffer)
+    public void emitRaw(String json) {
+        sinks.forEach(sink -> {
+            if (sink.isOpen()) {
+                try {
+                    sink.send(json);
+                } catch (Exception ignored) {}
+            }
+        });
     }
 
     public Batch snapshot() {
@@ -203,8 +218,8 @@ public class JrxPushHub {
         broadcastToSinks(msg, s);
     }
 
+    // 🔥 MODIFICADO: broadcastToSinks ahora también publica en Redis
     private void broadcastToSinks(Map<String, Object> msg, long s) {
-        if (sinks.isEmpty()) return;
         String json;
         try {
             json = mapper.writeValueAsString(Map.of(
@@ -214,16 +229,14 @@ public class JrxPushHub {
         } catch (Exception ex) {
             return;
         }
-        sinks.removeIf(sink -> {
-            if (!sink.isOpen()) return true;
-            try {
-                sink.send(json);
-                return false;
-            } catch (Exception e) {
-                try { sink.close(); } catch (Exception ignored) {}
-                return true;
-            }
-        });
+        
+        // 1. Enviar a mis clientes locales (Fast Path - Latencia 0ms)
+        emitRaw(json);
+
+        // 2. Enviar a la nube (Redis) para otros servidores (Slow Path)
+        if (broker != null) {
+            broker.publish(sessionId, json);
+        }
     }
 
     private Map<String,Object> encodeSnapshot(String k, Object v) {
@@ -258,7 +271,6 @@ public class JrxPushHub {
         if (target == null) return;
         String fieldName = parts[idx];
         
-        // 🔥 SEGURIDAD: Bloqueamos acceso a metadatos
         if (fieldName.equals("class") || fieldName.equals("classLoader")) return;
 
         java.lang.reflect.Field f = findField(target.getClass(), fieldName);
@@ -289,7 +301,6 @@ public class JrxPushHub {
         while (current != null && current != Object.class) {
             try {
                 java.lang.reflect.Field f = current.getDeclaredField(name);
-                // 🛡️ Filtro de seguridad obligatorio para consistencia total
                 if (f.isAnnotationPresent(State.class) || 
                     f.isAnnotationPresent(Bind.class)) {
                     return f;
