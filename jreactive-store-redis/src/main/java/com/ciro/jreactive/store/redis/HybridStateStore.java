@@ -9,70 +9,105 @@ public class HybridStateStore implements StateStore {
 
     private final StateStore l1; // Caffeine (RAM)
     private final StateStore l2; // Redis (Persistente)
+    private final boolean strongConsistency; // Configurable
 
-    public HybridStateStore(StateStore l1, StateStore l2) {
+    public HybridStateStore(StateStore l1, StateStore l2, boolean strongConsistency) {
         this.l1 = l1;
         this.l2 = l2;
+        this.strongConsistency = strongConsistency;
     }
 
     @Override
     public HtmlComponent get(String sid, String path) {
-        // 1. Velocidad de la luz (RAM)
+        // Lectura siempre es igual: Intentar RAM -> Fallback Redis
         HtmlComponent comp = l1.get(sid, path);
         if (comp != null) return comp;
 
-        // 2. Fallback a Redis (si el usuario cambió de servidor)
         comp = l2.get(sid, path);
-        
-        // 3. Si lo encontramos en Redis, lo subimos a RAM ("calentamos caché")
         if (comp != null) {
-            l1.put(sid, path, comp);
+            l1.put(sid, path, comp); // Calentar caché (Read-Repair)
         }
         return comp;
     }
 
     @Override
     public void put(String sid, String path, HtmlComponent comp) {
-        // 1. Escritura Síncrona en RAM (Feedback instantáneo al usuario)
-        l1.put(sid, path, comp);
+        if (strongConsistency) {
+            // --- MODO ENTERPRISE (Write-Through) ---
+            // 1. Escribir en Redis (Fuente de la Verdad) Síncronamente
+            // Si falla Redis, falla la operación y el usuario se entera.
+            l2.put(sid, path, comp);
+            
+            // 2. Actualizar RAM
+            l1.put(sid, path, comp);
+        } else {
+            // --- MODO VELOCIDAD (Write-Behind) ---
+            // 1. RAM Instantánea
+            l1.put(sid, path, comp);
+            
+            // 2. Redis en segundo plano (Mejor esfuerzo)
+            CompletableFuture.runAsync(() -> {
+                try {
+                    l2.put(sid, path, comp);
+                } catch (Exception e) {
+                    System.err.println("🔥 Fallo Async Redis PUT: " + e.getMessage());
+                }
+            });
+        }
+    }
 
-        // 2. Escritura Asíncrona en Redis (Backup en background)
-        CompletableFuture.runAsync(() -> {
-            try {
-                l2.put(sid, path, comp);
-            } catch (Exception e) {
-                System.err.println("Fallo sincronizando Redis (PUT): " + e.getMessage());
+    @Override
+    public boolean replace(String sid, String path, HtmlComponent comp, long expectedVersion) {
+        if (strongConsistency) {
+            // --- MODO ENTERPRISE (Robustez Total) ---
+            // 1. Validar versión en Redis primero (Lua Script)
+            boolean success = l2.replace(sid, path, comp, expectedVersion);
+            
+            if (success) {
+                // 2. Si Redis aceptó, actualizamos RAM con la nueva versión
+                comp._setVersion(expectedVersion + 1);
+                l1.put(sid, path, comp);
+                return true;
+            } else {
+                // 3. Conflicto: Invalidamos RAM para forzar recarga fresca
+                l1.remove(sid, path);
+                return false;
             }
-        });
+        } else {
+            // --- MODO VELOCIDAD (Optimismo Especulativo) ---
+            // 1. Asumimos éxito en RAM
+            long currentVer = comp._getVersion();
+            comp._setVersion(currentVer + 1);
+            l1.put(sid, path, comp);
+
+            // 2. Validar en Redis después (Compensación)
+            CompletableFuture.runAsync(() -> {
+                boolean success = l2.replace(sid, path, comp, currentVer);
+                if (!success) {
+                    System.out.println("🚨 Conflicto Async Redis detectado. Invalidando RAM.");
+                    l1.remove(sid, path);
+                }
+            });
+            return true; // Mentimos temporalmente diciendo que fue exitoso
+        }
     }
 
     @Override
     public void remove(String sid, String path) {
-        l1.remove(sid, path);
-        
-        // Async remove en L2
-        CompletableFuture.runAsync(() -> {
-            try {
-                l2.remove(sid, path);
-            } catch (Exception e) {
-                System.err.println("Fallo sincronizando Redis (REMOVE): " + e.getMessage());
-            }
-        });
+        if (strongConsistency) {
+            l2.remove(sid, path);
+            l1.remove(sid, path);
+        } else {
+            l1.remove(sid, path);
+            CompletableFuture.runAsync(() -> l2.remove(sid, path));
+        }
     }
-    
-    @Override 
+
+    @Override
     public void removeSession(String sid) {
-        // 1. Limpieza inmediata en RAM
+        // La limpieza de sesión suele ser segura de hacer async en ambos modos
+        // para no bloquear el Logout, pero si quieres ser estricto:
         l1.removeSession(sid);
-        
-        // 2. Limpieza asíncrona en Redis (Fire & Forget)
-        // 🔥 MEJORA: No bloqueamos el hilo principal esperando a Redis
-        CompletableFuture.runAsync(() -> {
-            try {
-                l2.removeSession(sid);
-            } catch (Exception e) {
-                System.err.println("Fallo limpiando sesión en Redis: " + e.getMessage());
-            }
-        });
+        CompletableFuture.runAsync(() -> l2.removeSession(sid));
     }
 }

@@ -18,36 +18,40 @@ public class RedisStoreConfig {
     @Value("${jreactive.redis.port:6379}")
     private int port;
 
-    // 1. Bean base de Redis (usado por ambos)
+    // 👇 Nueva propiedad: 'strong' (default) o 'eventual'
+    @Value("${jreactive.store.consistency:strong}")
+    private String consistencyMode;
+
     @Bean
     public RedisStateStore redisStateStore() {
         return new RedisStateStore(host, port);
     }
 
-    // 2. Estrategia A: SOLO REDIS (Stateless total)
-    // Se activa con: jreactive.store.type=redis
     @Bean
-    @Primary // Gana sobre el Caffeine por defecto si se activa
+    @Primary
     @ConditionalOnProperty(name = "jreactive.store.type", havingValue = "redis")
     public StateStore onlyRedis(RedisStateStore redisStore) {
         return redisStore;
     }
 
-    // 3. Estrategia B: HÍBRIDO (RAM + Redis Async)
-    // Se activa con: jreactive.store.type=hybrid
     @Bean
     @Primary
     @ConditionalOnProperty(name = "jreactive.store.type", havingValue = "hybrid")
     public StateStore hybridStore(RedisStateStore redisStore) {
-        // Reutilizamos Caffeine como L1
         CaffeineStateStore l1 = new CaffeineStateStore();
-        return new HybridStateStore(l1, redisStore);
+        
+        // Detectar modo
+        boolean isStrong = "strong".equalsIgnoreCase(consistencyMode);
+        
+        System.out.println("🚀 JReactive Hybrid Store iniciado. Modo consistencia: " + 
+                           (isStrong ? "STRONG (Enterprise)" : "EVENTUAL (Speed)"));
+
+        return new HybridStateStore(l1, redisStore, isStrong);
     }
     
     @Bean
     @ConditionalOnProperty(name = "jreactive.store.type", havingValue = "hybrid")
     public JrxMessageBroker redisMessageBroker() {
-        // Esto arranca el hilo de escucha (subscribe) automáticamente
         return new RedisMessageBroker(host, port);
     }
 }

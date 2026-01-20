@@ -20,7 +20,7 @@ import com.ciro.jreactive.smart.SmartMap;
 
 public abstract class HtmlComponent extends ViewLeaf implements java.io.Serializable {
 	
-	private long _version = 0;
+	private volatile long _version = 0;
 
     private Map<String, ReactiveVar<?>> map;
     private ComponentEngine.Rendered cached;

@@ -16,6 +16,33 @@ public class RedisStateStore implements StateStore {
     // FST es thread-safe si se usa el singleton default
     private final FSTConfiguration conf = FSTConfiguration.createDefaultConfiguration();
     private static final int TTL_SECONDS = 1800; // 30 minutos
+    
+    private static final String CAS_SCRIPT = """
+            local key = KEYS[1]
+            local expectedVer = tonumber(ARGV[1])
+            local newData = ARGV[2]
+            
+            -- Si no existe la clave, solo permitimos si esperamos versión 0 (creación)
+            if redis.call('exists', key) == 0 then
+                if expectedVer == 0 then
+                    redis.call('hset', key, 'data', newData, 'v', 1)
+                    redis.call('expire', key, 1800)
+                    return 1
+                else
+                    return 0
+                end
+            end
+
+            -- Verificamos versión actual
+            local currentVer = tonumber(redis.call('hget', key, 'v') or '0')
+            if currentVer == expectedVer then
+                redis.call('hset', key, 'data', newData, 'v', currentVer + 1)
+                redis.call('expire', key, 1800)
+                return 1
+            else
+                return 0
+            end
+        """;
 
     public RedisStateStore(String host, int port) {
         this.redisPool = new JedisPool(host, port);
@@ -33,10 +60,19 @@ public class RedisStateStore implements StateStore {
     @Override
     public HtmlComponent get(String sessionId, String path) {
         try (Jedis jedis = redisPool.getResource()) {
-            byte[] data = jedis.get(key(sessionId, path));
+            byte[] data = jedis.hget(key(sessionId, path), "data".getBytes());
             if (data == null) return null;
             // Deserialización ultra-rápida
-            return (HtmlComponent) conf.asObject(data);
+            HtmlComponent comp = (HtmlComponent) conf.asObject(data);
+            
+            // Leemos versión e inyectamos
+         // En RedisStateStore.java
+            byte[] verBytes = jedis.hget(key(sessionId, path), "v".getBytes());
+            if (verBytes != null) {
+                comp._setVersion(Long.parseLong(new String(verBytes)));
+            }
+            
+            return comp;
         } catch (Exception e) {
             e.printStackTrace();
             return null;
@@ -106,6 +142,28 @@ public class RedisStateStore implements StateStore {
             }
         } catch (Exception e) {
             System.err.println("Error limpiando sesión Redis: " + e.getMessage());
+        }
+    }
+
+    @Override
+    public boolean replace(String sid, String path, HtmlComponent comp, long expectVer) {
+        try (Jedis jedis = redisPool.getResource()) {
+            byte[] key = key(sid, path); // Asegúrate que tu método key devuelva byte[]
+            byte[] data = conf.asByteArray(comp);
+            
+            // Jedis eval requiere claves y argumentos
+            Object res = jedis.eval(CAS_SCRIPT.getBytes(), 
+                                    1, key, 
+                                    String.valueOf(expectVer).getBytes(), 
+                                    data);
+            
+            long result = (Long) res;
+            if (result == 1) {
+                // Actualizamos la versión del objeto Java local para que coincida
+                comp._setVersion(expectVer + 1);
+                return true;
+            }
+            return false;
         }
     }
 }
