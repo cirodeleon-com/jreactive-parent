@@ -62,7 +62,7 @@ public class JsoupComponentEngine extends AbstractComponentEngine {
         // 2. Procesar Árbol
         processNodeTree(doc, ctx, pool, all, ""); 
 
-        all.putAll(ctx.selfBindings());
+        all.putAll(ctx.getRawBindings());
 
         String html = doc.html();
         if (doc.children().size() == 1 && (doc.child(0).tagName().equals("#root") || doc.child(0).tagName().equals("html"))) {
@@ -143,7 +143,7 @@ public class JsoupComponentEngine extends AbstractComponentEngine {
 
             // 4. IMPORTANTE: Aunque no renderizamos HTML, SÍ registramos los bindings
             // Esto asegura que el Backend siga enviando actualizaciones WebSocket para este componente.
-            childComp.selfBindings().forEach((k, v) -> all.put(childNs + k, v));
+            childComp.getRawBindings().forEach((k, v) -> all.put(childNs + k, v));
 
             // 🛑 STOP: No procesamos el template del hijo en el servidor.
             // El JS lo hará en el cliente usando el asset generado por el APT.
@@ -173,14 +173,14 @@ public class JsoupComponentEngine extends AbstractComponentEngine {
         el.remove();
         
         // Registrar bindings del hijo en el mapa global
-        childComp.selfBindings().forEach((k, v) -> all.put(childNs + k, v));
+        childComp.getRawBindings().forEach((k, v) -> all.put(childNs + k, v));
     }
     
  // Método auxiliar para recolectar bindings recursivamente de un árbol de componentes
     private void collectBindingsRecursive(HtmlComponent comp, Map<String, ReactiveVar<?>> all) {
         // 1. Bindings propios con SU ID
         String prefix = comp.getId() + ".";
-        comp.selfBindings().forEach((k, v) -> all.put(prefix + k, v));
+        comp.getRawBindings().forEach((k, v) -> all.put(prefix + k, v));
 
         // 2. Bindings de los hijos
         for (HtmlComponent child : comp._children()) {
@@ -200,7 +200,7 @@ public class JsoupComponentEngine extends AbstractComponentEngine {
             //    Esto permite que el framework enlace el input con el modelo
             if (key.equals("name") && !val.contains("{{")) {
                 String root = val.split("\\.")[0];
-                if (ctx.selfBindings().containsKey(root)) {
+                if (ctx.getRawBindings().containsKey(root)) {
                     el.attr(key, ns + val);
                 }
                 continue; 
@@ -259,7 +259,7 @@ public class JsoupComponentEngine extends AbstractComponentEngine {
             String varName = m.group(1);
             String root = varName.split("\\.")[0];
             
-            boolean isKnownBinding = ctx.selfBindings().containsKey(root);
+            boolean isKnownBinding = ctx.getRawBindings().containsKey(root);
 
             if (varName.equals("this") || varName.startsWith(ns) || !isKnownBinding) {
                 m.appendReplacement(sb, Matcher.quoteReplacement(m.group(0)));
@@ -280,7 +280,7 @@ public class JsoupComponentEngine extends AbstractComponentEngine {
         }
 
         String root = clean.split("\\.")[0];
-        boolean isKnownBinding = ctx.selfBindings().containsKey(root);
+        boolean isKnownBinding = ctx.getRawBindings().containsKey(root);
 
         if (!isKnownBinding) return clean;
         return ns + clean;
@@ -318,7 +318,7 @@ public class JsoupComponentEngine extends AbstractComponentEngine {
                     arg.equals("true") || arg.equals("false")) return arg;
 
                 String root = arg.split("\\.")[0];
-                return ctx.selfBindings().containsKey(root) ? ns + arg : arg;
+                return ctx.getRawBindings().containsKey(root) ? ns + arg : arg;
             })
             .collect(Collectors.joining(", "));
 
@@ -350,7 +350,7 @@ public class JsoupComponentEngine extends AbstractComponentEngine {
             }
             
             // 🔍 4. Buscar en el mapa
-            ReactiveVar<?> var = ctx.selfBindings().get(localKey);
+            ReactiveVar<?> var = ctx.getRawBindings().get(localKey);
             if (var != null) {
                 Object val = var.get();
                 String strVal = (val == null) ? "" : HtmlEscaper.escape(String.valueOf(val));

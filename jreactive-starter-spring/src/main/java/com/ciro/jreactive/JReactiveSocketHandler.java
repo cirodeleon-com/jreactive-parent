@@ -24,27 +24,36 @@ public class JReactiveSocketHandler extends TextWebSocketHandler {
     private final JrxHubManager hubManager;
     private final String path;
     private final String sessionId;
+    private final PageResolver pageResolver;
 
     private final Map<WebSocketSession, JrxSession> wrappers = new ConcurrentHashMap<>();
+    private final HtmlComponent page;
 
-    public JReactiveSocketHandler(ViewNode root,
+    public JReactiveSocketHandler(HtmlComponent page,
                                   ObjectMapper mapper,
                                   ScheduledExecutorService scheduler,
                                   WsConfig cfg,
                                   JrxHubManager hubManager, // <--- Nuevo param
                                   String path,              // <--- Nuevo param
-                                  String sessionId) {       // <--- Nuevo param
+                                  String sessionId,
+                                  PageResolver pageResolver) {       // <--- Nuevo param
         this.hubManager = hubManager;
         this.path = path;
         this.sessionId = sessionId;
+        this.pageResolver = pageResolver;
+        this.page=page;
+        Runnable saveStrategy = cfg.isPersistentState() 
+                ? () -> this.pageResolver.persist(sessionId, path, this.page)
+                : null;
 
         this.protocol = new JrxProtocolHandler(
-            root,
+            this.page,
             mapper,
             scheduler,
             cfg.isEnabledBackpressure(),
             cfg.getMaxQueue(),
-            cfg.getFlushIntervalMs()
+            cfg.getFlushIntervalMs(),
+            saveStrategy
         );
     }
 
@@ -68,6 +77,16 @@ public class JReactiveSocketHandler extends TextWebSocketHandler {
             }
         } catch (Exception e) {
             // Ignoramos since malformado
+        }
+        
+        
+        
+        //HtmlComponent page = pageResolver.getPage(sessionId, path);
+
+        // 🔥 FIX CRÍTICO: Asegurar que la página esté montada (Timers corriendo)
+        if (page._state() == ComponentState.UNMOUNTED) {
+            page._initIfNeeded();
+            page._mountRecursive();
         }
 
         // 👇 2. Obtener el Hub para esta sesión (si existe)

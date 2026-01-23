@@ -31,7 +31,7 @@ public final class CallEndpoint implements HttpHandler {
                         StandaloneSessionManager sessions) {
         this.objectMapper = objectMapper;
         this.sessions = sessions;
-        this.api = new JrxHttpApi(pageResolver, objectMapper, callGuard);
+        this.api = new JrxHttpApi(pageResolver, objectMapper, callGuard,true);
     }
 
     @Override

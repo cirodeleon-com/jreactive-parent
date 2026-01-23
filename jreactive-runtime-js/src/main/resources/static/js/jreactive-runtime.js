@@ -32,7 +32,7 @@ const globalState     = Object.create(null);   // estado global logical: user, t
 const storeListeners  = new Map();  
 let es = null;              // EventSource
 let lastSeq = 0;            // cursor incremental
-let transport = 'ws';       // 'ws' | 'sse' | 'poll'
+let transport = 'sse';       // 'ws' | 'sse' | 'poll'
 // --- Variables Globales Nuevas ---
 let wsRetryCount = 0;       // Contador de intentos fallidos
 const MAX_WS_RETRIES = 5;   // Intentar 5 veces antes de rendirse a SSE
@@ -260,6 +260,7 @@ function escapeHtml(str) {
     .replaceAll('/', '&#x2F;');
 }
 
+/*
 function normalizeIncoming(pkt) {
   // Envelope {seq,batch}
   if (pkt && typeof pkt === 'object' && Array.isArray(pkt.batch)) {
@@ -271,6 +272,26 @@ function normalizeIncoming(pkt) {
   // Single
   return [pkt];
 }
+*/
+
+function normalizeIncoming(pkt) {
+  // Si viene seq en cualquier formato, lo capturamos
+  if (pkt && typeof pkt === 'object' && typeof pkt.seq === 'number') {
+    lastSeq = Math.max(lastSeq, pkt.seq);
+  }
+
+  // Envelope {seq,batch}
+  if (pkt && typeof pkt === 'object' && Array.isArray(pkt.batch)) {
+    return pkt.batch;
+  }
+
+  // Array directo
+  if (Array.isArray(pkt)) return pkt;
+
+  // Single mensaje
+  return [pkt];
+}
+
 
 function applyBatch(batch) {
   batch.forEach(msg => {
@@ -1177,48 +1198,79 @@ document.addEventListener('DOMContentLoaded', () => {
 
 
 async function loadRoute(path = location.pathname) {
-  startLoading(); // <--- INICIO
+  startLoading(); 
   try {
-  if (ws && ws.readyState === WebSocket.OPEN) ws.close(1000, "route-change");
-  ws = null;
-  
-  lastSeq = 0;
+    // ---------------------------------------------------------
+    // 1. GESTIÓN DE SALIDA (DESPEDIDA)
+    // ---------------------------------------------------------
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        // Si es WS, usamos el cierre nativo
+        ws.close(1000, "route-change");
+    } else {
+        // Si es SSE/Poll, enviamos la carta de despedida con keepalive
+        // Esto le dice a Spring: "Borra la memoria de la ruta anterior"
+        fetch('/jrx/leave', {
+            method: 'POST',
+            headers: { 
+                'Content-Type': 'application/json' 
+            },
+            body: JSON.stringify({ path: currentPath }),
+            keepalive: true 
+        }).catch(err => console.warn("Fallo al enviar despedida:", err));
+    }
+    ws = null;
+    
+    // Limpieza local
+    lastSeq = 0;
+    bindings.clear();
+    for (const k in state) delete state[k];
 
-  bindings.clear();
-  for (const k in state) delete state[k];
+    // ---------------------------------------------------------
+    // 2. 🔥 EL FIX DEL CACHÉ (LO QUE TE FALTABA)
+    // ---------------------------------------------------------
+    // Agregamos '?t=...' para engañar al navegador y obligarlo a 
+    // pedir la página al servidor en lugar de usar su memoria caché.
+    const separator = path.includes('?') ? '&' : '?';
+    const uniqueUrl = path + separator + 't=' + Date.now();
 
-  const html = await fetch(path, { headers: { 'X-Partial': '1' } }).then(r => r.text());
-  const app  = document.getElementById('app');
+    // Hacemos el fetch a la URL única
+    const html = await fetch(uniqueUrl, { 
+        headers: { 'X-Partial': '1' } 
+    }).then(r => r.text());
 
-  app.style.visibility = 'hidden';
-  app.innerHTML = html;
-  
-  executeInlineScripts(app);
+    // ---------------------------------------------------------
+    // 3. RENDERIZADO Y RECONEXIÓN
+    // ---------------------------------------------------------
+    const app  = document.getElementById('app');
 
-  reindexBindings();
+    app.style.visibility = 'hidden';
+    app.innerHTML = html;
+    
+    executeInlineScripts(app);
 
-  // hidrata con lo que haya (puede estar vacío, no pasa nada)
-  bindings.forEach((nodes, key) => {
-    nodes.forEach(el => {
-      if (el.nodeType === Node.TEXT_NODE) renderText(el);
-      else if ('checked' in el)          el.checked = !!state[key];
-      else                               el.value   = state[key] ?? '';
+    reindexBindings();
+
+    // Hidratación inicial con estado vacío (limpio)
+    bindings.forEach((nodes, key) => {
+      nodes.forEach(el => {
+        if (el.nodeType === Node.TEXT_NODE) renderText(el);
+        else if ('checked' in el)          el.checked = !!state[key];
+        else                               el.value   = state[key] ?? '';
+      });
     });
-  });
 
-  updateIfBlocks();
-  updateEachBlocks();
-  hydrateEventDirectives(app);
-  setupEventBindings();
+    updateIfBlocks();
+    updateEachBlocks();
+    hydrateEventDirectives(app);
+    setupEventBindings();
 
-  //connectWs(path);
-  connectTransport(path);
+    // Conectamos a la NUEVA ruta
+    connectTransport(path);
 
-
-  app.style.visibility = '';
+    app.style.visibility = '';
   
   } finally {
-      stopLoading(); // <--- FIN
+      stopLoading(); 
   }
 }
 
@@ -1252,7 +1304,7 @@ async function sendSet(k, v) {
 
   // SSE o Poll: usamos HTTP
   try {
-    await fetch(`/jrx/set?path=${encodeURIComponent(currentPath)}`, {
+    const res = await fetch(`/jrx/set?path=${encodeURIComponent(currentPath)}`, {
       method: 'POST',
       headers: {
         'X-Requested-With': 'JReactive',
@@ -1261,7 +1313,7 @@ async function sendSet(k, v) {
       body: JSON.stringify({ k, v })
     });
     
-    if (transport === 'poll') {
+    if (res.ok && transport === 'poll') {
        triggerImmediatePoll();
     }
     
@@ -1358,10 +1410,12 @@ function reindexBindings() {
       evt = 'input';
     }
     
+    
     el.addEventListener('blur', () => {
         const keyToSave = el.name || el.id || k;
         lastEdits.delete(keyToSave); // Borramos la marca de tiempo
     });
+    
 
     el.addEventListener(evt, async () => {
 		
@@ -2037,7 +2091,11 @@ function updateDomForKey(k, v) {
   }
   if (!nodes || !nodes.length) {
     const simple = k.split('.').at(-1);
-    if (simple !== k) nodes = bindings.get(simple);
+    if (simple !== k) {
+      const candidates = bindings.get(simple) || [];
+      // ✅ CIRUGÍA: fallback SOLO para texto, nunca para inputs/select/textarea
+      nodes = candidates.filter(n => n && n.nodeType === Node.TEXT_NODE);
+    }
   }
 
   const strValue  = v == null ? '' : String(v);
@@ -2178,6 +2236,7 @@ function applyStateForKey(k, v) {
     return; // 🛑 Esperamos al script
   }
 
+  //state[k] = v; 
   // 3) Primero monta/desmonta lo condicional y resuelve #each
   updateIfBlocks();
   updateEachBlocks();
@@ -2533,6 +2592,14 @@ function setupGlobalErrorFeedback() {
     }
   });
 }
+
+window.addEventListener('pageshow', (event) => {
+    // event.persisted es TRUE si la página vino del caché del botón "Atrás"
+    if (event.persisted) {
+        console.log("♻️ Detectada restauración de caché: Forzando recarga fresca...");
+        window.location.reload();
+    }
+});
 
 
 

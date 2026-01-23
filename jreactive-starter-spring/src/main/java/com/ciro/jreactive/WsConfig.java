@@ -12,6 +12,8 @@ public class WsConfig {
     private int maxQueue = 512;
     /** Intervalo de flush en milisegundos */
     private int flushIntervalMs = 16;
+    
+    private boolean persistentState = true;
 
     public boolean isEnabledBackpressure() { return enabledBackpressure; }
     public void setEnabledBackpressure(boolean enabledBackpressure) { this.enabledBackpressure = enabledBackpressure; }
@@ -21,4 +23,7 @@ public class WsConfig {
 
     public int getFlushIntervalMs() { return flushIntervalMs; }
     public void setFlushIntervalMs(int flushIntervalMs) { this.flushIntervalMs = flushIntervalMs; }
+    
+    public boolean isPersistentState() { return persistentState; }
+    public void setPersistentState(boolean persistentState) { this.persistentState = persistentState; }
 }

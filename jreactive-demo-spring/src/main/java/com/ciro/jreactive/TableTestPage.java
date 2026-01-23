@@ -33,7 +33,7 @@ public class TableTestPage extends AppPage {
     ));
     
     @State
-    private int idCounter = 100;
+    int idCounter = 100;
 
     @Call
     public void addUser() {

@@ -168,7 +168,7 @@ public abstract class HtmlComponent extends ViewLeaf implements java.io.Serializ
     }
     
     private void cleanupBindings() {
-        Map<String, ReactiveVar<?>> binds = selfBindings();
+        Map<String, ReactiveVar<?>> binds = getRawBindings();
         binds.values().forEach(rx -> rx.clearListeners());
     }
 
@@ -194,7 +194,7 @@ public abstract class HtmlComponent extends ViewLeaf implements java.io.Serializ
 
     protected abstract String template();
 
-    Map<String, ReactiveVar<?>> selfBindings() {
+    public synchronized Map<String, ReactiveVar<?>> getRawBindings() {
         if (map == null) buildBindings();
         return map;
     }
@@ -438,7 +438,7 @@ public abstract class HtmlComponent extends ViewLeaf implements java.io.Serializ
             State stateAnn = found.getAnnotation(State.class);
             String bindingKey = stateAnn.value().isBlank() ? found.getName() : stateAnn.value();
 
-            ReactiveVar<Object> rx = (ReactiveVar<Object>) selfBindings().get(bindingKey);
+            ReactiveVar<Object> rx = (ReactiveVar<Object>) getRawBindings().get(bindingKey);
             if (rx == null) {
                 throw new IllegalStateException("No ReactiveVar for @State '" + bindingKey + "'");
             }

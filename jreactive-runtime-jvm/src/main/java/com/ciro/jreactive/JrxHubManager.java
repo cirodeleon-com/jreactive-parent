@@ -76,6 +76,15 @@ public class JrxHubManager {
         Key key = new Key(sessionId, path);
         return hubs.get(key, _k -> {
             HtmlComponent page = pageResolver.getPage(sessionId, path);
+            
+            if (page._state() == ComponentState.UNMOUNTED) {
+            	JrxPushHub old = hubs.getIfPresent(key);
+                if (old != null) old.close();
+                //hubs.invalidate(key);
+
+                page._initIfNeeded();
+                page._mountRecursive();
+            }
             // Pasamos el broker y la sessionId al Hub para que pueda PUBLICAR
             return new JrxPushHub(page, mapper, 2_000, broker, sessionId);
         });
@@ -84,4 +93,12 @@ public class JrxHubManager {
     public void evictAll(String sessionId) {
         hubs.asMap().keySet().removeIf(k -> k.sessionId().equals(sessionId));
     }
+    
+    public void evict(String sessionId, String path) {
+        Key key = new Key(sessionId, path);
+        JrxPushHub hub = hubs.getIfPresent(key);
+        if (hub != null) hub.close();
+        hubs.invalidate(key);
+    }
+
 }

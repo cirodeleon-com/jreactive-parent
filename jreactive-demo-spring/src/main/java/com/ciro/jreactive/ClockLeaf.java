@@ -10,7 +10,7 @@ public class ClockLeaf extends HtmlComponent {
 	@Bind public Type<String> greet = $("Hello");
 	@Bind public Type<String> clock = $("--:--:--");
 	
-	private transient Timer timer;
+	transient Timer timer;
 	
 	@Override
     public void onInit() {

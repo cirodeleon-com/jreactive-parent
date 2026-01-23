@@ -17,11 +17,13 @@ public class JrxHttpApi {
     private final PageResolver pageResolver;
     private final ObjectMapper objectMapper;
     private final CallGuard guard;
+    private final boolean persistenceEnabled;
 
-    public JrxHttpApi(PageResolver pageResolver, ObjectMapper objectMapper, CallGuard guard) {
+    public JrxHttpApi(PageResolver pageResolver, ObjectMapper objectMapper, CallGuard guard, boolean persistenceEnabled) {
         this.pageResolver = pageResolver;
         this.objectMapper = objectMapper;
         this.guard = guard;
+        this.persistenceEnabled = persistenceEnabled;
     }
 
     /** Render HTML del componente asociado a sessionId + path */
@@ -119,6 +121,9 @@ public class JrxHttpApi {
             Call callAnn = target.getAnnotation(Call.class);
             if (callAnn != null && callAnn.sync() && owner instanceof HtmlComponent comp) {
                 comp._syncState();
+                if (this.persistenceEnabled) {
+                   pageResolver.persist(sessionId, path, page);
+                }
             }
 
             Map<String, Object> envelope = new HashMap<>();

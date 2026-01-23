@@ -1,8 +1,7 @@
-/* === File: jreactive-runtime-jvm/src/main/java/com/ciro/jreactive/JrxPushHub.java === */
 package com.ciro.jreactive;
 
 import com.ciro.jreactive.smart.*;
-import com.ciro.jreactive.spi.JrxMessageBroker; // Import
+import com.ciro.jreactive.spi.JrxMessageBroker;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.io.IOException;
@@ -36,6 +35,9 @@ public class JrxPushHub {
 
     private final ObjectMapper mapper;
     private final Map<String, ReactiveVar<?>> bindings;
+    // 👇 1. NUEVO: Mapa de dueños para detectar @Client
+    private final Map<ReactiveVar<?>, HtmlComponent> owners = new IdentityHashMap<>();
+    
     private final AtomicLong seq = new AtomicLong(0);
     private final int maxBuffer;
     private final ConcurrentLinkedQueue<Map<String,Object>> buffer = new ConcurrentLinkedQueue<>();
@@ -46,25 +48,41 @@ public class JrxPushHub {
     private final Map<String, Runnable> activeSmartCleanups = new ConcurrentHashMap<>();
     private final AtomicInteger activeSinks = new AtomicInteger(0);
 
-    // 👇 Campos nuevos
     private final JrxMessageBroker broker;
     private final String sessionId;
 
-    // 👇 Constructor actualizado
     public JrxPushHub(ViewNode root, ObjectMapper mapper, int maxBuffer, JrxMessageBroker broker, String sessionId) {
         this.mapper = mapper;
         this.maxBuffer = Math.max(100, maxBuffer);
-        this.broker = broker; // Puede ser null (modo RAM)
+        this.broker = broker;
         this.sessionId = sessionId;
-        this.bindings = collect(root);
+        // 👇 Esto llenará bindings Y owners
+        this.bindings = collect(root); 
 
         bindings.forEach((k, rv) -> {
             Object initial = rv.get();
             updateSmartSubscription(k, initial);
 
             Runnable unsub = rv.onChange(val -> {
-                updateSmartSubscription(k, val); 
-                onSnapshot(k, val); 
+                updateSmartSubscription(k, val);
+                
+                // 👇 2. LÓGICA INTELEGENTE (@Client vs SSR)
+                HtmlComponent owner = owners.get(rv);
+                
+                if (owner != null && owner.getClass().isAnnotationPresent(com.ciro.jreactive.annotations.Client.class)) {
+                    // MODO OPTIMIZADO (CSR): Enviar solo el delta JSON
+                    String localKey = k.contains(".") ? k.substring(k.lastIndexOf('.') + 1) : k;
+                    Map<String, Object> delta = Map.of(localKey, val);
+                    
+                    // Enviamos al ID del componente ("CounterLeaf#1"), tipo "json", cambios [delta]
+                    onDelta(owner.getId(), "json", delta);
+                    
+                    // Log opcional para depuración
+                    // System.out.println("⚡ [SSE] JSON Delta: " + owner.getId() + " -> " + delta);
+                } else {
+                    // MODO CLÁSICO (SSR): Enviar snapshot completo de la variable
+                    onSnapshot(k, val); 
+                }
             });
 
             disposables.add(unsub);
@@ -134,7 +152,6 @@ public class JrxPushHub {
         }
     }
 
-    // 🔥 NUEVO: Método para emitir mensajes que vienen de Redis (bypassea el buffer)
     public void emitRaw(String json) {
         sinks.forEach(sink -> {
             if (sink.isOpen()) {
@@ -153,6 +170,10 @@ public class JrxPushHub {
 
     public Batch poll(long since) {
         if (since <= 0) return snapshot();
+        
+        long current = seq.get();
+        if (since > current) return snapshot();
+        
         long oldestAvailable = bufferSeq.isEmpty() ? seq.get() : bufferSeq.peek();
         if (since < oldestAvailable - 1) return snapshot(); 
 
@@ -218,7 +239,6 @@ public class JrxPushHub {
         broadcastToSinks(msg, s);
     }
 
-    // 🔥 MODIFICADO: broadcastToSinks ahora también publica en Redis
     private void broadcastToSinks(Map<String, Object> msg, long s) {
         String json;
         try {
@@ -230,10 +250,8 @@ public class JrxPushHub {
             return;
         }
         
-        // 1. Enviar a mis clientes locales (Fast Path - Latencia 0ms)
         emitRaw(json);
 
-        // 2. Enviar a la nube (Redis) para otros servidores (Slow Path)
         if (broker != null) {
             broker.publish(sessionId, json);
         }
@@ -253,18 +271,36 @@ public class JrxPushHub {
         return m;
     }
 
-    private Map<String, ReactiveVar<?>> collect(ViewNode node) {
-        Map<String, ReactiveVar<?>> map = new HashMap<>();
-        if (node instanceof ViewLeaf leaf) {
-            map.putAll(leaf.bindings());
-            return map;
-        }
-        if (node instanceof ViewComposite comp) {
-            for (ViewNode child : comp.children()) {
-                map.putAll(collect(child));
+ // 👇 ESTE ES EL MÉTODO QUE NECESITAS PARA QUE SSE/POLL VEA LOS HIJOS (RELOJ)
+    private Map<String, ReactiveVar<?>> collect(ViewNode n) {
+        Map<String, ReactiveVar<?>> m = new HashMap<>();
+
+        // 1. Si es un componente HTML (ViewLeaf)
+        if (n instanceof HtmlComponent hc) {
+            // A. Registramos sus propias variables
+            Map<String, ReactiveVar<?>> selfBinds = hc.bindings();
+            selfBinds.values().forEach(rv -> owners.put(rv, hc)); // Registramos dueño
+            m.putAll(selfBinds);
+
+            // B. 🔥 CRÍTICO: ¡Entrar recursivamente en los hijos!
+            // Sin esto, el Hub no ve el 'clock' del ClockLeaf porque está anidado.
+            for (HtmlComponent child : hc._children()) {
+                m.putAll(collect(child));
             }
+            return m; 
         }
-        return map;
+
+        // 2. Soporte para ViewComposite puros
+        if (n instanceof ViewComposite c) {
+            c.children().forEach(ch -> m.putAll(collect(ch)));
+        }
+        
+        // 3. Fallback
+        if (n instanceof ViewLeaf leaf) {
+            m.putAll(leaf.bindings());
+        }
+        
+        return m;
     }
 
     private void applyPath(Object target, String[] parts, int idx, Object value) throws Exception {
@@ -273,7 +309,9 @@ public class JrxPushHub {
         
         if (fieldName.equals("class") || fieldName.equals("classLoader")) return;
 
-        java.lang.reflect.Field f = findField(target.getClass(), fieldName);
+        boolean rootLevel = (idx == 1); // idx=1 es el primer field dentro del root reactivo
+        java.lang.reflect.Field f = findField(target.getClass(), fieldName, rootLevel);
+
         if (f == null) return;
 
         if (idx == parts.length - 1) {
@@ -296,20 +334,34 @@ public class JrxPushHub {
         f.set(target, typedValue);
     }
     
-    private java.lang.reflect.Field findField(Class<?> clazz, String name) {
+    private java.lang.reflect.Field findField(Class<?> clazz, String name, boolean rootLevel) {
         Class<?> current = clazz;
         while (current != null && current != Object.class) {
             try {
                 java.lang.reflect.Field f = current.getDeclaredField(name);
-                if (f.isAnnotationPresent(State.class) || 
-                    f.isAnnotationPresent(Bind.class)) {
-                    return f;
+
+                // Bloqueos duros
+                if (java.lang.reflect.Modifier.isStatic(f.getModifiers())) return null;
+                if ("class".equals(name) || "classLoader".equals(name) || name.startsWith("this$")) return null;
+                if ("serialVersionUID".equals(name)) return null;
+
+                if (rootLevel) {
+                    if (!(f.isAnnotationPresent(State.class) || f.isAnnotationPresent(Bind.class))) {
+                        return null;
+                    }
+                } else {
+                    // DTO interno: solo public
+                    if (!java.lang.reflect.Modifier.isPublic(f.getModifiers())) return null;
                 }
-                return null;
+
+                f.setAccessible(true);
+                return f;
+
             } catch (NoSuchFieldException e) {
                 current = current.getSuperclass();
             }
         }
         return null;
     }
+
 }

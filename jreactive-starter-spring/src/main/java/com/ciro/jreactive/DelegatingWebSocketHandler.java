@@ -46,7 +46,7 @@ public class DelegatingWebSocketHandler implements WebSocketHandler {
         // 🔥 CAMBIO: Ahora pasamos hubManager, path y sessionId
         JReactiveSocketHandler delegate = new JReactiveSocketHandler(
             page, mapper, scheduler, wsConfig,
-            hubManager, path, sessionId
+            hubManager, path, sessionId,pageResolver
         );
         
         delegate.afterConnectionEstablished(session);
@@ -72,11 +72,15 @@ public class DelegatingWebSocketHandler implements WebSocketHandler {
         var delegate = (WebSocketHandler) session.getAttributes().get("delegate");
         if (delegate != null) delegate.afterConnectionClosed(session, status);
 
-        String path = (String) session.getAttributes().get("path");
-        String sessionId = (String) session.getAttributes().get("sessionId");
+        if (!wsConfig.isPersistentState()) { 
+            String path = (String) session.getAttributes().get("path");
+            String sessionId = (String) session.getAttributes().get("sessionId");
 
-        if (path != null && sessionId != null  && "route-change".equals(status.getReason())) {
-            pageResolver.evict(sessionId, path);
+            if (path != null && sessionId != null && "route-change".equals(status.getReason())) {
+                System.out.println("🧹 Limpiando estado (Modo Efímero): " + path);
+                pageResolver.evict(sessionId, path);
+                hubManager.evict(sessionId, path);
+            }
         }
     }
 

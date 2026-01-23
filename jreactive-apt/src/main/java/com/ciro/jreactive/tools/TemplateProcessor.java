@@ -2,6 +2,7 @@ package com.ciro.jreactive.tools;
 
 import com.ciro.jreactive.Bind;
 import com.ciro.jreactive.State;
+import com.ciro.jreactive.annotations.Call;
 import com.google.auto.service.AutoService;
 import com.sun.source.tree.BlockTree;
 import com.sun.source.tree.ExpressionTree;
@@ -44,6 +45,10 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
+import javax.tools.JavaFileObject;
+import java.io.Writer;
+import java.io.IOException;
+import javax.lang.model.element.VariableElement;
 
 @AutoService(Processor.class)
 @SupportedAnnotationTypes("*")
@@ -120,6 +125,11 @@ public final class TemplateProcessor extends AbstractProcessor {
 					.map(e -> (ExecutableElement) e).filter(m -> m.getSimpleName().contentEquals("template"))
 					.filter(m -> m.getParameters().isEmpty()).filter(m -> !m.getModifiers().contains(Modifier.ABSTRACT))
 					.forEach(tpl -> checkTemplate(clazz, tpl));
+			
+			if (shouldGenerateAccessor(clazz)) {
+                generateJavaAccessor(clazz);
+            }
+			
 		}
 		return false;
 	}
@@ -586,4 +596,173 @@ public final class TemplateProcessor extends AbstractProcessor {
                     "❌ Error generando JS para " + className + ": " + e.getMessage());
         }
     }
+	
+	// =================================================================================
+    // ⚡ LÓGICA AOT (GENERACIÓN DE ACCESSORS) - FASE 5
+    // =================================================================================
+
+    private boolean shouldGenerateAccessor(TypeElement clazz) {
+        // Generamos si tiene campos @State, @Bind o métodos @Call
+        for (Element e : clazz.getEnclosedElements()) {
+            if (e.getAnnotation(State.class) != null || 
+                e.getAnnotation(Bind.class) != null || 
+                e.getAnnotation(Call.class) != null) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private void generateJavaAccessor(TypeElement clazz) {
+        String pkg = processingEnv.getElementUtils().getPackageOf(clazz).getQualifiedName().toString();
+        String className = clazz.getSimpleName().toString();
+        String accessorName = className + "__Accessor";
+
+        try {
+            JavaFileObject file = filer.createSourceFile(pkg + "." + accessorName, clazz);
+            try (Writer w = file.openWriter()) {
+                w.write("package " + pkg + ";\n\n");
+                w.write("import com.ciro.jreactive.spi.ComponentAccessor;\n");
+                w.write("import com.ciro.jreactive.spi.AccessorRegistry;\n");
+                w.write("import javax.annotation.processing.Generated;\n\n");
+
+                w.write("@Generated(\"JReactiveAPT\")\n");
+                w.write("public class " + accessorName + " implements ComponentAccessor<" + className + "> {\n\n");
+
+                // Auto-registro estático: Se registra solo al cargar la clase
+                w.write("    static {\n");
+                w.write("        AccessorRegistry.register(" + className + ".class, new " + accessorName + "());\n");
+                w.write("    }\n\n");
+
+                generateWriteMethod(w, clazz, className);
+                generateReadMethod(w, clazz, className);
+                generateCallMethod(w, clazz, className);
+
+                w.write("}\n");
+            }
+        } catch (IOException e) {
+            processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR, "Error generando accessor: " + e.getMessage());
+        }
+    }
+
+    private void generateWriteMethod(Writer w, TypeElement clazz, String className) throws IOException {
+        w.write("    @Override\n");
+        w.write("    public void write(" + className + " t, String p, Object v) {\n");
+        w.write("        switch (p) {\n");
+
+        for (Element e : clazz.getEnclosedElements()) {
+            if (e.getKind() == ElementKind.FIELD) {
+                String name = e.getSimpleName().toString();
+                String key = name;
+                
+                State s = e.getAnnotation(State.class);
+                Bind b = e.getAnnotation(Bind.class);
+                if (s != null && !s.value().isBlank()) key = s.value();
+                if (b != null && !b.value().isBlank()) key = b.value();
+
+                if (s != null || b != null) {
+                	
+                	if (e.getModifiers().contains(Modifier.PRIVATE)) {
+                        processingEnv.getMessager().printMessage(
+                            Diagnostic.Kind.ERROR, 
+                            "🚨 AOT ERROR: El campo '" + e.getSimpleName() + "' no puede ser private. " +
+                            "JReactive necesita acceso (package-private o public) para generar el codigo sin reflexion.", 
+                            e
+                        );
+                        continue; // Saltamos para no generar código roto
+                    }
+                	
+                    TypeMirror type = e.asType();
+                    w.write("            case \"" + key + "\":\n");
+                    w.write("                t." + name + " = " + castLogic(type, "v") + ";\n");
+                    w.write("                break;\n");
+                }
+            }
+        }
+        w.write("        }\n");
+        w.write("    }\n\n");
+    }
+
+    private void generateReadMethod(Writer w, TypeElement clazz, String className) throws IOException {
+        w.write("    @Override\n");
+        w.write("    public Object read(" + className + " t, String p) {\n");
+        w.write("        switch (p) {\n");
+
+        for (Element e : clazz.getEnclosedElements()) {
+        	
+        	if (e.getModifiers().contains(Modifier.PRIVATE)) {
+                processingEnv.getMessager().printMessage(
+                    Diagnostic.Kind.ERROR, 
+                    "🚨 AOT ERROR: El campo '" + e.getSimpleName() + "' no puede ser private. " +
+                    "JReactive necesita acceso (package-private o public) para generar el codigo sin reflexion.", 
+                    e
+                );
+                continue; // Saltamos para no generar código roto
+            }
+        	
+            if (e.getKind() == ElementKind.FIELD) {
+                if (e.getAnnotation(State.class) != null || e.getAnnotation(Bind.class) != null) {
+                    String name = e.getSimpleName().toString();
+                    w.write("            case \"" + name + "\": return t." + name + ";\n");
+                }
+            }
+        }
+        w.write("            default: return null;\n");
+        w.write("        }\n");
+        w.write("    }\n\n");
+    }
+
+    private void generateCallMethod(Writer w, TypeElement clazz, String className) throws IOException {
+        w.write("    @Override\n");
+        w.write("    public Object call(" + className + " t, String m, Object... args) {\n");
+        w.write("        switch (m) {\n");
+
+        for (Element e : clazz.getEnclosedElements()) {
+            if (e.getKind() == ElementKind.METHOD && e.getAnnotation(Call.class) != null) {
+                ExecutableElement method = (ExecutableElement) e;
+                String methodName = method.getSimpleName().toString();
+                
+                w.write("            case \"" + methodName + "\":\n");
+                w.write("                t." + methodName + "(");
+                List<? extends VariableElement> params = method.getParameters();
+                for (int i = 0; i < params.size(); i++) {
+                    TypeMirror pt = params.get(i).asType();
+                    w.write(castLogic(pt, "args[" + i + "]"));
+                    if (i < params.size() - 1) w.write(", ");
+                }
+                w.write(");\n");
+                
+                if (method.getReturnType().getKind() == TypeKind.VOID) {
+                    w.write("                return null;\n");
+                } else {
+                    w.write("                return null;\n"); 
+                }
+            }
+        }
+        w.write("            default: throw new IllegalArgumentException(\"Method not found: \" + m);\n");
+        w.write("        }\n");
+        w.write("    }\n\n");
+    }
+
+    
+    
+    private String castLogic(TypeMirror type, String varName) {
+        String t = type.toString();
+        
+        // Limpieza de anotaciones en el tipo (opcional, pero ayuda a limpiar el código generado)
+        // t = t.replaceAll("@\\S+\\s+", ""); 
+
+        // Conversiones seguras básicas
+        if (t.equals("int") || t.equals("java.lang.Integer")) return "((Number) " + varName + ").intValue()";
+        if (t.equals("long") || t.equals("java.lang.Long")) return "((Number) " + varName + ").longValue()";
+        if (t.equals("double") || t.equals("java.lang.Double")) return "((Number) " + varName + ").doubleValue()";
+        if (t.equals("boolean") || t.equals("java.lang.Boolean")) return "(Boolean) " + varName;
+        if (t.equals("java.lang.String")) return "(String) " + varName;
+        
+        // Fallback genérico (unsafe cast)
+        // Ya no hacemos replace, construimos el string limpio
+        return "(" + t + ") " + varName;
+    }
+	
+	
 }

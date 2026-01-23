@@ -68,6 +68,8 @@ public class WsEndpoint {
 
             // 👇 2. Obtener Hub
             JrxPushHub hub = hubManager.hub(sid, path);
+            
+            final String finalPath=path;
 
             JrxProtocolHandler handler = new JrxProtocolHandler(
                 page,
@@ -75,7 +77,16 @@ public class WsEndpoint {
                 scheduler,
                 true,
                 512,
-                16
+                16,
+                () -> {
+                    // ✅ Callback de persistencia (Write-Back)
+                    // Cada vez que el usuario escribe, guardamos en Redis/RAM
+                    try {
+                        pageResolver.persist(sid, finalPath, page);
+                    } catch (Exception e) {
+                        e.printStackTrace();
+                    }
+                }
             );
 
             // 👇 3. Llamada corregida con los 3 argumentos

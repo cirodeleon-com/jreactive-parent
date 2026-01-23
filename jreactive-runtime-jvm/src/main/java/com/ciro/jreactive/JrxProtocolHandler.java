@@ -27,13 +27,18 @@ public class JrxProtocolHandler {
     private final Map<String, Runnable> activeSmartCleanups = new ConcurrentHashMap<>();
     private final Map<Class<?>, Map<String, Field>> fieldCache = new ConcurrentHashMap<>();
     private final Map<ReactiveVar<?>, HtmlComponent> owners = new IdentityHashMap<>();
+    private final transient Runnable persistenceCallback;
+    private final AtomicLong seq = new AtomicLong(0);
+
 
     private record Event(String k, Object v) {}
     private record DeltaPacket(String type, List<?> changes) {}
 
-    public JrxProtocolHandler(ViewNode root, ObjectMapper m, ScheduledExecutorService s, boolean bp, int mq, int fi) {
+    public JrxProtocolHandler(ViewNode root, ObjectMapper m,
+    		   ScheduledExecutorService s, boolean bp, int mq, int fi, Runnable persistenceCallback) {
+    	
         this.mapper = m; this.scheduler = s; this.backpressureEnabled = bp; this.maxQueue = mq; this.flushIntervalMs = fi;
-        
+        this.persistenceCallback = persistenceCallback;
         // 🔥 Actualizamos la llamada a collect para llenar el mapa de dueños
         this.bindings = collect(root); 
 
@@ -58,6 +63,7 @@ public class JrxProtocolHandler {
                     // Comportamiento normal (SSR o variables globales)
                     broadcast(k, val);
                 }
+                if (this.persistenceCallback != null) this.persistenceCallback.run();
             }));
         });
     }
@@ -77,8 +83,14 @@ public class JrxProtocolHandler {
             Map m = mapper.readValue(payload, Map.class);
             String k = (String) m.get("k"); Object v = m.get("v");
             ReactiveVar<Object> rv = (ReactiveVar<Object>) bindings.get(k);
-            if (rv != null) rv.set(v);
-            else if (k.contains(".")) updateDeep(k, v);
+            if (rv != null) {
+            	rv.set(v);
+            	if (this.persistenceCallback != null) this.persistenceCallback.run();
+            }
+            else if (k.contains(".")) {
+            	updateDeep(k, v);
+            	if (this.persistenceCallback != null) this.persistenceCallback.run();
+            }
         } catch (Exception e) { log.error("Protocol error", e); }
     }
 
@@ -104,13 +116,17 @@ public class JrxProtocolHandler {
                 // 🔥 SEGURIDAD: Bloqueamos acceso explícito a metadatos de Java
                 if (p[i].equals("class") || p[i].equals("classLoader")) return;
 
-                Field f = getF(o.getClass(), p[i]);
+                boolean rootLevel = (i == start); // primer salto desde el root reactivo
+                Field f = getF(o.getClass(), p[i], rootLevel);
+
                 if (f == null) return;
                 o = f.get(o);
                 if (o == null) return; 
             }
             
-            Field f = getF(o.getClass(), p[p.length - 1]);
+            boolean rootLevelFinal = (start == p.length - 1); // raro, pero por seguridad
+            Field f = getF(o.getClass(), p[p.length - 1], rootLevelFinal);
+
             if (f != null) {
                 // 🔥 SEGURIDAD: Bloqueamos escritura en campos sensibles
                 if (f.getName().equals("class")) return;
@@ -137,75 +153,118 @@ public class JrxProtocolHandler {
         }
     }
     
-    private Field getF(Class<?> c, String n) {
-        return fieldCache.computeIfAbsent(c, x -> new ConcurrentHashMap<>()).computeIfAbsent(n, x -> {
-            Class<?> curr = c;
-            while (curr != null && curr != Object.class) {
-                try {
-                    Field f = curr.getDeclaredField(n);
-                    
-                    // 🔥 LA CLAVE DE SEGURIDAD:
-                    // Solo permitimos campos que el desarrollador marcó como reactivos.
-                    // Esto evita que modifiquen campos internos como 'password' o 'isAdmin'.
-                    if (f.isAnnotationPresent(com.ciro.jreactive.State.class) || 
-                        f.isAnnotationPresent(com.ciro.jreactive.Bind.class)) {
-                        
+    private Field getF(Class<?> c, String n, boolean rootLevel) {
+        return fieldCache
+            .computeIfAbsent(c, x -> new ConcurrentHashMap<>())
+            .computeIfAbsent((rootLevel ? "ROOT:" : "NEST:") + n, _k -> {
+
+                Class<?> curr = c;
+                while (curr != null && curr != Object.class) {
+                    try {
+                        Field f = curr.getDeclaredField(n);
+
+                        // Bloqueos duros
+                        if (java.lang.reflect.Modifier.isStatic(f.getModifiers())) return null;
+                        if ("class".equals(n) || "classLoader".equals(n) || n.startsWith("this$")) return null;
+                        if ("serialVersionUID".equals(n)) return null;
+
+                        if (rootLevel) {
+                            // Root del componente: SOLO campos reactivos
+                            if (!(f.isAnnotationPresent(com.ciro.jreactive.State.class) ||
+                                  f.isAnnotationPresent(com.ciro.jreactive.Bind.class))) {
+                                log.warn("🚨 Intento de acceso no autorizado al campo ROOT: {} en {}", n, c.getName());
+                                return null;
+                            }
+                        } else {
+                            // DTO interno: permitir SOLO public (seguro y simple)
+                            if (!java.lang.reflect.Modifier.isPublic(f.getModifiers())) return null;
+                        }
+
                         f.setAccessible(true);
                         return f;
-                    } else {
-                        log.warn("🚨 Intento de acceso no autorizado al campo: {} en la clase {}", n, c.getName());
-                        return null; 
+
+                    } catch (NoSuchFieldException e) {
+                        curr = curr.getSuperclass();
                     }
-                } catch (NoSuchFieldException e) {
-                    curr = curr.getSuperclass();
                 }
-            }
-            return null;
-        });
+                return null;
+            });
     }
+
 
  // 🔥 CAMBIO: Ahora aceptamos el Hub y el cursor 'since' opcionales
     public void onOpen(JrxSession s, JrxPushHub hub, long since) {
         sessions.add(s);
 
-        // 1. RECUPERACIÓN DE HISTORIAL (Solo si es una reconexión)
+        boolean recovered = false;
+
+        // 1) RECUPERACIÓN DE HISTORIAL (reconexión)
         if (hub != null && since > 0) {
             try {
-                // Pedimos los mensajes perdidos al Hub
-                var missedBatch = hub.poll(since);
-                
-                // Si hay mensajes que el cliente se perdió, se los enviamos YA.
-                if (!missedBatch.getBatch().isEmpty()) {
+                var missed = hub.poll(since);
+                if (!missed.getBatch().isEmpty()) {
                     Map<String, Object> envelope = new HashMap<>();
-                    envelope.put("seq", missedBatch.getSeq());
-                    envelope.put("batch", missedBatch.getBatch());
-                    
+                    envelope.put("seq", missed.getSeq());
+                    envelope.put("batch", missed.getBatch());
+
                     s.sendText(mapper.writeValueAsString(envelope));
-                    log.info("Recovered {} missed messages for session {}", missedBatch.getBatch().size(), s.getId());
+                    recovered = true;
+
+                    log.info("Recovered {} missed messages for session {}", 
+                             missed.getBatch().size(), s.getId());
                 }
             } catch (Exception e) {
                 log.warn("Failed to recover history for session " + s.getId(), e);
             }
         }
 
-        // 2. ENVÍO DE ESTADO ACTUAL (Snapshot)
-        // El comportamiento estándar de siempre
-        bindings.forEach((k, v) -> {
-            try {
-                s.sendText(jsonS(k, v.get()));
-            } catch (Exception e) {
-                // ignorar errores de envío inicial
-            }
-        });
+        // 2) SNAPSHOT SOLO SI NO HUBO RECOVERY
+        if (recovered) return;
+
+        try {
+            List<Map<String, Object>> batch = new ArrayList<>();
+
+            bindings.forEach((k, v) -> {
+                Map<String, Object> m = new HashMap<>();
+                m.put("k", k);
+                m.put("v", v.get());
+                batch.add(m);
+            });
+
+            long sseq = seq.incrementAndGet();
+            Map<String, Object> envelope = Map.of(
+                "seq", sseq,
+                "batch", batch
+            );
+
+            s.sendText(mapper.writeValueAsString(envelope));
+
+        } catch (Exception e) {
+            log.warn("Failed to send initial snapshot for session " + s.getId(), e);
+        }
     }
+
     public void onClose(JrxSession s) { sessions.remove(s); if (sessions.isEmpty()) { queue.clear(); activeSmartCleanups.values().forEach(Runnable::run); activeSmartCleanups.clear(); disposables.forEach(Runnable::run); disposables.clear(); } }
     private void broadcast(String k, Object v) { if (!backpressureEnabled) sendI(k, v); else { enq(k, v); sched(); } }
     private void broadcastDelta(String k, String t, Object c) { DeltaPacket p = new DeltaPacket(t, List.of(c)); if (backpressureEnabled) { enq(k, p); sched(); } else sendRaw(k, null, p); }
     private void sendI(String k, Object v) { sendRaw(k, v, null); }
+
     private void sendRaw(String k, Object v, DeltaPacket dp) {
         try { String m = buildM(k, v, dp); sessions.removeIf(s -> { if (!s.isOpen()) return true; try { synchronized(s){s.sendText(m);} return false; } catch(Exception e){return true;} }); } catch(Exception e){}
     }
-    private String buildM(String k, Object v, DeltaPacket dp) throws IOException { Map p = new HashMap(); p.put("k", k); if (dp != null) { p.put("delta", true); p.put("type", dp.type()); p.put("changes", dp.changes()); } else p.put("v", v); return mapper.writeValueAsString(p); }
+
+    private String buildM(String k, Object v, DeltaPacket dp) throws IOException {
+        Map p = new HashMap();
+        p.put("k", k);
+        if (dp != null) {
+            p.put("delta", true);
+            p.put("type", dp.type());
+            p.put("changes", dp.changes());
+        } else p.put("v", v);
+        return mapper.writeValueAsString(p);
+    }
+
+    
     private void enq(String k, Object v) { if (queueSize.incrementAndGet() > maxQueue && queue.poll() != null) queueSize.decrementAndGet(); queue.offer(new Event(k, v)); }
     private void sched() { if (flushScheduled.compareAndSet(false, true)) scheduler.schedule(this::flush, flushIntervalMs, TimeUnit.MILLISECONDS); }
     private void flush() {
@@ -264,7 +323,12 @@ public class JrxProtocolHandler {
                 list.add(m);
             });
             
-            String pay = mapper.writeValueAsString(list);
+            long sseq = seq.incrementAndGet();
+            String pay = mapper.writeValueAsString(Map.of(
+                "seq", sseq,
+                "batch", list
+            ));
+
             
             sessions.removeIf(s -> {
                 if (!s.isOpen()) return true;
