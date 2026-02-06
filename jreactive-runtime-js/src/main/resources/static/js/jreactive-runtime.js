@@ -32,11 +32,13 @@ const globalState     = Object.create(null);   // estado global logical: user, t
 const storeListeners  = new Map();  
 let es = null;              // EventSource
 let lastSeq = 0;            // cursor incremental
-let transport = 'sse';       // 'ws' | 'sse' | 'poll'
+let transport = 'ws';       // 'ws' | 'sse' | 'poll'
+let httpQueue = Promise.resolve();
 // --- Variables Globales Nuevas ---
 let wsRetryCount = 0;       // Contador de intentos fallidos
 const MAX_WS_RETRIES = 5;   // Intentar 5 veces antes de rendirse a SSE
 let recoveryTimer = null;   // Timer para intentar volver a WS si estamos en SSE
+const inFlightUpdates = new Set(); // Registra qué llaves están viajando al servidor
 
 
 const Store = {
@@ -219,6 +221,13 @@ function createReactiveProxy(rootEl, initialState) {
     return proxy;
 }
 
+function enqueueHttp(task) {
+    // Encadenamos la tarea al final de la promesa actual
+    const next = httpQueue.then(() => task().catch(err => console.error("HTTP error in queue:", err)));
+    httpQueue = next; // Actualizamos la cola
+    return next;
+  }
+
 /* ──────────────────────────────────────────────────────────────
  * HELPERS CORREGIDOS (Soporte Flat Keys)
  * ────────────────────────────────────────────────────────────── */
@@ -292,7 +301,7 @@ function normalizeIncoming(pkt) {
   return [pkt];
 }
 
-
+/*
 function applyBatch(batch) {
   batch.forEach(msg => {
     if (!msg) return;
@@ -310,7 +319,46 @@ function applyBatch(batch) {
     }
   });
 }
+*/
 
+function applyBatch(batch) {
+  // 🔥 FIX DE ORDEN: Priorizar Estructuras sobre Valores
+  // Esto asegura que la lista de opciones (Array) se procese ANTES 
+  // que el valor seleccionado (String), evitando selects vacíos.
+  batch.sort((a, b) => {
+      // Obtenemos el valor real (ya sea 'v' o 'changes' si es delta)
+      const valA = a.delta ? a.changes : (a.v ?? a.value);
+      const valB = b.delta ? b.changes : (b.v ?? b.value);
+
+      // Definimos "Estructura" como Array u Objeto no nulo
+      const isStructA = Array.isArray(valA) || (valA && typeof valA === 'object');
+      const isStructB = Array.isArray(valB) || (valB && typeof valB === 'object');
+
+      // Si A es estructura y B no, A va primero (-1)
+      if (isStructA && !isStructB) return -1;
+      // Si B es estructura y A no, B va primero (1)
+      if (!isStructA && isStructB) return 1;
+      // Si son iguales, mantenemos el orden original
+      return 0;
+  });
+
+  // Procesar en el orden corregido
+  batch.forEach(msg => {
+    if (!msg) return;
+
+    // soporte nombres cortos y largos
+    const k = msg.k ?? msg.key;
+    const v = msg.v ?? msg.value;
+
+    if (msg.delta) {
+      const type    = msg.type ?? msg.t;
+      const changes = msg.changes ?? msg.c ?? [];
+      applyDelta(k, type, changes);
+    } else {
+      applyStateForKey(k, v);
+    }
+  });
+}
 
 function stopSse() {
   if (es) { try { es.close(); } catch(_) {} }
@@ -1194,9 +1242,100 @@ document.addEventListener('DOMContentLoaded', () => {
  /* ------------------------------------------------------------------
  * 7. SPA Router (mejorado)
  * ------------------------------------------------------------------ */
+async function loadRoute(path = location.pathname) {
+  startLoading(); 
+  try {
+    // ---------------------------------------------------------
+    // 1. GESTIÓN DE SALIDA (Igual que antes)
+    // ---------------------------------------------------------
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.close(1000, "route-change");
+    } else {
+        fetch('/jrx/leave', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path: currentPath }),
+            keepalive: true 
+        }).catch(() => {});
+    }
+    ws = null;
+    
+    // Limpieza local
+    lastSeq = 0;
+    bindings.clear();
+    for (const k in state) delete state[k]; // Borramos estado anterior
 
+    // ---------------------------------------------------------
+    // 2. FETCH Y RENDER
+    // ---------------------------------------------------------
+    // Truco anti-caché
+    const separator = path.includes('?') ? '&' : '?';
+    const uniqueUrl = path + separator + 't=' + Date.now();
 
+    const html = await fetch(uniqueUrl, { headers: { 'X-Partial': '1' },credentials: 'include' }).then(r => r.text());
 
+    const app = document.getElementById('app');
+    
+    // Ocultamos un instante para evitar que se vea el HTML crudo si hubiera flashes
+    // (aunque con hidratación inversa podrías quitar esto si quieres)
+    app.style.visibility = 'hidden'; 
+    app.innerHTML = html;
+    
+    executeInlineScripts(app);
+    reindexBindings();
+
+    // ---------------------------------------------------------
+    // 3. 🔥 HIDRATACIÓN INVERSA (SEGURA)
+    // ---------------------------------------------------------
+    bindings.forEach((nodes, key) => {
+      nodes.forEach(el => {
+        // A) NODOS DE TEXTO: NO TOCAR. 
+        // El servidor ya los mandó renderizados (ej: "Contador: 5").
+        // Si ejecutamos renderText() ahora, como el state está vacío, lo borraríamos.
+        if (el.nodeType === Node.TEXT_NODE) return;
+
+        // B) INPUTS: LEER DEL DOM.
+        // El servidor mandó <input value="Colombia">. Leemos eso y llenamos el state.
+        if (el.nodeType === Node.ELEMENT_NODE) {
+            const tag = el.tagName;
+            if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') {
+                let initialVal;
+                
+                if (el.type === 'checkbox' || el.type === 'radio') {
+                    initialVal = el.checked;
+                } else {
+                    // Para inputs numéricos, intentamos convertir, si no, string
+                    initialVal = el.value; 
+                    if (el.type === 'number' && initialVal !== '') {
+                        initialVal = Number(initialVal);
+                    }
+                }
+                
+                // ¡Aquí está la magia! El DOM alimenta al Estado inicial.
+                state[key] = initialVal;
+            }
+        }
+      });
+    });
+
+    // 4. Inicializar directivas (Ahora funcionan bien porque 'state' ya tiene datos)
+    updateIfBlocks();
+    updateEachBlocks();
+    hydrateEventDirectives(app);
+    setupEventBindings();
+
+    // 5. Conectar transporte (Traerá confirmación del backend, pero visualmente ya estamos listos)
+    connectTransport(path);
+
+    app.style.visibility = '';
+    currentPath = path; 
+
+  } finally {
+      stopLoading(); 
+  }
+}
+
+/*
 async function loadRoute(path = location.pathname) {
   startLoading(); 
   try {
@@ -1273,6 +1412,7 @@ async function loadRoute(path = location.pathname) {
       stopLoading(); 
   }
 }
+*/
 
 
 
@@ -1296,30 +1436,37 @@ window.addEventListener('popstate', () => {
 });
 
 async function sendSet(k, v) {
-  // WS si está disponible
+  // WS: Envío directo (el socket garantiza el orden)
   if (ws && ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify({ k, v }));
     return;
   }
+  
+  inFlightUpdates.add(k);
 
-  // SSE o Poll: usamos HTTP
-  try {
-    const res = await fetch(`/jrx/set?path=${encodeURIComponent(currentPath)}`, {
-      method: 'POST',
-      headers: {
-        'X-Requested-With': 'JReactive',
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({ k, v })
-    });
-    
-    if (res.ok && transport === 'poll') {
-       triggerImmediatePoll();
-    }
-    
-  } catch (e) {
-    console.warn('[SET HTTP failed]', e);
-  }
+  // Poll/SSE: Usamos la cola para evitar carreras (Race Conditions)
+  // El 'return' devuelve la promesa de la cola para que quien llame pueda esperar si quiere
+  return enqueueHttp(async () => {
+      try {
+        const res = await fetch(`/jrx/set?path=${encodeURIComponent(currentPath)}`, {
+          method: 'POST',
+          headers: {
+            'X-Requested-With': 'JReactive',
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ k, v })
+        });
+        
+        if (res.ok && transport === 'poll') {
+           triggerImmediatePoll();
+        }
+      } catch (e) {
+        console.warn('[SET HTTP failed]', e);
+      } finally {
+        // Pequeño delay para dar tiempo a que el eco del servidor sea ignorado por updateDomForKey
+        setTimeout(() => inFlightUpdates.delete(k), 400);
+      }
+  });
 }
 
 /* Archivo: jreactive-runtime-js/.../static/js/jreactive-runtime.js */
@@ -1640,251 +1787,114 @@ async function fileInputToJrx(el) {
 
 
 
-/* ------------------------------------------------------------------
- *  NUEVA setupEventBindings (llamado desde DOMContentLoaded)
- * ------------------------------------------------------------------ */
+// 🔥 3. FUNCIÓN BLINDADA (Debounce + Cola Unificada)
 function setupEventBindings() {
   const EVENT_DIRECTIVES = ['click', 'change', 'input', 'submit'];
 
-  // 1) Soporte nuevo: varios eventos por elemento (data-callClick, data-callChange, etc.)
+  // Lógica central para ejecutar cualquier llamada @Call
+  const executeCall = async (el, evtName, qualified, rawParams, ev) => {
+    // A) Evitar recargas nativas (menos en file inputs)
+    const isFileClick = evtName === 'click' && el instanceof HTMLInputElement && el.type === 'file';
+    if (!isFileClick && ev && typeof ev.preventDefault === 'function') {
+      ev.preventDefault();
+    }
+
+    // B) DEBOUNCE: Si escribes rápido y no hay WS, esperamos 300ms
+    if (evtName === 'input' && transport !== 'ws') {
+      if (el._jrxDebounce) clearTimeout(el._jrxDebounce);
+      // Esta promesa bloquea la ejecución hasta que pase el tiempo
+      await new Promise(resolve => {
+        el._jrxDebounce = setTimeout(resolve, 300);
+      });
+    }
+
+    // C) Preparación
+    clearValidationErrors();
+    startLoading();
+
+    const paramList = (rawParams || '').split(',').map(p => p.trim()).filter(Boolean);
+    const args = [];
+    for (const p of paramList) {
+      args.push(await buildValue(p, el));
+    }
+
+    // D) La tarea de red encapsulada
+    const netTask = async () => {
+      let ok = true, code = null, error = null, payload = null;
+      try {
+        const res = await fetch('/call/' + encodeURIComponent(qualified), {
+          method: 'POST',
+          headers: { 'X-Requested-With': 'JReactive', 'Content-Type': 'application/json' },
+          body: JSON.stringify({ args })
+        });
+
+        const text = await res.text();
+        if (text) try { payload = JSON.parse(text); } catch (_) { payload = text; }
+
+        if (!res.ok) {
+          ok = false;
+          error = res.statusText || ('HTTP ' + res.status);
+        } else if (payload && typeof payload === 'object') {
+          if ('ok' in payload) ok = !!payload.ok;
+          if (!ok && 'error' in payload) error = payload.error;
+          if ('code' in payload) code = payload.code;
+        }
+
+        if (ok && transport === 'poll') triggerImmediatePoll();
+
+      } catch (e) {
+        ok = false;
+        error = e?.message || String(e);
+      } finally {
+        stopLoading();
+      }
+
+      // Feedback visual
+      const detail = { element: el, qualified, args, ok, code, error, payload };
+      if (!ok && code === 'VALIDATION' && payload?.violations) {
+        applyValidationErrors(payload.violations, el);
+      }
+      window.dispatchEvent(new CustomEvent('jrx:call', { detail }));
+      if (ok) window.dispatchEvent(new CustomEvent('jrx:call:success', { detail }));
+      else {
+        window.dispatchEvent(new CustomEvent('jrx:call:error', { detail }));
+        console.error('[JReactive @Call error]', detail);
+      }
+    };
+
+    // E) ENCOLAMIENTO: Si es HTTP, ¡a la fila! (Esto arregla el race condition del país)
+    if (ws && ws.readyState === WebSocket.OPEN) {
+       netTask(); // WS es rápido y ordenado, va directo
+    } else {
+       enqueueHttp(netTask); // HTTP debe esperar a que terminen los set previos
+    }
+  };
+
+  // --- Bindeo de eventos Nuevos (data-call-click) ---
   EVENT_DIRECTIVES.forEach(evtName => {
     const capEvt = evtName.charAt(0).toUpperCase() + evtName.slice(1);
-
-    // atributo real en HTML: data-call-click → dataset.callClick
     const selector = `[data-call-${evtName}]`;
 
     $$(selector).forEach(el => {
       const flag = `_jrxCallBound_${evtName}`;
       if (el[flag]) return;
       el[flag] = true;
-
       const qualified = el.dataset[`call${capEvt}`];
-      const rawParams = el.dataset[`param${capEvt}`] || '';
-
-      const paramList = rawParams
-        .split(',')
-        .map(p => p.trim())
-        .filter(Boolean);
-
-      el.addEventListener(evtName, async ev => {
-        // 🔥 NO bloquear el click en <input type="file">
-        const isFileClick =
-          evtName === 'click' &&
-          ev.target instanceof HTMLInputElement &&
-          ev.target.type === 'file';
-
-        // Opcional: evitar submit/recarga por defecto
-        if (!isFileClick && ev && typeof ev.preventDefault === 'function') {
-          ev.preventDefault();
-        }
-
-        clearValidationErrors();
-        
-        startLoading();
-
-        // 👇 Igual que antes: construir args con buildValue (soporta archivos)
-        const args = [];
-        for (const p of paramList) {
-          args.push(await buildValue(p,el));
-        }
-
-        let ok      = true;
-        let code    = null;
-        let error   = null;
-        let payload = null;
-
-        try {
-          const res  = await fetch('/call/' + encodeURIComponent(qualified), {
-            method: 'POST',
-            headers: {
-              'X-Requested-With': 'JReactive',
-              'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({ args })
-          });
-
-          const text = await res.text();
-          if (text) {
-            try {
-              payload = JSON.parse(text);
-            } catch (_) {
-              // Por si algún día devuelves texto plano
-              payload = text;
-            }
-          }
-
-          // Si HTTP no es 2xx, ya lo marcamos como error
-          if (!res.ok) {
-            ok    = false;
-            error = res.statusText || ('HTTP ' + res.status);
-          }
-
-          // Envelope estándar
-          if (payload && typeof payload === 'object') {
-            if ('ok' in payload) {
-              ok = !!payload.ok;
-            }
-            if (!ok && 'error' in payload) {
-              error = payload.error;
-            }
-            if ('code' in payload) {
-              code = payload.code;
-            }
-          }
-
-          if (ok && transport === 'poll') {
-            triggerImmediatePoll();
-          }
-        } catch (e) {
-          ok    = false;
-          error = e && e.message ? e.message : String(e);
-        }finally {
-             // 👇 2. DETENER CARGA (siempre, ocurra error o no)
-             stopLoading();
-        }
-
-        const detail = {
-          element: el,
-          qualified,
-          args,
-          ok,
-          code,
-          error,
-          payload
-        };
-
-        if (!ok && code === 'VALIDATION' &&
-            payload && Array.isArray(payload.violations)) {
-          applyValidationErrors(payload.violations, el);
-        }
-
-        // Evento genérico siempre
-        window.dispatchEvent(new CustomEvent('jrx:call', { detail }));
-
-        if (ok) {
-          window.dispatchEvent(new CustomEvent('jrx:call:success', { detail }));
-        } else {
-          window.dispatchEvent(new CustomEvent('jrx:call:error', { detail }));
-          console.error('[JReactive @Call error]', detail);
-        }
-      });
-
+      const rawParams = el.dataset[`param${capEvt}`];
+      el.addEventListener(evtName, (ev) => executeCall(el, evtName, qualified, rawParams, ev));
     });
   });
 
-  // 2) Soporte legacy (por si algún día tuvieras data-call + data-event a mano)
-    $$('[data-call]').forEach(el => {
+  // --- Bindeo de eventos Legacy (data-call) ---
+  $$('[data-call]').forEach(el => {
     if (el._jrxCallBoundLegacy) return;
     el._jrxCallBoundLegacy = true;
-
-    const eventType = el.dataset.event || 'click';
-
-    el.addEventListener(eventType, async ev => {
-      const isFileClick =
-        eventType === 'click' &&
-        ev.target instanceof HTMLInputElement &&
-        ev.target.type === 'file';
-
-      if (!isFileClick && ev && typeof ev.preventDefault === 'function') {
-        ev.preventDefault();
-      }
-
-      clearValidationErrors();
-      
-      startLoading();
-
-      const paramList = (el.dataset.param || '')
-        .split(',')
-        .map(p => p.trim())
-        .filter(Boolean);
-
-      const args = [];
-      for (const p of paramList) {
-        args.push(await buildValue(p,el));
-      }
-
-      const qualified = el.dataset.call;
-
-      let ok      = true;
-      let code    = null;
-      let error   = null;
-      let payload = null;
-
-      try {
-        const res  = await fetch('/call/' + encodeURIComponent(qualified), {
-          method: 'POST',
-          headers: {
-            'X-Requested-With': 'JReactive',
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({ args })
-        });
-
-        const text = await res.text();
-        if (text) {
-          try {
-            payload = JSON.parse(text);
-          } catch (_) {
-            payload = text;
-          }
-        }
-
-        if (!res.ok) {
-          ok    = false;
-          error = res.statusText || ('HTTP ' + res.status);
-        }
-
-        if (payload && typeof payload === 'object') {
-          if ('ok' in payload) {
-            ok = !!payload.ok;
-          }
-          if (!ok && 'error' in payload) {
-            error = payload.error;
-          }
-          if ('code' in payload) {
-            code = payload.code;
-          }
-        }
-        if (ok && transport === 'poll') {
-            triggerImmediatePoll();
-        }
-      } catch (e) {
-        ok    = false;
-        error = e && e.message ? e.message : String(e);
-      }finally {
-        // 🔥 FALTA AQUÍ:
-        stopLoading();
-      }
-
-      const detail = {
-        element: el,
-        qualified,
-        args,
-        ok,
-        code,
-        error,
-        payload
-      };
-
-      if (!ok && code === 'VALIDATION' &&
-          payload && Array.isArray(payload.violations)) {
-        applyValidationErrors(payload.violations, el);
-      }
-
-      window.dispatchEvent(new CustomEvent('jrx:call', { detail }));
-
-      if (ok) {
-        window.dispatchEvent(new CustomEvent('jrx:call:success', { detail }));
-      } else {
-        window.dispatchEvent(new CustomEvent('jrx:call:error', { detail }));
-        console.error('[JReactive @Call error]', detail);
-      }
-    });
+    const evtName = el.dataset.event || 'click';
+    const qualified = el.dataset.call;
+    const rawParams = el.dataset.param;
+    el.addEventListener(evtName, (ev) => executeCall(el, evtName, qualified, rawParams, ev));
   });
-
 }
-
-
 
 
 
@@ -2079,68 +2089,96 @@ function updateDomForKey(k, v) {
 */
 /* Archivo: jreactive-runtime.js */
 
-function updateDomForKey(k, v) {
-  let nodes = bindings.get(k);
+// =====================================================================================
+  // 🔥 FIX CRÍTICO: Nueva versión blindada de updateDomForKey
+  // =====================================================================================
+  function updateDomForKey(k, v) {
+    const strValue = v == null ? '' : String(v);
 
-  // 1. Reindexación (Sin cambios)
-  if (!nodes || !nodes.length) {
-    reindexBindings();
-    hydrateEventDirectives();
-    setupEventBindings();
-    nodes = bindings.get(k);
-  }
-  if (!nodes || !nodes.length) {
-    const simple = k.split('.').at(-1);
-    if (simple !== k) {
-      const candidates = bindings.get(simple) || [];
-      // ✅ CIRUGÍA: fallback SOLO para texto, nunca para inputs/select/textarea
-      nodes = candidates.filter(n => n && n.nodeType === Node.TEXT_NODE);
-    }
-  }
-
-  const strValue  = v == null ? '' : String(v);
-  const boolValue = !!v;
-
-  (nodes || []).forEach(el => {
-    if (el.nodeType === Node.TEXT_NODE) {
-      renderText(el);
-      return; 
-    }
+    // 1. 🛡️ ESCUDO DE VUELO INTELIGENTE:
+    // a) ¿Estoy enviando esta misma llave? (ej: "newFruit")
+    const isSelfInFlight = inFlightUpdates.has(k);
     
-    // --- 🛡️ ZONA DE PROTECCIÓN QUIRÚRGICA ---
-
-    // B. REGLA DE ORO REFINADA: 
-    // Solo protegemos si es un campo de texto activo (donde el cursor importa).
-    // Los Selects, Checkbox y Radio se actualizan siempre.
-    const isTextInput = (el.tagName === 'INPUT' && ['text', 'password', 'email', 'number', 'tel', 'url'].includes(el.type)) || el.tagName === 'TEXTAREA';
-    
-    if (document.activeElement === el && isTextInput) {
-        return; 
-    }
-
-    // C. ESCUDO TEMPORAL ADAPTATIVO (Se mantiene igual)
-    if (transport !== 'ws') {
-        const lastEditTime = lastEdits.get(el.name) || lastEdits.get(el.id) || 0;
-        const now = Date.now();
-        const safetyTime = (transport === 'poll') ? 750 : 350;
-        
-        // 🔥 CIRUGÍA: Si es un SELECT, CHECKBOX o RADIO, no bloqueamos por tiempo.
-        // Esto permite que SSE/Poll actualicen el valor inmediatamente tras el click.
-        const isDiscreteInput = el.tagName === 'SELECT' || el.type === 'checkbox' || el.type === 'radio';
-
-        if (!isDiscreteInput && (now - lastEditTime < safetyTime)) {
-            if (el.value !== strValue) return; 
+    // b) ¿Estoy enviando un HIJO de esta llave? (ej: viene "form", pero estoy enviando "form.name")
+    // Esto evita que la actualización del objeto padre aplaste lo que escribo en el hijo.
+    let hasChildInFlight = false;
+    for (const flightKey of inFlightUpdates) {
+        if (flightKey.startsWith(k + '.') || flightKey.startsWith(k + '[')) {
+            hasChildInFlight = true;
+            break;
         }
     }
 
-    // --- 🚀 APLICAR CAMBIOS ---
-    if (el.type === 'checkbox' || el.type === 'radio') {
-      if (el.checked !== boolValue) el.checked = boolValue;
-    } else {
-      if (el.value !== strValue) el.value = strValue;
+    // Si hay conflicto Y NO es una limpieza (valor vacío), bloqueamos al servidor.
+    if ((isSelfInFlight || hasChildInFlight) && strValue !== '') {
+        return; 
     }
-  });
-}
+      
+    let nodes = bindings.get(k);
+
+    // Reindex y Fallback (sin cambios)
+    if (!nodes || !nodes.length) {
+      reindexBindings();
+      hydrateEventDirectives();
+      setupEventBindings();
+      nodes = bindings.get(k);
+    }
+    if (!nodes || !nodes.length) {
+      const simple = k.split('.').at(-1);
+      if (simple !== k) {
+        const candidates = bindings.get(simple) || [];
+        nodes = candidates.filter(n => n && n.nodeType === Node.TEXT_NODE);
+      }
+    }
+
+    const boolValue = !!v;
+
+    (nodes || []).forEach(el => {
+      if (el.nodeType === Node.TEXT_NODE) {
+        renderText(el);
+        return; 
+      }
+      
+      const isTextInput = (el.tagName === 'INPUT' && ['text', 'password', 'email', 'number', 'tel', 'url'].includes(el.type)) || el.tagName === 'TEXTAREA';
+      
+      // 2. 🛡️ PROTECCIÓN DE FOCO:
+      // Si tengo el foco y el servidor quiere cambiar el valor (y no es un reset), NO LO DEJO.
+      if (document.activeElement === el && isTextInput && strValue !== '') {
+          // Excepción: Si el valor es idéntico, lo dejamos pasar (no hace daño)
+          if (el.value === strValue) return;
+          // Si es diferente, gana el usuario
+          return; 
+      }
+
+      // 3. 🛡️ ESCUDO TEMPORAL ADAPTATIVO:
+      if (transport !== 'ws') {
+          const lastEditTime = lastEdits.get(el.name) || lastEdits.get(el.id) || 0;
+          const now = Date.now();
+          const safetyTime = (transport === 'poll') ? 1000 : 400;
+          
+          const isDiscreteInput = el.tagName === 'SELECT' || el.type === 'checkbox' || el.type === 'radio';
+
+          if (!isDiscreteInput && (now - lastEditTime < safetyTime)) {
+              if (strValue !== '') return; 
+          }
+      }
+
+      // --- APLICAR CAMBIOS ---
+      if (el.type === 'checkbox' || el.type === 'radio') {
+        if (el.checked !== boolValue) el.checked = boolValue;
+      } else {
+        if (el.value !== strValue){ 
+            el.value = strValue;
+            // Si el servidor mandó limpiar (reset), borramos el rastro de edición local
+            // para que el escudo temporal no impida escribir de nuevo inmediatamente.
+            if (strValue === '') {
+              lastEdits.delete(el.name);
+              lastEdits.delete(el.id);
+            }
+        }
+      }
+    });
+  }
 
 /* === Reemplaza tu applyStateForKey con esta versión === */
 

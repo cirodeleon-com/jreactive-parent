@@ -99,6 +99,7 @@ public class JrxProtocolHandler {
         ReactiveVar<Object> root = null;
         int start = -1;
         
+        // Find the root reactive variable (e.g., "form")
         for (int i = p.length - 1; i > 0; i--) {
             root = (ReactiveVar<Object>) bindings.get(String.join(".", Arrays.copyOfRange(p, 0, i)));
             if (root != null) { start = i; break; }
@@ -107,33 +108,40 @@ public class JrxProtocolHandler {
             for (var e : bindings.entrySet()) if (e.getKey().endsWith("." + p[0])) { root = (ReactiveVar<Object>) e.getValue(); start = 1; break; }
         }
         
-        // Si el root existe, ya es seguro porque buildBindings() solo mete campos @State/@Bind
         if (root == null || root.get() == null) return;
         
         Object o = root.get();
+
         try {
+            // 1. Navigate to the parent of the field being updated
             for (int i = start; i < p.length - 1; i++) {
-                // 🔥 SEGURIDAD: Bloqueamos acceso explícito a metadatos de Java
-                if (p[i].equals("class") || p[i].equals("classLoader")) return;
-
-                boolean rootLevel = (i == start); // primer salto desde el root reactivo
+                if (p[i].equals("class") || p[i].equals("classLoader")) return; // Security
+                boolean rootLevel = (i == start);
                 Field f = getF(o.getClass(), p[i], rootLevel);
-
                 if (f == null) return;
                 o = f.get(o);
                 if (o == null) return; 
             }
             
-            boolean rootLevelFinal = (start == p.length - 1); // raro, pero por seguridad
+            // 2. Get the field to update
+            boolean rootLevelFinal = (start == p.length - 1);
             Field f = getF(o.getClass(), p[p.length - 1], rootLevelFinal);
 
             if (f != null) {
-                // 🔥 SEGURIDAD: Bloqueamos escritura en campos sensibles
-                if (f.getName().equals("class")) return;
+                if (f.getName().equals("class")) return; // Security
 
                 Object incoming = mapper.convertValue(v, mapper.constructType(f.getGenericType()));
+                
+                f.setAccessible(true);
                 Object current = f.get(o);
+                
+                // 🔥 FIX 1: Equality Check. If value hasn't changed, stop here. 
+                // This prevents infinite echo loops.
+                if (Objects.equals(current, incoming)) {
+                    return; 
+                }
 
+                // 3. Apply the update
                 if (current instanceof SmartList && incoming instanceof List<?> list) {
                     f.set(o, new SmartList<>(list));
                 } 
@@ -146,7 +154,15 @@ public class JrxProtocolHandler {
                 else {
                     f.set(o, incoming);
                 }
-                root.set(root.get());
+                
+                // 🔥 FIX 2: Granular Broadcast
+                // Instead of triggering root.set() (which sends the whole object),
+                // we manually broadcast ONLY the specific key that changed (e.g., "form.name").
+                // The frontend will only update that specific input.
+                broadcast(fk, incoming); 
+                
+                // If you have server-side logic listening to the root object, you might need
+                // to manually trigger it here, but avoiding root.set() is key to fixing the UI.
             }
         } catch (Exception e) { 
             log.error("Deep update fail: " + fk, e); 

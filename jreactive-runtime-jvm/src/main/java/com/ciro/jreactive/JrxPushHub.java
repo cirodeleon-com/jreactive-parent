@@ -50,8 +50,10 @@ public class JrxPushHub {
 
     private final JrxMessageBroker broker;
     private final String sessionId;
+    private final HtmlComponent pageInstance;
 
-    public JrxPushHub(ViewNode root, ObjectMapper mapper, int maxBuffer, JrxMessageBroker broker, String sessionId) {
+    public JrxPushHub(HtmlComponent root, ObjectMapper mapper, int maxBuffer, JrxMessageBroker broker, String sessionId) {
+    	this.pageInstance = root;
         this.mapper = mapper;
         this.maxBuffer = Math.max(100, maxBuffer);
         this.broker = broker;
@@ -87,6 +89,10 @@ public class JrxPushHub {
 
             disposables.add(unsub);
         });
+    }
+    
+    public HtmlComponent getPageInstance() {
+        return this.pageInstance;
     }
 
     private void updateSmartSubscription(String key, Object value) {
@@ -127,30 +133,7 @@ public class JrxPushHub {
         bufferSeq.clear();
     }
 
-    @SuppressWarnings("unchecked")
-    public void set(String k, Object v) {
-        ReactiveVar<Object> rv = (ReactiveVar<Object>) bindings.get(k);
-        if (rv != null) {
-            rv.set(v);
-            return;
-        }
-        if (k.contains(".")) {
-            String[] parts = k.split("\\.");
-            String rootKey = parts[0]; 
-            rv = (ReactiveVar<Object>) bindings.get(rootKey);
-            if (rv != null) {
-                Object rootObj = rv.get();
-                if (rootObj != null) {
-                    try {
-                        applyPath(rootObj, parts, 1, v);
-                        rv.set(rootObj); 
-                    } catch (Exception e) {
-                        e.printStackTrace();
-                    }
-                }
-            }
-        }
-    }
+   
 
     public void emitRaw(String json) {
         sinks.forEach(sink -> {
@@ -303,36 +286,7 @@ public class JrxPushHub {
         return m;
     }
 
-    private void applyPath(Object target, String[] parts, int idx, Object value) throws Exception {
-        if (target == null) return;
-        String fieldName = parts[idx];
-        
-        if (fieldName.equals("class") || fieldName.equals("classLoader")) return;
 
-        boolean rootLevel = (idx == 1); // idx=1 es el primer field dentro del root reactivo
-        java.lang.reflect.Field f = findField(target.getClass(), fieldName, rootLevel);
-
-        if (f == null) return;
-
-        if (idx == parts.length - 1) {
-            setField(target, f, value);
-            return;
-        }
-
-        f.setAccessible(true);
-        Object child = f.get(target);
-        if (child == null) {
-            child = f.getType().getDeclaredConstructor().newInstance();
-            f.set(target, child);
-        }
-        applyPath(child, parts, idx + 1, value);
-    }
-
-    private void setField(Object target, java.lang.reflect.Field f, Object rawValue) throws Exception {
-        f.setAccessible(true);
-        Object typedValue = mapper.convertValue(rawValue, mapper.constructType(f.getGenericType()));
-        f.set(target, typedValue);
-    }
     
     private java.lang.reflect.Field findField(Class<?> clazz, String name, boolean rootLevel) {
         Class<?> current = clazz;
@@ -363,5 +317,82 @@ public class JrxPushHub {
         }
         return null;
     }
+    
+ // ... inside JrxPushHub class ...
+
+    @SuppressWarnings("unchecked")
+    public void set(String k, Object v) {
+        ReactiveVar<Object> rv = (ReactiveVar<Object>) bindings.get(k);
+        if (rv != null) {
+            // Optimization: Don't broadcast if value is identical
+            if (Objects.equals(rv.get(), v)) return;
+            rv.set(v);
+            return;
+        }
+        
+        if (k.contains(".")) {
+            String[] parts = k.split("\\.");
+            String rootKey = parts[0]; 
+            rv = (ReactiveVar<Object>) bindings.get(rootKey);
+            
+            if (rv != null) {
+                Object rootObj = rv.get();
+                if (rootObj != null) {
+                    try {
+                        // Apply path returns TRUE only if something actually changed
+                        boolean changed = applyPath(rootObj, parts, 1, v);
+                        
+                        if (changed) {
+                             // 🔥 FIX: Granular Feedback
+                             // We send back a confirmation for specific key "form.name", NOT "form".
+                             // This stops the frontend from resetting the whole form.
+                             onSnapshot(k, v); 
+                        }
+                    } catch (Exception e) {
+                        e.printStackTrace();
+                    }
+                }
+            }
+        }
+    }
+
+    // Helper: Returns true if a change occurred
+    private boolean applyPath(Object target, String[] parts, int idx, Object value) throws Exception {
+        if (target == null) return false;
+        String fieldName = parts[idx];
+        
+        if (fieldName.equals("class") || fieldName.equals("classLoader")) return false;
+
+        boolean rootLevel = (idx == 1); 
+        java.lang.reflect.Field f = findField(target.getClass(), fieldName, rootLevel);
+
+        if (f == null) return false;
+
+        if (idx == parts.length - 1) {
+            return setField(target, f, value);
+        }
+
+        f.setAccessible(true);
+        Object child = f.get(target);
+        if (child == null) {
+            child = f.getType().getDeclaredConstructor().newInstance();
+            f.set(target, child);
+        }
+        return applyPath(child, parts, idx + 1, value);
+    }
+
+    // Helper: Sets field and checks equality
+    private boolean setField(Object target, java.lang.reflect.Field f, Object rawValue) throws Exception {
+        f.setAccessible(true);
+        Object typedValue = mapper.convertValue(rawValue, mapper.constructType(f.getGenericType()));
+        
+        Object current = f.get(target);
+        if (Objects.equals(current, typedValue)) return false; // No change = No broadcast
+        
+        f.set(target, typedValue);
+        return true; // Changed
+    }
+
+    // ... findField remains the same ...
 
 }

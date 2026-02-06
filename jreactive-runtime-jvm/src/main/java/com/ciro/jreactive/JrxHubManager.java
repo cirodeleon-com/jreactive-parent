@@ -74,19 +74,29 @@ public class JrxHubManager {
 
     public JrxPushHub hub(String sessionId, String path) {
         Key key = new Key(sessionId, path);
-        return hubs.get(key, _k -> {
-            HtmlComponent page = pageResolver.getPage(sessionId, path);
-            
-            if (page._state() == ComponentState.UNMOUNTED) {
-            	JrxPushHub old = hubs.getIfPresent(key);
-                if (old != null) old.close();
-                //hubs.invalidate(key);
+        
+        // 1. Obtenemos la instancia "VIVA" actual (la autoridad)
+        HtmlComponent currentPage = pageResolver.getPage(sessionId, path);
 
-                page._initIfNeeded();
-                page._mountRecursive();
+        // 2. Revisamos si tenemos un Hub en caché
+        JrxPushHub existingHub = hubs.getIfPresent(key);
+
+        // 3. 🔥 ZOMBIE CHECK: Si el Hub existe pero apunta a una página vieja (muerta)...
+        if (existingHub != null && existingHub.getPageInstance() != currentPage) {
+            // ...lo matamos para evitar escribir en la memoria incorrecta.
+            existingHub.close();
+            hubs.invalidate(key);
+            // System.out.println("♻️ Hub reciclado por cambio de instancia: " + path);
+        }
+
+        // 4. Ahora sí, obtenemos o creamos (si invalidamos arriba, aquí se crea uno nuevo)
+        return hubs.get(key, _k -> {
+            // Usamos currentPage que ya obtuvimos arriba
+            if (currentPage._state() == ComponentState.UNMOUNTED) {
+                 currentPage._initIfNeeded();
+                 currentPage._mountRecursive();
             }
-            // Pasamos el broker y la sessionId al Hub para que pueda PUBLICAR
-            return new JrxPushHub(page, mapper, 2_000, broker, sessionId);
+            return new JrxPushHub(currentPage, mapper, 2_000, broker, sessionId);
         });
     }
 

@@ -77,35 +77,24 @@ public abstract class HtmlComponent extends ViewLeaf implements java.io.Serializ
         });
     }
     
-    // 🔥 FIX: Sincronizado para evitar que dos hilos limpien/escriban snapshots a la vez
     public synchronized void _captureStateSnapshot() {
         if (map == null) buildBindings();
         
         _structureHashes.clear();
         _simpleSnapshots.clear();
-        _identitySnapshots.clear();
 
         for (String key : stateKeys) {
             try {
                 Object val = getFieldValueByName(key);
-                
-                _identitySnapshots.put(key, System.identityHashCode(val));
-                
                 if (val == null) {
                     _simpleSnapshots.put(key, null);
-                } 
-                else if (val instanceof SmartList || val instanceof SmartSet || val instanceof SmartMap) {
-                    // NO-OP: El sistema de eventos maneja los deltas
-                }
-                else if (val instanceof String || val instanceof Number || val instanceof Boolean) {
+                } else if (val instanceof String || val instanceof Number || val instanceof Boolean) {
                     _simpleSnapshots.put(key, val);
-                }
-                else {
+                } else if (!(val instanceof SmartList || val instanceof SmartSet || val instanceof SmartMap)) {
+                    // Es un POJO: guardamos el hash de sus campos
                     _structureHashes.put(key, getPojoHash(val));
                 }
-            } catch (Exception e) {
-                // Ignorar
-            }
+            } catch (Exception ignored) {}
         }
         for (HtmlComponent child : _children()) {
             child._captureStateSnapshot();
@@ -292,25 +281,23 @@ public abstract class HtmlComponent extends ViewLeaf implements java.io.Serializ
     }
 
     private boolean hasChanged(String key, Object newVal) {
-        Integer oldIdentity = _identitySnapshots.get(key);
-        int newIdentity = System.identityHashCode(newVal);
-        
-        if (oldIdentity != null && oldIdentity != newIdentity) {
-            return true; 
-        }
-        
+        // 1. Si es un SmartType (List/Map/Set), los deltas ya se manejan por eventos
         if (newVal instanceof SmartList<?> || newVal instanceof SmartSet<?> || newVal instanceof SmartMap<?,?>) {
             return false;
         }
 
-        if (newVal instanceof String || newVal instanceof Number || newVal instanceof Boolean) {
-            Object oldVal = _simpleSnapshots.get(key);
-            return !Objects.equals(newVal, oldVal);
+        // 2. Para tipos simples y POJOs, usamos la comparación de contenido (equals)
+        // En lugar de guardar el identityHashCode, guardamos el valor anterior o su snapshot
+        Object oldVal = _simpleSnapshots.get(key); 
+        
+        // Si el objeto es complejo (POJO), guardamos su hash de contenido (POJO Hash)
+        if (newVal != null && !(newVal instanceof String || newVal instanceof Number || newVal instanceof Boolean)) {
+            int newHash = getPojoHash(newVal);
+            Integer oldHash = _structureHashes.get(key);
+            return oldHash == null || oldHash != newHash;
         }
 
-        int newHash = getPojoHash(newVal);
-        Integer oldHash = _structureHashes.get(key);
-        return oldHash == null || oldHash != newHash;
+        return !Objects.equals(newVal, oldVal);
     }
 
     private Object getFieldValueByName(String key) throws Exception {
@@ -468,27 +455,42 @@ public abstract class HtmlComponent extends ViewLeaf implements java.io.Serializ
     
     private int getPojoHash(Object o) {
         if (o == null) return 0;
-        if (o instanceof String || o instanceof Number || o instanceof Boolean) {
+        // Tipos básicos: usar su hash natural
+        if (o instanceof String || o instanceof Number || o instanceof Boolean || o instanceof Enum) {
             return o.hashCode();
         }
+        // Colecciones: usar su hash (que ya es profundo en Java)
         if (o instanceof Collection || o instanceof Map) {
             return o.hashCode();
         }
+        
         int result = 1;
         try {
-            for (Field f : o.getClass().getDeclaredFields()) {
-                f.setAccessible(true);
-                Object val = f.get(o);
-                int elementHash = (val == null) ? 0 : val.hashCode();
-                result = 31 * result + elementHash;
+            Class<?> curr = o.getClass();
+            // Límite de seguridad para no ciclar infinitamente en grafos complejos
+            if (curr.getName().startsWith("java.")) return o.hashCode();
+
+            while (curr != null && curr != Object.class) {
+                for (Field f : curr.getDeclaredFields()) {
+                    if (java.lang.reflect.Modifier.isStatic(f.getModifiers()) || f.getName().startsWith("this$")) continue;
+                    
+                    f.setAccessible(true);
+                    Object val = f.get(o);
+                    
+                    int fieldHash = 0;
+                    if (val != null) {
+                        // 🔥 RECURSIÓN REAL: Llamamos a getPojoHash de nuevo
+                        fieldHash = getPojoHash(val); 
+                    }
+                    result = 31 * result + fieldHash;
+                }
+                curr = curr.getSuperclass();
             }
         } catch (Exception e) {
             return o.hashCode();
         }
         return result;
     }
-    
-    /* === En HtmlComponent.java === */
 
     /**
      * Calcula qué campos @State han cambiado y devuelve un mapa con los deltas.
