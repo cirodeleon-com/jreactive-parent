@@ -88,6 +88,7 @@ public class JrxTransportController {
     	});
     }
 
+
     @PostMapping(value = "/set", consumes = MediaType.APPLICATION_JSON_VALUE, produces = MediaType.APPLICATION_JSON_VALUE)
     public Map<String, Object> set(HttpServletRequest req,
                                    @RequestParam(defaultValue = "/") String path,
@@ -99,15 +100,10 @@ public class JrxTransportController {
 
         if (k == null) return Map.of("ok", false);
 
-        // ✅ Serializar /set también (CRÍTICO) para que no compita con /call
+        // ✅ El Hub ahora se encarga de la persistencia internamente 
+        // a través del callback que definimos en el JrxHubManager.
         return queue.run(sessionId, path, () -> {
             hubs.hub(sessionId, path).set(k, v);
-
-            if (wsConfig.isPersistentState()) {
-                HtmlComponent page = pageResolver.getPage(sessionId, path);
-                pageResolver.persist(sessionId, path, page);
-            }
-
             return Map.of("ok", true);
         });
     }

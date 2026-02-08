@@ -51,13 +51,15 @@ public class JrxPushHub {
     private final JrxMessageBroker broker;
     private final String sessionId;
     private final HtmlComponent pageInstance;
+    private final transient Runnable persistenceCallback;
 
-    public JrxPushHub(HtmlComponent root, ObjectMapper mapper, int maxBuffer, JrxMessageBroker broker, String sessionId) {
+    public JrxPushHub(HtmlComponent root, ObjectMapper mapper, int maxBuffer, JrxMessageBroker broker, String sessionId, Runnable persistenceCallback) {
     	this.pageInstance = root;
         this.mapper = mapper;
         this.maxBuffer = Math.max(100, maxBuffer);
         this.broker = broker;
         this.sessionId = sessionId;
+        this.persistenceCallback = persistenceCallback;
         // 👇 Esto llenará bindings Y owners
         this.bindings = collect(root); 
 
@@ -323,10 +325,17 @@ public class JrxPushHub {
     @SuppressWarnings("unchecked")
     public void set(String k, Object v) {
         ReactiveVar<Object> rv = (ReactiveVar<Object>) bindings.get(k);
+        
+        if (rv == null && k.contains(".")) {
+            String rootKey = k.split("\\.")[0];
+            rv = (ReactiveVar<Object>) bindings.get(rootKey);
+       }
+        
         if (rv != null) {
-            // Optimization: Don't broadcast if value is identical
             if (Objects.equals(rv.get(), v)) return;
             rv.set(v);
+            // 🔥 4. NOTIFICAR PERSISTENCIA (Para que la RAM se entere)
+            if (this.persistenceCallback != null) this.persistenceCallback.run();
             return;
         }
         
@@ -335,23 +344,18 @@ public class JrxPushHub {
             String rootKey = parts[0]; 
             rv = (ReactiveVar<Object>) bindings.get(rootKey);
             
-            if (rv != null) {
-                Object rootObj = rv.get();
-                if (rootObj != null) {
-                    try {
-                        // Apply path returns TRUE only if something actually changed
-                        boolean changed = applyPath(rootObj, parts, 1, v);
+            if (rv != null && rv.get() != null) {
+                try {
+                    if (applyPath(rv.get(), parts, 1, v)) {
+                        // 📢 5. Confirmación granular al cliente (Evita bloqueos en JS)
+                        onSnapshot(k, v); 
                         
-                        if (changed) {
-                             // 🔥 FIX: Granular Feedback
-                             // We send back a confirmation for specific key "form.name", NOT "form".
-                             // This stops the frontend from resetting the whole form.
-                             onSnapshot(k, v); 
+                        // 🔥 6. PERSISTENCIA CRÍTICA (Esto quita el F5)
+                        if (this.persistenceCallback != null) {
+                            this.persistenceCallback.run();
                         }
-                    } catch (Exception e) {
-                        e.printStackTrace();
                     }
-                }
+                } catch (Exception e) { e.printStackTrace(); }
             }
         }
     }

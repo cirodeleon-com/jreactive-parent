@@ -5,6 +5,7 @@
   const bindings = new Map();            // clave → [nodos texto / inputs]
   const state    = Object.create(null);  // último valor conocido
   const lastEdits = new Map();
+  let lastPageLoadTime = Date.now();
   
   /* --- Bloque CSR: Registro de Motores --- */
 const loadedCsrScripts = new Set();
@@ -422,6 +423,7 @@ async function pollLoop(path, myId) {
     const url = `/jrx/poll?path=${encodeURIComponent(path)}&since=${lastSeq || 0}`;
     
     const res = await fetch(url, {
+	  credentials: 'include',	
       headers: { 'X-Requested-With': 'JReactive' }
     });
 
@@ -1251,7 +1253,7 @@ async function loadRoute(path = location.pathname) {
     if (ws && ws.readyState === WebSocket.OPEN) {
         ws.close(1000, "route-change");
     } else {
-        fetch('/jrx/leave', {
+        await fetch('/jrx/leave', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ path: currentPath }),
@@ -1323,6 +1325,8 @@ async function loadRoute(path = location.pathname) {
     updateEachBlocks();
     hydrateEventDirectives(app);
     setupEventBindings();
+    
+    lastPageLoadTime = Date.now();
 
     // 5. Conectar transporte (Traerá confirmación del backend, pero visualmente ya estamos listos)
     connectTransport(path);
@@ -1450,6 +1454,7 @@ async function sendSet(k, v) {
       try {
         const res = await fetch(`/jrx/set?path=${encodeURIComponent(currentPath)}`, {
           method: 'POST',
+          credentials: 'include',
           headers: {
             'X-Requested-With': 'JReactive',
             'Content-Type': 'application/json'
@@ -2093,92 +2098,102 @@ function updateDomForKey(k, v) {
   // 🔥 FIX CRÍTICO: Nueva versión blindada de updateDomForKey
   // =====================================================================================
   function updateDomForKey(k, v) {
-    const strValue = v == null ? '' : String(v);
+  const strValue = v == null ? '' : String(v);
 
-    // 1. 🛡️ ESCUDO DE VUELO INTELIGENTE:
-    // a) ¿Estoy enviando esta misma llave? (ej: "newFruit")
-    const isSelfInFlight = inFlightUpdates.has(k);
-    
-    // b) ¿Estoy enviando un HIJO de esta llave? (ej: viene "form", pero estoy enviando "form.name")
-    // Esto evita que la actualización del objeto padre aplaste lo que escribo en el hijo.
-    let hasChildInFlight = false;
-    for (const flightKey of inFlightUpdates) {
-        if (flightKey.startsWith(k + '.') || flightKey.startsWith(k + '[')) {
-            hasChildInFlight = true;
-            break;
-        }
+  // 1. 🛡️ ESCUDO DE VUELO (Mantiene integridad mientras viaja el POST)
+  const isSelfInFlight = inFlightUpdates.has(k);
+  let hasChildInFlight = false;
+  for (const flightKey of inFlightUpdates) {
+    if (flightKey.startsWith(k + '.') || flightKey.startsWith(k + '[')) {
+      hasChildInFlight = true;
+      break;
     }
-
-    // Si hay conflicto Y NO es una limpieza (valor vacío), bloqueamos al servidor.
-    if ((isSelfInFlight || hasChildInFlight) && strValue !== '') {
-        return; 
-    }
-      
-    let nodes = bindings.get(k);
-
-    // Reindex y Fallback (sin cambios)
-    if (!nodes || !nodes.length) {
-      reindexBindings();
-      hydrateEventDirectives();
-      setupEventBindings();
-      nodes = bindings.get(k);
-    }
-    if (!nodes || !nodes.length) {
-      const simple = k.split('.').at(-1);
-      if (simple !== k) {
-        const candidates = bindings.get(simple) || [];
-        nodes = candidates.filter(n => n && n.nodeType === Node.TEXT_NODE);
-      }
-    }
-
-    const boolValue = !!v;
-
-    (nodes || []).forEach(el => {
-      if (el.nodeType === Node.TEXT_NODE) {
-        renderText(el);
-        return; 
-      }
-      
-      const isTextInput = (el.tagName === 'INPUT' && ['text', 'password', 'email', 'number', 'tel', 'url'].includes(el.type)) || el.tagName === 'TEXTAREA';
-      
-      // 2. 🛡️ PROTECCIÓN DE FOCO:
-      // Si tengo el foco y el servidor quiere cambiar el valor (y no es un reset), NO LO DEJO.
-      if (document.activeElement === el && isTextInput && strValue !== '') {
-          // Excepción: Si el valor es idéntico, lo dejamos pasar (no hace daño)
-          if (el.value === strValue) return;
-          // Si es diferente, gana el usuario
-          return; 
-      }
-
-      // 3. 🛡️ ESCUDO TEMPORAL ADAPTATIVO:
-      if (transport !== 'ws') {
-          const lastEditTime = lastEdits.get(el.name) || lastEdits.get(el.id) || 0;
-          const now = Date.now();
-          const safetyTime = (transport === 'poll') ? 1000 : 400;
-          
-          const isDiscreteInput = el.tagName === 'SELECT' || el.type === 'checkbox' || el.type === 'radio';
-
-          if (!isDiscreteInput && (now - lastEditTime < safetyTime)) {
-              if (strValue !== '') return; 
-          }
-      }
-
-      // --- APLICAR CAMBIOS ---
-      if (el.type === 'checkbox' || el.type === 'radio') {
-        if (el.checked !== boolValue) el.checked = boolValue;
-      } else {
-        if (el.value !== strValue){ 
-            el.value = strValue;
-            // Si el servidor mandó limpiar (reset), borramos el rastro de edición local
-            // para que el escudo temporal no impida escribir de nuevo inmediatamente.
-            if (strValue === '') {
-              lastEdits.delete(el.name);
-              lastEdits.delete(el.id);
-            }
-        }
-      }
-    });
   }
+
+  // Si estamos enviando datos, ignoramos lo que diga el servidor (evita parpadeo)
+  if ((isSelfInFlight || hasChildInFlight) && strValue !== '') {
+    return;
+  }
+
+  let nodes = bindings.get(k);
+
+  // Reindex y Fallback si la clave no se encuentra
+  if (!nodes || !nodes.length) {
+    reindexBindings();
+    hydrateEventDirectives();
+    setupEventBindings();
+    nodes = bindings.get(k);
+  }
+
+  if (!nodes || !nodes.length) {
+    const simple = k.split('.').at(-1);
+    if (simple !== k) {
+      const candidates = bindings.get(simple) || [];
+      nodes = candidates.filter(n => n && n.nodeType === Node.TEXT_NODE);
+    }
+  }
+
+  const boolValue = !!v;
+
+  (nodes || []).forEach(el => {
+    // A) Nodos de texto (Labels, Contadores)
+    if (el.nodeType === Node.TEXT_NODE) {
+      renderText(el);
+      return;
+    }
+
+    const isTextInput = (el.tagName === 'INPUT' && ['text', 'password', 'email', 'number', 'tel', 'url'].includes(el.type)) || el.tagName === 'TEXTAREA';
+
+    // 2. 🛡️ PROTECCIÓN CONTRA "SNAPSHOT VACÍO" (VITAL PARA MODO EFÍMERO)
+    // Si el servidor manda un valor vacío pero el input local YA tiene texto (por hidratación),
+    // y estamos en modo HTTP (donde el inicio es más lento), ignoramos el borrado.
+    if (strValue === '' && el.value !== '' && transport !== 'ws') {
+       if (Date.now() - lastPageLoadTime < 2500) {
+           // console.log("🛡️ Bloqueando snapshot vacío inicial para:", k);
+           return; 
+       }
+    }
+
+    // 3. 🛡️ PROTECCIÓN DE FOCO (Mejorada)
+    // Si el usuario está dentro del input, el servidor NO puede cambiar el texto
+    // a menos que sea un borrado intencional (reset).
+    if (document.activeElement === el && isTextInput) {
+      if (el.value !== strValue && strValue !== '') return;
+    }
+
+    // 4. 🛡️ ESCUDO TEMPORAL ADAPTATIVO
+    if (transport !== 'ws') {
+      // Chequeamos tanto la clave completa como el nombre del elemento
+      const editK = lastEdits.get(k) || 0;
+      const editName = lastEdits.get(el.name) || 0;
+      const lastEditTime = Math.max(editK, editName);
+      
+      const now = Date.now();
+      const safetyTime = (transport === 'poll') ? 1200 : 600;
+
+      const isDiscrete = el.tagName === 'SELECT' || el.type === 'checkbox' || el.type === 'radio';
+
+      if (!isDiscrete && (now - lastEditTime < safetyTime) && strValue !== '') {
+        return;
+      }
+    }
+
+    // --- APLICAR CAMBIOS REALES ---
+    if (el.type === 'checkbox' || el.type === 'radio') {
+      if (el.checked !== boolValue) el.checked = boolValue;
+    } else {
+      if (el.value !== strValue) {
+        el.value = strValue;
+        // Si el servidor mandó limpiar (reset), liberamos el escudo para permitir escribir de nuevo
+        if (strValue === '') {
+          lastEdits.delete(el.name);
+          lastEdits.delete(el.id);
+          lastEdits.delete(k);
+        }
+      }
+    }
+  });
+}
 
 /* === Reemplaza tu applyStateForKey con esta versión === */
 

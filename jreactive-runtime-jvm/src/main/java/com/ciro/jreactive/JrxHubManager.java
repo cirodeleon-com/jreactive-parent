@@ -77,6 +77,8 @@ public class JrxHubManager {
         
         // 1. Obtenemos la instancia "VIVA" actual (la autoridad)
         HtmlComponent currentPage = pageResolver.getPage(sessionId, path);
+        
+        currentPage.render();
 
         // 2. Revisamos si tenemos un Hub en caché
         JrxPushHub existingHub = hubs.getIfPresent(key);
@@ -96,7 +98,9 @@ public class JrxHubManager {
                  currentPage._initIfNeeded();
                  currentPage._mountRecursive();
             }
-            return new JrxPushHub(currentPage, mapper, 2_000, broker, sessionId);
+            return new JrxPushHub(currentPage, mapper, 2_000, broker, sessionId, () -> {
+                pageResolver.persist(sessionId, path, currentPage);
+            });
         });
     }
 

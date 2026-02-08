@@ -99,7 +99,6 @@ public class JrxProtocolHandler {
         ReactiveVar<Object> root = null;
         int start = -1;
         
-        // Find the root reactive variable (e.g., "form")
         for (int i = p.length - 1; i > 0; i--) {
             root = (ReactiveVar<Object>) bindings.get(String.join(".", Arrays.copyOfRange(p, 0, i)));
             if (root != null) { start = i; break; }
@@ -113,9 +112,8 @@ public class JrxProtocolHandler {
         Object o = root.get();
 
         try {
-            // 1. Navigate to the parent of the field being updated
             for (int i = start; i < p.length - 1; i++) {
-                if (p[i].equals("class") || p[i].equals("classLoader")) return; // Security
+                if (p[i].equals("class") || p[i].equals("classLoader")) return; 
                 boolean rootLevel = (i == start);
                 Field f = getF(o.getClass(), p[i], rootLevel);
                 if (f == null) return;
@@ -123,25 +121,18 @@ public class JrxProtocolHandler {
                 if (o == null) return; 
             }
             
-            // 2. Get the field to update
             boolean rootLevelFinal = (start == p.length - 1);
             Field f = getF(o.getClass(), p[p.length - 1], rootLevelFinal);
 
             if (f != null) {
-                if (f.getName().equals("class")) return; // Security
+                if (f.getName().equals("class")) return; 
 
                 Object incoming = mapper.convertValue(v, mapper.constructType(f.getGenericType()));
-                
                 f.setAccessible(true);
                 Object current = f.get(o);
                 
-                // 🔥 FIX 1: Equality Check. If value hasn't changed, stop here. 
-                // This prevents infinite echo loops.
-                if (Objects.equals(current, incoming)) {
-                    return; 
-                }
+                if (Objects.equals(current, incoming)) return; 
 
-                // 3. Apply the update
                 if (current instanceof SmartList && incoming instanceof List<?> list) {
                     f.set(o, new SmartList<>(list));
                 } 
@@ -155,20 +146,20 @@ public class JrxProtocolHandler {
                     f.set(o, incoming);
                 }
                 
-                // 🔥 FIX 2: Granular Broadcast
-                // Instead of triggering root.set() (which sends the whole object),
-                // we manually broadcast ONLY the specific key that changed (e.g., "form.name").
-                // The frontend will only update that specific input.
+                // 1. 📢 Broadcast quirúrgico (Ya lo tenías bien)
                 broadcast(fk, incoming); 
                 
-                // If you have server-side logic listening to the root object, you might need
-                // to manually trigger it here, but avoiding root.set() is key to fixing the UI.
+                // 2. 🔥 EL DETALLE QUIRÚRGICO: Disparar persistencia
+                // Esto asegura que en modo efímero, el cambio se guarde en el StateStore
+                // inmediatamente, evitando que se pierda al navegar o hacer @Call.
+                if (this.persistenceCallback != null) {
+                    this.persistenceCallback.run();
+                }
             }
         } catch (Exception e) { 
             log.error("Deep update fail: " + fk, e); 
         }
-    }
-    
+    }    
     private Field getF(Class<?> c, String n, boolean rootLevel) {
         return fieldCache
             .computeIfAbsent(c, x -> new ConcurrentHashMap<>())
