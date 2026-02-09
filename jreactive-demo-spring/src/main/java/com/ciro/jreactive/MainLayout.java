@@ -40,6 +40,7 @@ public class MainLayout extends HtmlComponent {
                     <small>Hecho con Java y ❤️</small>
                 </footer>
 
+                <script src="/js/idiomorph.min.js"></script>
                 <script src="/js/jreactive-runtime.js"></script>
                 
                 </body>

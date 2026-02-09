@@ -1904,17 +1904,20 @@ function setupEventBindings() {
 
 
 /* ─────────────────────────────────────────────────────────
- * Convierte todos los  @click="método(arg1,arg2)"
- *            → data-call / data-param una sola pasada
- * ───────────────────────────────────────────────────────── */
-/* ─────────────────────────────────────────────────────────
- * Convierte directivas @click, @change, @input, @submit
- *            → data-call / data-param / data-event
+ * FIX: Ahora procesa el nodo raíz (root) Y sus hijos.
+ * Vital para que Idiomorph no rompa los eventos del nodo contenedor.
  * ───────────────────────────────────────────────────────── */
 function hydrateEventDirectives(root = document, forceNs = "") {
   const EVENT_DIRECTIVES = ['click', 'change', 'input', 'submit'];
 
-  const all = (root === document ? document.body : root).querySelectorAll('*');
+  // 🔥 FIX: Si root es un elemento (el botón), lo metemos en la lista manual.
+  // Tu versión anterior usaba solo querySelectorAll y por eso ignoraba al propio botón.
+  let all;
+  if (root instanceof Element) {
+      all = [root, ...root.querySelectorAll('*')];
+  } else {
+      all = (root === document ? document.body : root).querySelectorAll('*');
+  }
 
   all.forEach(el => {
     const hydratedSet = el._jrxHydratedEvents || (el._jrxHydratedEvents = new Set());
@@ -1926,8 +1929,7 @@ function hydrateEventDirectives(root = document, forceNs = "") {
 
       let value = (el.getAttribute(attr) || '').trim();
 
-      // ✅ Si está vacío o todavía viene como {{...}}, lo quitamos y no hidratamos.
-      // Esto evita que queden "restos" y rompe menos el DOM.
+      // Limpieza de basura {{...}}
       if (!value || value.includes('{{')) {
         el.removeAttribute(attr);
         hydratedSet.add(evtName);
@@ -1938,54 +1940,34 @@ function hydrateEventDirectives(root = document, forceNs = "") {
           value = forceNs + value;
       }
 
-      let compId = null;
-      let method = null;
-      let rawArgs = '';
-
-      // Soportar:
-      // 1) Comp#1.metodo(a,b)
-      // 2) metodo(a,b)
-      // 3) Comp#1.metodo
-      // 4) metodo
+      // Parsing de la firma del método
       let m =
-        value.match(/^([\w#.-]+)\.([\w]+)\((.*)\)$/) ||  // comp.method(args)
-        value.match(/^([\w]+)\((.*)\)$/)               ||  // method(args)
-        value.match(/^([\w#.-]+)\.([\w]+)$/)           ||  // comp.method
-        value.match(/^([\w]+)$/);                         // method
+        value.match(/^([\w#.-]+)\.([\w]+)\((.*)\)$/) ||  
+        value.match(/^([\w]+)\((.*)\)$/)               ||  
+        value.match(/^([\w#.-]+)\.([\w]+)$/)           ||  
+        value.match(/^([\w]+)$/);                         
 
       if (!m) {
-        // Formato raro -> lo limpiamos para que no quede basura
         el.removeAttribute(attr);
         hydratedSet.add(evtName);
         return;
       }
 
+      let compId = null, method = null, rawArgs = '';
+
       if (m.length === 4) {
-        // comp.method(args)
-        compId = m[1];
-        method = m[2];
-        rawArgs = (m[3] || '').trim();
+        compId = m[1]; method = m[2]; rawArgs = (m[3] || '').trim();
       } else if (m.length === 3) {
-        // method(args)  OR  comp.method
-        if (value.includes('.')) {
-          compId = m[1];
-          method = m[2];
-          rawArgs = '';
-        } else {
-          compId = null;
-          method = m[1];
-          rawArgs = (m[2] || '').trim();
-        }
+        if (value.includes('.')) { compId = m[1]; method = m[2]; rawArgs = ''; } 
+        else { compId = null; method = m[1]; rawArgs = (m[2] || '').trim(); }
       } else {
-        // method
-        compId = null;
-        method = m[1];
-        rawArgs = '';
+        compId = null; method = m[1]; rawArgs = '';
       }
 
       const qualified = compId ? `${compId}.${method}` : method;
       const capEvt = evtName.charAt(0).toUpperCase() + evtName.slice(1);
 
+      // Escribimos los atributos de datos que usa el runtime
       el.dataset[`call${capEvt}`] = qualified;
 
       if (rawArgs) {
@@ -1995,136 +1977,33 @@ function hydrateEventDirectives(root = document, forceNs = "") {
       }
 
       hydratedSet.add(evtName);
-      el.removeAttribute(attr);
+      el.removeAttribute(attr); // Borramos el @click para que no ensucie
     });
   });
 }
 
 
-/*
-function updateDomForKey(k, v) {
-  let nodes = bindings.get(k);
-
-  // Si no hay nodos enlazados, reindexamos una vez:
-  if (!nodes || !nodes.length) {
-    reindexBindings();
-    hydrateEventDirectives();
-    setupEventBindings();
-    nodes = bindings.get(k);
-  }
-
-  // Si sigue sin haber, probamos con la parte simple (después del último ".")
-  if (!nodes || !nodes.length) {
-    const simple = k.split('.').at(-1);
-    if (simple !== k) {
-      nodes = bindings.get(simple);
-    }
-  }
-
-  // Normalizamos el valor a string para comparar
-  const strValue = v == null ? '' : String(v);
-
-  (nodes || []).forEach(el => {
-    if (el.nodeType === Node.TEXT_NODE) {
-      renderText(el);
-    } else if (el.type === 'checkbox' || el.type === 'radio') {
-      el.checked = !!v;
-    } else {
-      // inputs, textareas, selects
-      if (document.activeElement === el) {
-          return; 
-      }
-      
-      
-      // 2. PROTECCIÓN TEMPORAL (Solo para Polling/SSE)
-      // Si el usuario escribió hace menos de 1.5 segundos, ignoramos si el servidor 
-      // nos manda un valor vacío (borrado accidental).
-      // Esto arregla /signup2 y /signup-country sin romper el reset de frutas.
-      // 2. PROTECCIÓN TEMPORAL (Solo para Polling/SSE)
-      if (transport !== 'ws') {
-          const now = Date.now();
-          
-          // 🔥 CORRECCIÓN: Búsqueda inteligente de la clave de edición
-          let lastEditTime = lastEdits.get(k);
-          
-          // Si no encontramos la hora con la clave del servidor, probamos con la clave corta
-          // (ej: si k="Page#1.form.name", probamos "form.name")
-          if (!lastEditTime && k.includes('.')) {
-             const simpleKey = k.split('.').at(-1); // o la lógica que uses para nombres simples
-             // Ojo: si tus inputs usan nombres compuestos como "form.name", 
-             // necesitamos asegurarnos de que coincida con el el.name
-             lastEditTime = lastEdits.get(el.name) || lastEdits.get(el.id);
-          }
-
-          // Si escribiste hace menos de 2 segundos...
-          if (lastEditTime && (now - lastEditTime < 2000)) {
-              // ...y el servidor manda vacío/null, ¡IGNORAR!
-              if (el.value !== '' && (strValue === '' || strValue == null)) {
-                  // console.log(`🛡️ Escudo activo para ${el.name}`);
-                  return; 
-              }
-          }
-      }
-      
-      // 1. Evitar actualizaciones innecesarias (rompen el cursor y parpadean)
-      if (el.value === strValue) return;
-
-      // 2. Si el usuario tiene el foco aquí, preservamos la posición del cursor
-      if (document.activeElement === el) {
-          const start = el.selectionStart;
-          const end = el.selectionEnd;
-
-          el.value = strValue;
-
-          // Restauramos el cursor (solo si el input lo soporta)
-          try {
-              if (typeof el.setSelectionRange === 'function') {
-                  el.setSelectionRange(start, end);
-              }
-          } catch (_) {
-              // Inputs como type="number" o "email" pueden lanzar error aquí, lo ignoramos
-          }
-      } else {
-          // 3. Si no tiene foco, actualizamos directamente
-          el.value = strValue;
-      }
-    }
-  });
-}
-*/
-/* Archivo: jreactive-runtime.js */
-
 // =====================================================================================
-  // 🔥 FIX CRÍTICO: Nueva versión blindada de updateDomForKey
-  // =====================================================================================
-  function updateDomForKey(k, v) {
+// 🔥 NUEVA VERSIÓN BLINDADA: updateDomForKey (Modo Pareto)
+// =====================================================================================
+function updateDomForKey(k, v) {
   const strValue = v == null ? '' : String(v);
+  const boolValue = !!v;
 
-  // 1. 🛡️ ESCUDO DE VUELO (Mantiene integridad mientras viaja el POST)
-  const isSelfInFlight = inFlightUpdates.has(k);
-  let hasChildInFlight = false;
-  for (const flightKey of inFlightUpdates) {
-    if (flightKey.startsWith(k + '.') || flightKey.startsWith(k + '[')) {
-      hasChildInFlight = true;
-      break;
-    }
-  }
-
-  // Si estamos enviando datos, ignoramos lo que diga el servidor (evita parpadeo)
-  if ((isSelfInFlight || hasChildInFlight) && strValue !== '') {
-    return;
-  }
+  // 1. Si estamos enviando datos nosotros mismos, ignoramos el eco del servidor
+  if (typeof inFlightUpdates !== 'undefined' && inFlightUpdates.has(k)) return;
 
   let nodes = bindings.get(k);
-
-  // Reindex y Fallback si la clave no se encuentra
+  
+  // Reindexado defensivo si no encontramos nodos
   if (!nodes || !nodes.length) {
     reindexBindings();
     hydrateEventDirectives();
     setupEventBindings();
     nodes = bindings.get(k);
   }
-
+  
+  // Fallback para claves compuestas
   if (!nodes || !nodes.length) {
     const simple = k.split('.').at(-1);
     if (simple !== k) {
@@ -2133,78 +2012,48 @@ function updateDomForKey(k, v) {
     }
   }
 
-  const boolValue = !!v;
-
   (nodes || []).forEach(el => {
-    // A) Nodos de texto (Labels, Contadores)
+    // A) Nodos de Texto
     if (el.nodeType === Node.TEXT_NODE) {
-      renderText(el);
+      if (el.nodeValue !== strValue) {
+          // Si el nodo tiene un template original ({{var}}), lo usamos, si no, directo
+          if (el.__tpl) {
+             renderText(el);
+          } else {
+             el.nodeValue = strValue;
+          }
+      }
       return;
     }
 
-    const isTextInput = (el.tagName === 'INPUT' && ['text', 'password', 'email', 'number', 'tel', 'url'].includes(el.type)) || el.tagName === 'TEXTAREA';
-
-    // 2. 🛡️ PROTECCIÓN CONTRA "SNAPSHOT VACÍO" (VITAL PARA MODO EFÍMERO)
-    // Si el servidor manda un valor vacío pero el input local YA tiene texto (por hidratación),
-    // y estamos en modo HTTP (donde el inicio es más lento), ignoramos el borrado.
-    if (strValue === '' && el.value !== '' && transport !== 'ws') {
-       if (Date.now() - lastPageLoadTime < 2500) {
-           // console.log("🛡️ Bloqueando snapshot vacío inicial para:", k);
-           return; 
-       }
-    }
-
-    // 3. 🛡️ PROTECCIÓN DE FOCO (Mejorada)
-    // Si el usuario está dentro del input, el servidor NO puede cambiar el texto
-    // a menos que sea un borrado intencional (reset).
-    if (document.activeElement === el && isTextInput) {
-      if (el.value !== strValue && strValue !== '') return;
-    }
-
-    // 4. 🛡️ ESCUDO TEMPORAL ADAPTATIVO
-    if (transport !== 'ws') {
-      // Chequeamos tanto la clave completa como el nombre del elemento
-      const editK = lastEdits.get(k) || 0;
-      const editName = lastEdits.get(el.name) || 0;
-      const lastEditTime = Math.max(editK, editName);
-      
-      const now = Date.now();
-      const safetyTime = (transport === 'poll') ? 1200 : 600;
-
-      const isDiscrete = el.tagName === 'SELECT' || el.type === 'checkbox' || el.type === 'radio';
-
-      if (!isDiscrete && (now - lastEditTime < safetyTime) && strValue !== '') {
-        return;
+    // B) Inputs / Selects / TextAreas
+    const isInput = el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT';
+    if (isInput) {
+      // 🛡️ PROTECCIÓN DE FOCO SIMPLE:
+      if (document.activeElement === el) {
+          // Solo si el valor es idéntico, no hacemos nada.
+          // Si es diferente, en este modelo Pareto priorizamos al usuario.
+          return; 
       }
-    }
 
-    // --- APLICAR CAMBIOS REALES ---
-    if (el.type === 'checkbox' || el.type === 'radio') {
-      if (el.checked !== boolValue) el.checked = boolValue;
-    } else {
-      if (el.value !== strValue) {
-        el.value = strValue;
-        // Si el servidor mandó limpiar (reset), liberamos el escudo para permitir escribir de nuevo
-        if (strValue === '') {
-          lastEdits.delete(el.name);
-          lastEdits.delete(el.id);
-          lastEdits.delete(k);
-        }
+      if (el.type === 'checkbox' || el.type === 'radio') {
+        if (el.checked !== boolValue) el.checked = boolValue;
+      } else {
+        if (el.value !== strValue) el.value = strValue;
       }
     }
   });
 }
 
-/* === Reemplaza tu applyStateForKey con esta versión === */
-
+// =====================================================================================
+// 🔥 FIX FINAL DEFINITIVO: applyStateForKey (Hidratación Explicita Post-Morph)
+// =====================================================================================
 function applyStateForKey(k, v) {
-  // 1) Estado: Guardamos siempre con la clave completa (Namespace real)
   state[k] = v;
-
   const parts = k.split('.');
   const last  = parts.at(-1);
 
-  // 2) Caso especial store (Se mantiene igual)
+  // Propagación de Store Global
   if (last === 'store' && v && typeof v === 'object') {
     Object.entries(v).forEach(([childKey, childVal]) => {
       const globalKey = `store.${childKey}`;
@@ -2212,92 +2061,92 @@ function applyStateForKey(k, v) {
     });
   }
 
-  // 🔥 2.5) ⚡ INTERCEPCIÓN CSR (@Client) ⚡
+  // 🔥 INTERCEPCIÓN CSR (@Client)
   const rootId = k.includes('.') ? k.split('.')[0] : k;
   const el = document.getElementById(rootId);
 
   if (el && el.dataset.jrxClient) {
     const compName = el.dataset.jrxClient;
 
-    // Función interna para no repetir lógica de Render + Hidratación + Log
-    // Función interna optimizada con Proxy
-    const doCsrRender = (targetEl, data) => {
+    const doCsrRender = (targetEl) => { 
       const renderer = window.JRX_RENDERERS[compName];
       if (!renderer) return;
 
-      // Construir estado local plano (count en vez de CounterLeaf#1.count)
       const localState = {};
       const prefix = rootId + ".";
       Object.keys(state).forEach(fullKey => {
           if (fullKey.startsWith(prefix)) {
               localState[fullKey.substring(prefix.length)] = state[fullKey];
-              //localState[fullKey] = state[fullKey];
           }
       });
 
-      // CASO 1: Primer Montaje (No existe proxy)
-      if (!targetEl._jrxProxy) {
-          // A. Obtener HTML crudo (requiere que el APT genere un objeto con .getTemplate())
-          // Si tu APT actual genera una función directa, úsala, pero idealmente debería retornar string.
-          // Asumiremos que el renderer puede devolver string o escribir HTML.
-          
-          if (typeof renderer.getTemplate === 'function') {
-              targetEl.innerHTML = renderer.getTemplate();
-          } else if (typeof renderer === 'function') {
-              // Fallback para tu APT actual (menos eficiente en init, pero funciona)
-              renderer(targetEl, localState); 
-          }
+      let rawTpl = "";
+      if (typeof renderer.getTemplate === 'function') {
+          rawTpl = renderer.getTemplate();
+      } else if (typeof renderer === 'function') { return; }
+      
+      const newHtml = window.JRX.renderTemplate(rawTpl, localState);
 
-          // B. Hidratar directivas JReactive (eventos, etc)
-          hydrateEventDirectives(targetEl, rootId + ".");
-          setupEventBindings(targetEl);
-
-          // C. Crear el Proxy Reactivo (Escanea el DOM una vez)
-          createReactiveProxy(targetEl, localState);
-          
-          console.log(`✨ CSR Montado con Proxy: ${rootId}`);
-      } 
-      // CASO 2: Actualización (Ya existe proxy) -> O(1)
-      else {
-          // Simplemente actualizamos las propiedades del proxy.
-          // El 'set' trap del proxy buscará el nodo exacto y lo cambiará.
-          const proxy = targetEl._jrxProxy;
-          Object.keys(localState).forEach(k => {
-              if (proxy[k] !== localState[k]) {
-                  proxy[k] = localState[k]; // 🔥 AQUÍ OCURRE LA MAGIA O(1)
+      // 1. Aplicar Morphing (Solo visual + protección de inputs)
+      if (window.Idiomorph) {
+          Idiomorph.morph(targetEl, newHtml, {
+              morphStyle: 'innerHTML', 
+              callbacks: {
+                  // Solo protegemos el foco, NO hidratamos aquí dentro
+                  beforeNodeMorphed: (fromEl, toEl) => {
+                      if (fromEl.nodeType !== 1) return;
+                      if (fromEl === document.activeElement && 
+                         (fromEl.tagName === 'INPUT' || fromEl.tagName === 'TEXTAREA' || fromEl.tagName === 'SELECT')) {
+                          toEl.value = fromEl.value;
+                          if (fromEl.type === 'checkbox' || fromEl.type === 'radio') {
+                              toEl.checked = fromEl.checked;
+                          }
+                      }
+                  }
               }
           });
+      } else {
+          targetEl.innerHTML = newHtml;
       }
+
+      // 2. 🔥 FIX FINAL: Hidratación Fuerza Bruta
+      // Después de que Idiomorph termina, el DOM tiene los atributos @click crudos.
+      // Recorremos TODO el componente, borramos memoria vieja y re-hidratamos.
+      
+      const allNodes = [targetEl, ...targetEl.querySelectorAll('*')];
+      allNodes.forEach(node => {
+          // Borramos la bandera para obligar a hydrate a procesarlo
+          delete node._jrxHydratedEvents; 
+      });
+
+      // Ahora sí, convertimos @click -> data-call con el namespace correcto
+      hydrateEventDirectives(targetEl, rootId + ".");
+      
+      // Conectamos los listeners
+      setupEventBindings();
     };
 
-    // A. Ejecución inmediata si ya está cargado
+    // Ejecución Lazy o Inmediata
     if (window.JRX_RENDERERS[compName]) {
-      doCsrRender(el, v);
-      return; // 🛑 Salto SSR
+      doCsrRender(el);
+      return; 
     } 
     
-    // B. Carga perezosa (Lazy Load) con callback completo
     if (!loadedCsrScripts.has(compName)) {
       loadedCsrScripts.add(compName);
       const s = document.createElement('script');
       s.src = `/js/jrx/${compName}.jrx.js`;
-      s.onload = () => {
-        doCsrRender(el, v); // 🔥 Ahora sí loguea y re-hidrata al cargar por primera vez
-      };
+      s.onload = () => { doCsrRender(el); };
       document.head.appendChild(s);
     }
-    return; // 🛑 Esperamos al script
+    return; 
   }
 
-  //state[k] = v; 
-  // 3) Primero monta/desmonta lo condicional y resuelve #each
+  // SSR Clásico (Para componentes no @Client)
   updateIfBlocks();
   updateEachBlocks();
-
-  // 4) ✅ Actualizamos el DOM usando la CLAVE COMPLETA.
   updateDomForKey(k, v);
   
-  // 5) MAGIA: Propagación en Cascada
   if (v && typeof v === 'object' && !Array.isArray(v)) {
       Object.keys(v).forEach(subKey => {
           const childKey = `${k}.${subKey}`; 
@@ -2306,7 +2155,6 @@ function applyStateForKey(k, v) {
       });
   }
 }
-
 /* ──────────────────────────────────────────────────────────────
  *  Helpers de validación (Bean Validation → inputs HTML)
  * ────────────────────────────────────────────────────────────── */
