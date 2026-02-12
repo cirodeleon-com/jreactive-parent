@@ -41,6 +41,7 @@ public class MainLayout extends HtmlComponent {
                 </footer>
 
                 <script src="/js/idiomorph.min.js"></script>
+                <script src="/js/sockjs.min.js"></script>
                 <script src="/js/jreactive-runtime.js"></script>
                 
                 </body>

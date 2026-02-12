@@ -17,9 +17,14 @@ public class WebSocketConfig implements WebSocketConfigurer {
 
     @Override
     public void registerWebSocketHandlers(WebSocketHandlerRegistry registry) {
-        registry.addHandler(delegator, "/ws")
-                //.setAllowedOrigins("*")
-                .addInterceptors(new PathInterceptor());
+        // 🔥 CAMBIO CLAVE:
+        registry.addHandler(delegator, "/jrx") // Cambiamos ruta base a /jrx
+                .addInterceptors(new PathInterceptor())
+                .setAllowedOriginPatterns("*") // SockJS requiere OriginPatterns si usas credentials
+                .withSockJS() // <--- ¡AQUÍ ESTÁ LA MAGIA!
+                .setSessionCookieNeeded(true) // VITAL para Sticky Sessions (Cluster)
+                //.setClientLibraryUrl("https://cdn.jsdelivr.net/npm/sockjs-client@1/dist/sockjs.min.js")
+                ; 
     }
 }
 

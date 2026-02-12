@@ -6,6 +6,9 @@
   const state    = Object.create(null);  // último valor conocido
   const lastEdits = new Map();
   let lastPageLoadTime = Date.now();
+  // ✅ PONER ESTO
+  let socket = null;          // La instancia de SockJS
+  let reconnectTimer = null;  // Timer simple para reconexión
   
   /* --- Bloque CSR: Registro de Motores --- */
 const loadedCsrScripts = new Set();
@@ -31,14 +34,12 @@ window.__jrxBindings = bindings;
 
 const globalState     = Object.create(null);   // estado global logical: user, theme, etc.
 const storeListeners  = new Map();  
-let es = null;              // EventSource
+
 let lastSeq = 0;            // cursor incremental
-let transport = 'ws';       // 'ws' | 'sse' | 'poll'
+
 let httpQueue = Promise.resolve();
 // --- Variables Globales Nuevas ---
-let wsRetryCount = 0;       // Contador de intentos fallidos
-const MAX_WS_RETRIES = 5;   // Intentar 5 veces antes de rendirse a SSE
-let recoveryTimer = null;   // Timer para intentar volver a WS si estamos en SSE
+
 const inFlightUpdates = new Set(); // Registra qué llaves están viajando al servidor
 
 
@@ -77,7 +78,7 @@ const Store = {
 
   
   
-  let ws = null;
+
   let currentPath = '/';
   let firstMiss   = true;
   
@@ -361,141 +362,65 @@ function applyBatch(batch) {
   });
 }
 
-function stopSse() {
-  if (es) { try { es.close(); } catch(_) {} }
-  es = null;
-}
 
 
 
-function connectSse(path) {
-  transport = 'sse';
-  stopPoll();
-  stopSse();
-
-  const url = `/jrx/sse?path=${encodeURIComponent(path)}&since=${lastSeq || 0}`;
-  es = new EventSource(url, { withCredentials: true });
-
-es.addEventListener('jrx', (ev) => {
-  const pkt = JSON.parse(ev.data);
-  const batch = normalizeIncoming(pkt);
-  applyBatch(batch);
-});
 
 
-  es.onerror = () => {
-    // si SSE muere, caemos a polling
-    stopSse();
-    connectPoll(path);
-  };
-}
 
-// --- ZONA DE VARIABLES GLOBALES ---
-// Reemplaza 'let pollTimer' y 'let isPolling' por esto:
-let currentPollId = 0; // Token de generación para matar loops zombies
 
-// --- FUNCIONES MODIFICADAS ---
-
-function connectPoll(path) {
-  transport = 'poll';
-  stopSse();
-  stopPoll(); // Detiene lógicamente el anterior
-
-  // 🔥 Creamos una nueva "generación" de polling
-  currentPollId++;
-  const myId = currentPollId; 
-  
-  console.log(`[POLL] Iniciando loop ID: ${myId}`);
-  pollLoop(path, myId);
-}
-
-function stopPoll() {
-  // Simplemente incrementando el ID, invalidamos cualquier loop anterior
-  // que esté esperando en un setTimeout o en un fetch await.
-  currentPollId++;
-}
-
-async function pollLoop(path, myId) {
-  // 1. Chequeo de seguridad: ¿Soy el loop legítimo?
-  if (myId !== currentPollId) return;
-
-  try {
-    const url = `/jrx/poll?path=${encodeURIComponent(path)}&since=${lastSeq || 0}`;
-    
-    const res = await fetch(url, {
-	  credentials: 'include',	
-      headers: { 'X-Requested-With': 'JReactive' }
-    });
-
-    // 2. Chequeo post-await: ¿Cambió el ID mientras yo esperaba la red?
-    // Si cambió, significa que el usuario navegó o reinició. ABORTAMOS.
-    if (myId !== currentPollId) return;
-
-    if (!res.ok) throw new Error("Poll error " + res.status);
-
-    const pkt = await res.json();
-    const batch = normalizeIncoming(pkt);
-    
-    if (batch.length > 0) {
-      applyBatch(batch);
-      
-      // "Turbo mode": Si hay datos, pedimos el siguiente YA (0ms)
-      if (myId === currentPollId) {
-         setTimeout(() => pollLoop(path, myId), 0);
-      }
-      return;
-    }
-
-  } catch (e) {
-    console.warn('[POLL WARN]', e);
-    // Si falla, espera larga (2s)
-    if (myId === currentPollId) {
-        setTimeout(() => pollLoop(path, myId), 2000);
-    }
-    return;
-  }
-
-  // Loop normal (1s) si no hubo datos ni errores
-  if (myId === currentPollId) {
-      setTimeout(() => pollLoop(path, myId), 1000);
-  }
-}
-
+/* ==========================================================
+ * NUEVA CONEXIÓN ROBUSTA CON SOCKJS
+ * ========================================================== */
 function connectTransport(path) {
-  currentPath = path;
-  
-  // --- LIMPIEZA PROFUNDA ---
-  stopSse();
-  stopPoll();
-
-  // 1. 🔥 IMPORTANTE: Matar el timer de "Upgrade" si estaba pendiente
-  if (recoveryTimer) {
-      clearTimeout(recoveryTimer);
-      recoveryTimer = null;
+  // 1. Limpieza preventiva
+  if (socket) {
+     try { socket.close(); } catch (_) {}
+     socket = null;
   }
+  if (reconnectTimer) clearTimeout(reconnectTimer);
 
-  // 2. 🔥 IMPORTANTE: Resetear intentos. Página nueva = Vida nueva.
-  wsRetryCount = 0; 
+  console.log(`🔌 Conectando JReactive a ${path} vía SockJS...`);
 
-  // 3. Cerrar socket anterior limpiamente
-  if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
-     try { ws.close(1000, "transport-switch"); } catch(_) {}
-  }
+  // 2. Construir URL base (sin ws://, SockJS usa http:// relativo o absoluto)
+  // Nota: SockJS añade automáticamente /websocket, /info, etc.
+  const protocol = location.protocol === 'https:' ? 'https:' : 'http:';
+  const port = location.port ? ':' + location.port : '';
+  const baseUrl = `${protocol}//${location.hostname}${port}/jrx`; // 🔥 Ruta configurada en Spring
 
-  console.log(`🔄 Conectando transporte usando modo: ${transport.toUpperCase()}`);
+  // Pasamos 'path' y 'since' como query params. SockJS los ignorará en el handshake,
+  // pero nuestro PathInterceptor de Spring los leerá.
+  const connectUrl = `${baseUrl}?path=${encodeURIComponent(path)}&since=${lastSeq || 0}`;
 
-  switch (transport) {
-    case 'sse':
-      connectSse(path);
-      break;
-    case 'poll':
-      connectPoll(path);
-      break;
-    case 'ws':
-    default:
-      connectWs(path);
-      break;
-  }
+  // 3. ✨ Instanciar SockJS
+  socket = new SockJS(connectUrl);
+
+  // --- EVENTOS ---
+
+  socket.onopen = function() {
+      console.log(`🟢 Conectado usando transporte: ${socket.transport}`);
+      // (Opcional) Si necesitas enviar un "HOLA" inicial:
+      // socket.send(JSON.stringify({ type: 'INIT', path: path }));
+  };
+
+  socket.onmessage = function(e) {
+      // SockJS entrega el string JSON directamente en e.data
+      const pkt = JSON.parse(e.data);
+      const batch = normalizeIncoming(pkt);
+      applyBatch(batch);
+  };
+
+  socket.onclose = function(e) {
+      // 1000 = Cierre normal (ej: navegación SPA)
+      if (e.code === 1000 && e.reason === "route-change") return;
+
+      console.warn(`🔴 Desconectado (${e.code}). Reconectando en 1s...`);
+      
+      // SockJS no reconecta solo, lo hacemos nosotros
+      reconnectTimer = setTimeout(() => {
+          connectTransport(path);
+      }, 1000); 
+  };
 }
 
 
@@ -926,110 +851,9 @@ function updateEachBlocks() {
 
 
 
-  /* ------------------------------------------------------------------
-   * 5. WebSocket + sincronización de UI
-   * ------------------------------------------------------------------ */
-/* ---------------------------------------------------------------
- * WebSocket — se crea de nuevo cada vez que cambia location.pathname
- * ------------------------------------------------------------- */
-/* ==========================================================
- *  Conexión WS que se reinicia cuando cambias de página
- * ========================================================== */
-  // recuerda la ruta asociada al socket
-function connectWs(path) {
-  firstMiss   = true;
-  currentPath = path;
 
-  // Limpieza preventiva
-  if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
-    // Usamos un código específico para saber que fuimos nosotros
-    try { ws.close(4000, "manual-restart"); } catch(_) {}
-  }
 
-  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  // Incluimos 'since' para recuperar mensajes perdidos durante el parpadeo
-  const url = `${proto}://${location.host}/ws?path=${encodeURIComponent(path)}&since=${lastSeq || 0}`;
-  
-  ws = new WebSocket(url);
-  let opened = false;
 
-  ws.onopen = () => { 
-      opened = true; 
-      wsRetryCount = 0; // 🔥 ¡Éxito! Reseteamos el contador
-      console.log("🟢 WS Conectado y estable");
-      
-      // Si veníamos de SSE (recuperación), matamos el SSE
-      if (transport === 'sse') stopSse();
-      transport = 'ws';
-  };
-
-  // Unificamos error y close para manejar el reintento en un solo lugar
-  const handleDisconnect = (reason) => {
-      // 1. Si el cierre fue intencional (cambio de ruta o manual), no hacemos nada
-      if (reason === "route-change" || reason === "transport-switch" || reason === "manual-restart") return;
-
-      // 2. Lógica de Reintento (Backoff Exponencial)
-      if (wsRetryCount < MAX_WS_RETRIES) {
-          wsRetryCount++;
-          // Espera: 1s, 2s, 4s, 8s, 16s...
-          const delay = Math.min(1000 * (2 ** (wsRetryCount - 1)), 10000); 
-          
-          console.warn(`⚠️ WS Caído. Reintentando en ${delay}ms... (Intento ${wsRetryCount}/${MAX_WS_RETRIES})`);
-          
-          setTimeout(() => connectWs(path), delay);
-      } else {
-          // 3. Nos rendimos -> Downgrade a SSE
-          console.error("⛔ WS inestable. Cambiando a SSE (Modo Seguro).");
-          connectSse(path);
-          
-          // 🔥 EXTRA: Iniciar la "Sonda de Recuperación"
-          scheduleWsRecovery(path);
-      }
-  };
-
-  ws.onerror = () => {
-    if (!opened) handleDisconnect("connection-failed");
-  };
-
-  ws.onclose = (e) => {
-    if (opened) handleDisconnect(e.reason); 
-    // Si no estaba abierto, onerror ya disparó, evitamos doble llamada
-  };
-
-  ws.onmessage = ({ data }) => {
-    const pkt = JSON.parse(data);
-    const batch = normalizeIncoming(pkt);
-    applyBatch(batch);
-  };
-}
-
-function scheduleWsRecovery(path) {
-    if (recoveryTimer) clearTimeout(recoveryTimer);
-
-    // Intentar volver a WS cada 30 segundos
-    recoveryTimer = setTimeout(() => {
-        console.log("🕵️ Probando recuperación de WS en segundo plano...");
-        
-        const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-        const testWs = new WebSocket(`${proto}://${location.host}/ws?path=${encodeURIComponent(path)}&since=${lastSeq}`);
-
-        testWs.onopen = () => {
-            console.log("🚀 ¡La red mejoró! Volviendo a WS (Upgrade).");
-            testWs.close(); // Cerramos el de prueba
-            connectWs(path); // Conectamos el oficial
-            clearTimeout(recoveryTimer);
-            recoveryTimer = null;
-        };
-
-        testWs.onerror = () => {
-            console.log("🌧️ WS sigue caído. Mantenemos SSE.");
-            testWs.close();
-            // Re-agendar siguiente prueba
-            scheduleWsRecovery(path);
-        };
-
-    }, 30000); 
-}
 
 function resolveTarget(key) {
   // 1. Intento directo: busca la clave exacta que mandó el servidor
@@ -1241,26 +1065,23 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
   
- /* ------------------------------------------------------------------
- * 7. SPA Router (mejorado)
+/* ------------------------------------------------------------------
+ * 7. SPA Router (Adaptado a SockJS)
  * ------------------------------------------------------------------ */
 async function loadRoute(path = location.pathname) {
   startLoading(); 
   try {
     // ---------------------------------------------------------
-    // 1. GESTIÓN DE SALIDA (Igual que antes)
+    // 1. GESTIÓN DE SALIDA (ACTUALIZADO)
     // ---------------------------------------------------------
-    if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.close(1000, "route-change");
-    } else {
-        await fetch('/jrx/leave', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ path: currentPath }),
-            keepalive: true 
-        }).catch(() => {});
+    // Si existe una conexión SockJS activa, la cerramos suavemente.
+    if (socket) {
+        // SockJS soporta código y razón igual que WebSocket estándar
+        socket.close(1000, "route-change");
+        socket = null;
     }
-    ws = null;
+    // Nota: Eliminamos el fetch('/jrx/leave') porque SockJS gestiona
+    // la desconexión de forma robusta tanto en WS como en HTTP.
     
     // Limpieza local
     lastSeq = 0;
@@ -1268,18 +1089,19 @@ async function loadRoute(path = location.pathname) {
     for (const k in state) delete state[k]; // Borramos estado anterior
 
     // ---------------------------------------------------------
-    // 2. FETCH Y RENDER
+    // 2. FETCH Y RENDER (Misma lógica que tenías)
     // ---------------------------------------------------------
     // Truco anti-caché
     const separator = path.includes('?') ? '&' : '?';
     const uniqueUrl = path + separator + 't=' + Date.now();
 
-    const html = await fetch(uniqueUrl, { headers: { 'X-Partial': '1' },credentials: 'include' }).then(r => r.text());
+    const html = await fetch(uniqueUrl, { 
+        headers: { 'X-Partial': '1' },
+        credentials: 'include' 
+    }).then(r => r.text());
 
     const app = document.getElementById('app');
     
-    // Ocultamos un instante para evitar que se vea el HTML crudo si hubiera flashes
-    // (aunque con hidratación inversa podrías quitar esto si quieres)
     app.style.visibility = 'hidden'; 
     app.innerHTML = html;
     
@@ -1287,17 +1109,12 @@ async function loadRoute(path = location.pathname) {
     reindexBindings();
 
     // ---------------------------------------------------------
-    // 3. 🔥 HIDRATACIÓN INVERSA (SEGURA)
+    // 3. HIDRATACIÓN INVERSA (Misma lógica que tenías)
     // ---------------------------------------------------------
     bindings.forEach((nodes, key) => {
       nodes.forEach(el => {
-        // A) NODOS DE TEXTO: NO TOCAR. 
-        // El servidor ya los mandó renderizados (ej: "Contador: 5").
-        // Si ejecutamos renderText() ahora, como el state está vacío, lo borraríamos.
         if (el.nodeType === Node.TEXT_NODE) return;
 
-        // B) INPUTS: LEER DEL DOM.
-        // El servidor mandó <input value="Colombia">. Leemos eso y llenamos el state.
         if (el.nodeType === Node.ELEMENT_NODE) {
             const tag = el.tagName;
             if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') {
@@ -1306,21 +1123,18 @@ async function loadRoute(path = location.pathname) {
                 if (el.type === 'checkbox' || el.type === 'radio') {
                     initialVal = el.checked;
                 } else {
-                    // Para inputs numéricos, intentamos convertir, si no, string
                     initialVal = el.value; 
                     if (el.type === 'number' && initialVal !== '') {
                         initialVal = Number(initialVal);
                     }
                 }
-                
-                // ¡Aquí está la magia! El DOM alimenta al Estado inicial.
                 state[key] = initialVal;
             }
         }
       });
     });
 
-    // 4. Inicializar directivas (Ahora funcionan bien porque 'state' ya tiene datos)
+    // 4. Inicializar directivas
     updateIfBlocks();
     updateEachBlocks();
     hydrateEventDirectives(app);
@@ -1328,7 +1142,7 @@ async function loadRoute(path = location.pathname) {
     
     lastPageLoadTime = Date.now();
 
-    // 5. Conectar transporte (Traerá confirmación del backend, pero visualmente ya estamos listos)
+    // 5. Conectar transporte (Usa la nueva función con SockJS)
     connectTransport(path);
 
     app.style.visibility = '';
@@ -1339,84 +1153,7 @@ async function loadRoute(path = location.pathname) {
   }
 }
 
-/*
-async function loadRoute(path = location.pathname) {
-  startLoading(); 
-  try {
-    // ---------------------------------------------------------
-    // 1. GESTIÓN DE SALIDA (DESPEDIDA)
-    // ---------------------------------------------------------
-    if (ws && ws.readyState === WebSocket.OPEN) {
-        // Si es WS, usamos el cierre nativo
-        ws.close(1000, "route-change");
-    } else {
-        // Si es SSE/Poll, enviamos la carta de despedida con keepalive
-        // Esto le dice a Spring: "Borra la memoria de la ruta anterior"
-        fetch('/jrx/leave', {
-            method: 'POST',
-            headers: { 
-                'Content-Type': 'application/json' 
-            },
-            body: JSON.stringify({ path: currentPath }),
-            keepalive: true 
-        }).catch(err => console.warn("Fallo al enviar despedida:", err));
-    }
-    ws = null;
-    
-    // Limpieza local
-    lastSeq = 0;
-    bindings.clear();
-    for (const k in state) delete state[k];
 
-    // ---------------------------------------------------------
-    // 2. 🔥 EL FIX DEL CACHÉ (LO QUE TE FALTABA)
-    // ---------------------------------------------------------
-    // Agregamos '?t=...' para engañar al navegador y obligarlo a 
-    // pedir la página al servidor en lugar de usar su memoria caché.
-    const separator = path.includes('?') ? '&' : '?';
-    const uniqueUrl = path + separator + 't=' + Date.now();
-
-    // Hacemos el fetch a la URL única
-    const html = await fetch(uniqueUrl, { 
-        headers: { 'X-Partial': '1' } 
-    }).then(r => r.text());
-
-    // ---------------------------------------------------------
-    // 3. RENDERIZADO Y RECONEXIÓN
-    // ---------------------------------------------------------
-    const app  = document.getElementById('app');
-
-    app.style.visibility = 'hidden';
-    app.innerHTML = html;
-    
-    executeInlineScripts(app);
-
-    reindexBindings();
-
-    // Hidratación inicial con estado vacío (limpio)
-    bindings.forEach((nodes, key) => {
-      nodes.forEach(el => {
-        if (el.nodeType === Node.TEXT_NODE) renderText(el);
-        else if ('checked' in el)          el.checked = !!state[key];
-        else                               el.value   = state[key] ?? '';
-      });
-    });
-
-    updateIfBlocks();
-    updateEachBlocks();
-    hydrateEventDirectives(app);
-    setupEventBindings();
-
-    // Conectamos a la NUEVA ruta
-    connectTransport(path);
-
-    app.style.visibility = '';
-  
-  } finally {
-      stopLoading(); 
-  }
-}
-*/
 
 
 
@@ -1440,60 +1177,36 @@ window.addEventListener('popstate', () => {
 });
 
 async function sendSet(k, v) {
-  // WS: Envío directo (el socket garantiza el orden)
-  if (ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify({ k, v }));
+  // SockJS tiene readyState igual que WS (1 = OPEN)
+  if (socket && socket.readyState === SockJS.OPEN) {
+    socket.send(JSON.stringify({ k, v }));
     return;
   }
   
   inFlightUpdates.add(k);
 
-  // Poll/SSE: Usamos la cola para evitar carreras (Race Conditions)
-  // El 'return' devuelve la promesa de la cola para que quien llame pueda esperar si quiere
+  // Fallback a HTTP si el socket está caído (mantenemos tu cola HTTP por seguridad)
   return enqueueHttp(async () => {
       try {
-        const res = await fetch(`/jrx/set?path=${encodeURIComponent(currentPath)}`, {
+        await fetch(`/jrx/set?path=${encodeURIComponent(currentPath)}`, {
           method: 'POST',
           credentials: 'include',
           headers: {
-            'X-Requested-With': 'JReactive',
+            'X-Requested-With': 'JReactive', // Importante para SockJS a veces
             'Content-Type': 'application/json'
           },
           body: JSON.stringify({ k, v })
         });
-        
-        if (res.ok && transport === 'poll') {
-           triggerImmediatePoll();
-        }
+        // Ya no necesitamos triggerImmediatePoll() porque SockJS se encarga
       } catch (e) {
         console.warn('[SET HTTP failed]', e);
       } finally {
-        // Pequeño delay para dar tiempo a que el eco del servidor sea ignorado por updateDomForKey
         setTimeout(() => inFlightUpdates.delete(k), 400);
       }
   });
 }
 
-/* Archivo: jreactive-runtime-js/.../static/js/jreactive-runtime.js */
 
-function triggerImmediatePoll() {
-   // 1. Verificamos si estamos en modo poll usando la variable global 'transport'
-   if (transport === 'poll') {
-       
-       console.log("⚡ Forzando actualización inmediata (Input usuario)");
-
-       // 2. 🔥 TRUCO MAESTRO: Incrementamos el ID.
-       // Esto invalida automáticamente cualquier loop que estuviera esperando en setTimeout.
-       // El loop viejo despertará, verá que su ID ya no es válido, y morirá.
-       currentPollId++; 
-       const myId = currentPollId;
-       
-       setTimeout(() => {
-           console.log("⚡ Polling inmediato (tras acción)...");
-           pollLoop(currentPath, myId);
-       }, 50);
-   }
-}
 
 function reindexBindings() {
   bindings.clear();
@@ -1579,8 +1292,9 @@ function reindexBindings() {
     const file = el.files && el.files[0];
     const info = file ? file.name : null;
 
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ k, v: info }));
+    if (socket && socket.readyState === SockJS.OPEN) {
+      socket.send(JSON.stringify({ k, v : info}));
+      return;
     } else {
       await sendSet(k, info);
     }
@@ -1589,8 +1303,9 @@ function reindexBindings() {
 
   const v = (el.type === 'checkbox' || el.type === 'radio') ? el.checked : el.value;
 
-  if (ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify({ k, v }));
+  if (socket && socket.readyState === SockJS.OPEN) {
+    socket.send(JSON.stringify({ k, v }));
+    return;
   } else {
     await sendSet(k, v);
   }
@@ -1804,10 +1519,11 @@ function setupEventBindings() {
       ev.preventDefault();
     }
 
-    // B) DEBOUNCE: Si escribes rápido y no hay WS, esperamos 300ms
-    if (evtName === 'input' && transport !== 'ws') {
+    // B) DEBOUNCE: Si no es WebSocket puro, esperamos un poco para no saturar
+    const isWebsocket = socket && socket.transport === 'websocket';
+    
+    if (evtName === 'input' && !isWebsocket) { // ✅ CORREGIDO
       if (el._jrxDebounce) clearTimeout(el._jrxDebounce);
-      // Esta promesa bloquea la ejecución hasta que pase el tiempo
       await new Promise(resolve => {
         el._jrxDebounce = setTimeout(resolve, 300);
       });
@@ -1845,7 +1561,7 @@ function setupEventBindings() {
           if ('code' in payload) code = payload.code;
         }
 
-        if (ok && transport === 'poll') triggerImmediatePoll();
+        
 
       } catch (e) {
         ok = false;
@@ -1868,7 +1584,7 @@ function setupEventBindings() {
     };
 
     // E) ENCOLAMIENTO: Si es HTTP, ¡a la fila! (Esto arregla el race condition del país)
-    if (ws && ws.readyState === WebSocket.OPEN) {
+    if (socket && socket.readyState === SockJS.OPEN) {
        netTask(); // WS es rápido y ordenado, va directo
     } else {
        enqueueHttp(netTask); // HTTP debe esperar a que terminen los set previos
@@ -2087,20 +1803,24 @@ function applyStateForKey(k, v) {
       
       const newHtml = window.JRX.renderTemplate(rawTpl, localState);
 
-      // 1. Aplicar Morphing (Solo visual + protección de inputs)
+      
+      // 1. Aplicar Morphing con protección de Foco
       if (window.Idiomorph) {
           Idiomorph.morph(targetEl, newHtml, {
               morphStyle: 'innerHTML', 
               callbacks: {
-                  // Solo protegemos el foco, NO hidratamos aquí dentro
                   beforeNodeMorphed: (fromEl, toEl) => {
                       if (fromEl.nodeType !== 1) return;
+
+                      // 🔥 PROTECCIÓN TOTAL DE FOCO
+                      // Si este elemento tiene el foco, IMPEDIMOS que el servidor lo toque.
+                      // Retornar false cancela la actualización de este nodo específico.
                       if (fromEl === document.activeElement && 
                          (fromEl.tagName === 'INPUT' || fromEl.tagName === 'TEXTAREA' || fromEl.tagName === 'SELECT')) {
-                          toEl.value = fromEl.value;
-                          if (fromEl.type === 'checkbox' || fromEl.type === 'radio') {
-                              toEl.checked = fromEl.checked;
-                          }
+                          
+                          // Opcional: Si quieres ser muy preciso, podrías copiar atributos nuevos
+                          // pero mantener el valor del usuario. Por ahora, "congelarlo" es lo más seguro.
+                          return false; 
                       }
                   }
               }

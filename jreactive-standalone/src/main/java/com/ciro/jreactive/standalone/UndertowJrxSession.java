@@ -12,7 +12,6 @@ public class UndertowJrxSession implements JrxSession {
 
     private final WebSocketChannel channel;
     private final String id;
-
     private final Map<String, Object> attributes = new ConcurrentHashMap<>();
 
     public UndertowJrxSession(WebSocketChannel channel, String sessionId) {
@@ -28,6 +27,7 @@ public class UndertowJrxSession implements JrxSession {
     @Override
     public void sendText(String text) {
         if (channel.isOpen()) {
+            // Envío síncrono simple para Undertow
             WebSockets.sendText(text, channel, null);
         }
     }
@@ -40,7 +40,7 @@ public class UndertowJrxSession implements JrxSession {
     @Override
     public void close() {
         try {
-            channel.sendClose();
+            if (channel.isOpen()) channel.sendClose();
         } catch (IOException e) {
             try { channel.close(); } catch (IOException ignored) {}
         }
@@ -57,6 +57,7 @@ public class UndertowJrxSession implements JrxSession {
         return attributes.get(key);
     }
 
+    // hashCode y equals son importantes para que funcione en Sets/Maps
     @Override
     public boolean equals(Object o) {
         if (this == o) return true;

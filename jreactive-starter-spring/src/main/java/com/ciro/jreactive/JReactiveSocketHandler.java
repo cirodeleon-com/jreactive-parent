@@ -57,33 +57,28 @@ public class JReactiveSocketHandler extends TextWebSocketHandler {
         );
     }
 
+
     @Override
     public void afterConnectionEstablished(WebSocketSession session) throws Exception {
         JrxSession wrapper = new SpringWsWrapper(session);
         wrappers.put(session, wrapper);
 
-        // 👇 1. Extraer 'since' de la URL (ej: ws://...?since=123)
+        // 👇 1. CORRECCIÓN PARA SOCKJS:
+        // En lugar de leer session.getUri().getQuery() (que SockJS oculta),
+        // leemos el atributo que PathInterceptor guardó durante el handshake HTTP.
         long since = 0;
-        try {
-            String query = session.getUri().getQuery();
-            if (query != null) {
-                // Parsing manual simple para no depender de libs externas
-                for (String param : query.split("&")) {
-                    if (param.startsWith("since=")) {
-                        since = Long.parseLong(param.substring(6));
-                        break;
-                    }
-                }
+        String sinceStr = (String) session.getAttributes().get("since");
+        
+        if (sinceStr != null) {
+            try {
+                since = Long.parseLong(sinceStr);
+            } catch (NumberFormatException e) {
+                // ignorar si no es un número válido
             }
-        } catch (Exception e) {
-            // Ignoramos since malformado
         }
         
-        
-        
-        //HtmlComponent page = pageResolver.getPage(sessionId, path);
-
         // 🔥 FIX CRÍTICO: Asegurar que la página esté montada (Timers corriendo)
+        // Esto es necesario si el usuario viene de una reconexión y el objeto estaba "dormido" en Redis
         if (page._state() == ComponentState.UNMOUNTED) {
             page._initIfNeeded();
             page._mountRecursive();
@@ -92,7 +87,7 @@ public class JReactiveSocketHandler extends TextWebSocketHandler {
         // 👇 2. Obtener el Hub para esta sesión (si existe)
         JrxPushHub hub = (hubManager != null) ? hubManager.hub(sessionId, path) : null;
 
-        // 👇 3. Pasamos todo al protocolo
+        // 👇 3. Pasamos todo al protocolo para que reenvíe los mensajes perdidos
         protocol.onOpen(wrapper, hub, since);
     }
 

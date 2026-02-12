@@ -18,6 +18,9 @@ public class PathInterceptor implements HandshakeInterceptor {
 	        HttpServletRequest req = servletRequest.getServletRequest();
 	        String path = req.getParameter("path");
 	        attributes.put("path", path != null ? path : "/");
+	        
+	        String since = req.getParameter("since");
+            attributes.put("since", since != null ? since : "0");
 
 	        // 👇 Guarda también el id de sesión HTTP
 	        String sessionId = req.getSession(true).getId();

@@ -27,8 +27,8 @@ public class PageController {
 
     @GetMapping(value = {
             "/",
-            "/{x:^(?!js|ws|css|static).*$}",
-            "/{x:^(?!js|ws|css|static).*$}/**"
+            "/{x:^(?!js|ws|css|static|jrx).*$}",
+            "/{x:^(?!js|ws|css|static|jrx).*$}/**"
     }, produces = MediaType.TEXT_HTML_VALUE)
     public ResponseEntity<String> page(HttpServletRequest req,
                                        @RequestHeader(value = "X-Partial", required = false) String partial) {

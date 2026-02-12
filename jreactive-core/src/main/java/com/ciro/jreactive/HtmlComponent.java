@@ -152,7 +152,7 @@ public abstract class HtmlComponent extends ViewLeaf implements java.io.Serializ
         }
     }
 
-    ComponentState _state() {
+    public ComponentState _state() {
         return _state.get();
     }
     

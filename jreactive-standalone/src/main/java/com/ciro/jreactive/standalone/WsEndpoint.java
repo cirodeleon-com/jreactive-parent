@@ -1,10 +1,12 @@
 package com.ciro.jreactive.standalone;
 
 import com.ciro.jreactive.HtmlComponent;
-import com.ciro.jreactive.JrxHubManager; // <--- Importar
+import com.ciro.jreactive.ComponentState; // Asegúrate de importar esto
+import com.ciro.jreactive.JrxHubManager;
 import com.ciro.jreactive.JrxProtocolHandler;
-import com.ciro.jreactive.JrxPushHub;    // <--- Importar
+import com.ciro.jreactive.JrxPushHub;
 import com.ciro.jreactive.PageResolver;
+import com.ciro.jreactive.spi.JrxSession; // Usamos la interfaz del SPI
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.undertow.websockets.core.AbstractReceiveListener;
 import io.undertow.websockets.core.BufferedTextMessage;
@@ -21,14 +23,13 @@ public class WsEndpoint {
     private final ObjectMapper mapper;
     private final ScheduledExecutorService scheduler;
     private final StandaloneSessionManager sessionManager;
-    // 👇 Nuevo campo
     private final JrxHubManager hubManager;
 
     public WsEndpoint(PageResolver pageResolver,
                       ObjectMapper mapper,
                       ScheduledExecutorService scheduler,
                       StandaloneSessionManager sessionManager,
-                      JrxHubManager hubManager) { // <--- Nuevo param
+                      JrxHubManager hubManager) {
         this.pageResolver = pageResolver;
         this.mapper = mapper;
         this.scheduler = scheduler;
@@ -40,7 +41,6 @@ public class WsEndpoint {
         String path = getQueryParam(exchange, "path");
         if (path == null || path.isBlank()) path = "/";
 
-        // 👇 1. Extraer 'since' (Undertow style)
         long since = 0;
         String sinceParam = getQueryParam(exchange, "since");
         if (sinceParam != null) {
@@ -59,28 +59,32 @@ public class WsEndpoint {
 
         sessionManager.setLastPath(sessionId, path);
 
-        UndertowJrxSession session = new UndertowJrxSession(channel, sessionId);
+        // Usamos la implementación concreta para Undertow, pero referenciada como interfaz JrxSession
+        JrxSession session = new UndertowJrxSession(channel, sessionId);
 
         System.out.println("🔌 WS CONNECT sid=" + sid + " path=" + path + " since=" + since);
 
         try {
             HtmlComponent page = pageResolver.getPage(sid, path);
 
-            // 👇 2. Obtener Hub
+            // Resurrección si viene de Redis
+            if (page._state() == ComponentState.UNMOUNTED) {
+                page._initIfNeeded();
+                page._mountRecursive();
+            }
+
             JrxPushHub hub = hubManager.hub(sid, path);
             
-            final String finalPath=path;
+            final String finalPath = path;
 
             JrxProtocolHandler handler = new JrxProtocolHandler(
                 page,
                 mapper,
                 scheduler,
-                true,
-                512,
-                16,
+                true, // Backpressure activado
+                512,  // Max queue
+                16,   // Flush interval
                 () -> {
-                    // ✅ Callback de persistencia (Write-Back)
-                    // Cada vez que el usuario escribe, guardamos en Redis/RAM
                     try {
                         pageResolver.persist(sid, finalPath, page);
                     } catch (Exception e) {
@@ -89,7 +93,7 @@ public class WsEndpoint {
                 }
             );
 
-            // 👇 3. Llamada corregida con los 3 argumentos
+            // Pasamos la sesión genérica
             handler.onOpen(session, hub, since);
 
             channel.getReceiveSetter().set(new AbstractReceiveListener() {

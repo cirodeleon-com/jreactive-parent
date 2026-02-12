@@ -11,7 +11,7 @@ jreactive:
   
   # Ajustes finos del WebSocket (Backpressure para que el cliente no se ahogue)
   ws:
-    persistent-state: true
+    persistent-state: false
     enabled-backpressure: true
     max-queue: 1024
     flush-interval-ms: 16

@@ -72,13 +72,29 @@ public class DelegatingWebSocketHandler implements WebSocketHandler {
         var delegate = (WebSocketHandler) session.getAttributes().get("delegate");
         if (delegate != null) delegate.afterConnectionClosed(session, status);
 
+        // Si el modo es EFÍMERO (false), limpiamos la RAM al cerrar
         if (!wsConfig.isPersistentState()) { 
             String path = (String) session.getAttributes().get("path");
             String sessionId = (String) session.getAttributes().get("sessionId");
 
-            if (path != null && sessionId != null && "route-change".equals(status.getReason())) {
-                System.out.println("🧹 Limpiando estado (Modo Efímero): " + path);
+            // 🔥 CORRECCIÓN: 
+            // SockJS a veces no envía el "reason" ("route-change"), pero SÍ envía el código.
+            // Código 1000 = NORMAL (Navegación del usuario o close() manual).
+            // Código 1001 = GOING_AWAY (Cierre de pestaña/navegador).
+            // Código 1006 = ABNORMAL (Fallo de red -> NO limpiamos para permitir reconexión).
+            
+            boolean isIntentionalClose = status.getCode() == 1000 || status.getCode() == 1001;
+            
+            // También mantenemos el chequeo de texto por si acaso viaja por WebSocket puro
+            boolean hasReason = "route-change".equals(status.getReason());
+
+            if (path != null && sessionId != null && (isIntentionalClose || hasReason)) {
+                System.out.println("🧹 [Ephemereal] Limpiando estado para: " + path + " (Code: " + status.getCode() + ")");
+                
+                // 1. Borrar de la RAM (PageResolver -> StateStore)
                 pageResolver.evict(sessionId, path);
+                
+                // 2. Borrar colas de mensajes pendientes (HubManager)
                 hubManager.evict(sessionId, path);
             }
         }
