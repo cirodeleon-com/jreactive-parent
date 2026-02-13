@@ -11,6 +11,8 @@ public abstract class BaseCounter extends HtmlComponent {
     public void increment() {
         count++;
         // No necesitamos llamar a updateState porque @Call lo hace automático
+        System.out.println("Hilo ejecutando increment(): " + Thread.currentThread());
+        System.out.println("¿Es Virtual?: " + Thread.currentThread().isVirtual());
     }
 
     @Call

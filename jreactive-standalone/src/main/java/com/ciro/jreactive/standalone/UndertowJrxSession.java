@@ -3,6 +3,7 @@ package com.ciro.jreactive.standalone;
 import com.ciro.jreactive.spi.JrxSession;
 import io.undertow.websockets.core.WebSocketChannel;
 import io.undertow.websockets.core.WebSockets;
+import java.util.concurrent.locks.ReentrantLock;
 
 import java.io.IOException;
 import java.util.Map;
@@ -13,6 +14,7 @@ public class UndertowJrxSession implements JrxSession {
     private final WebSocketChannel channel;
     private final String id;
     private final Map<String, Object> attributes = new ConcurrentHashMap<>();
+    private final ReentrantLock lock = new ReentrantLock();
 
     public UndertowJrxSession(WebSocketChannel channel, String sessionId) {
         this.channel = channel;
@@ -26,9 +28,14 @@ public class UndertowJrxSession implements JrxSession {
 
     @Override
     public void sendText(String text) {
-        if (channel.isOpen()) {
-            // Envío síncrono simple para Undertow
-            WebSockets.sendText(text, channel, null);
+        // 🔥 Aquí protegemos el socket sin bloquear el hilo del SO
+        lock.lock();
+        try {
+            if (channel.isOpen()) {
+                WebSockets.sendText(text, channel, null);
+            }
+        } finally {
+            lock.unlock();
         }
     }
 

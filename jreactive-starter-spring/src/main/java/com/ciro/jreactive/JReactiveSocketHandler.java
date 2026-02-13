@@ -6,6 +6,7 @@ import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
 import org.springframework.web.socket.handler.TextWebSocketHandler;
+import java.util.concurrent.locks.ReentrantLock;
 
 import java.io.IOException;
 import java.util.Map;
@@ -110,6 +111,7 @@ public class JReactiveSocketHandler extends TextWebSocketHandler {
     // ... (La clase interna SpringWsWrapper se queda IGUAL, no la copies si no quieres, pero aquí va completa por seguridad) ...
     private static class SpringWsWrapper implements JrxSession {
         private final WebSocketSession session;
+        private final ReentrantLock lock = new ReentrantLock();
 
         public SpringWsWrapper(WebSocketSession session) {
             this.session = session;
@@ -127,12 +129,15 @@ public class JReactiveSocketHandler extends TextWebSocketHandler {
 
         @Override
         public void sendText(String json) {
+            lock.lock(); // 🔥 Protección segura para V-Threads
             try {
                 if (session.isOpen()) {
                     session.sendMessage(new TextMessage(json));
                 }
             } catch (IOException e) {
                 // Log or ignore
+            } finally {
+                lock.unlock();
             }
         }
 

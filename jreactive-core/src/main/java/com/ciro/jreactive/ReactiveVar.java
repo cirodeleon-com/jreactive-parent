@@ -4,10 +4,13 @@ import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Consumer;
 import java.util.function.BooleanSupplier;
+import java.util.concurrent.locks.ReentrantLock;
 
 public final class ReactiveVar<T> implements java.io.Serializable{
     private T value;
     private final List<Consumer<T>> listeners = new CopyOnWriteArrayList<>();
+    
+    private final ReentrantLock lock = new ReentrantLock();
     
     private volatile BooleanSupplier activeGuard = () -> true;
 
@@ -15,7 +18,9 @@ public final class ReactiveVar<T> implements java.io.Serializable{
 
     public T get() { return value; }
 
-    public synchronized void set(T newValue) {
+    public void set(T newValue) {
+    	lock.lock();
+    	try {
         this.value = newValue;
         
         if (!activeGuard.getAsBoolean()) {
@@ -23,6 +28,9 @@ public final class ReactiveVar<T> implements java.io.Serializable{
         }
         
         listeners.forEach(l -> l.accept(newValue));
+    	} finally {
+            lock.unlock(); // 🔓 Siempre liberar en finally
+        }
     }
     
     public void setActiveGuard(BooleanSupplier guard) {

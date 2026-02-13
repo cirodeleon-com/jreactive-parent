@@ -12,6 +12,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.Collection;
 import java.util.Objects;
 import com.ciro.jreactive.smart.SmartList;
@@ -40,6 +41,9 @@ public abstract class HtmlComponent extends ViewLeaf implements java.io.Serializ
     private String slotHtml = "";
     
     private boolean _initialized = false;
+    
+    // 🔒 Lock para gestión de estado y árbol (Anti-Pinning)
+    private final transient ReentrantLock lock = new ReentrantLock();
     
     String _getBundledResources() {
         return RESOURCE_CACHE.computeIfAbsent(this.getClass(), clazz -> {
@@ -77,27 +81,35 @@ public abstract class HtmlComponent extends ViewLeaf implements java.io.Serializ
         });
     }
     
-    public synchronized void _captureStateSnapshot() {
-        if (map == null) buildBindings();
-        
-        _structureHashes.clear();
-        _simpleSnapshots.clear();
-
-        for (String key : stateKeys) {
-            try {
-                Object val = getFieldValueByName(key);
-                if (val == null) {
-                    _simpleSnapshots.put(key, null);
-                } else if (val instanceof String || val instanceof Number || val instanceof Boolean) {
-                    _simpleSnapshots.put(key, val);
-                } else if (!(val instanceof SmartList || val instanceof SmartSet || val instanceof SmartMap)) {
-                    // Es un POJO: guardamos el hash de sus campos
-                    _structureHashes.put(key, getPojoHash(val));
-                }
-            } catch (Exception ignored) {}
-        }
-        for (HtmlComponent child : _children()) {
-            child._captureStateSnapshot();
+    public void _captureStateSnapshot() {
+        lock.lock();
+        try {
+            if (map == null) buildBindings();
+            
+            _structureHashes.clear();
+            _simpleSnapshots.clear();
+    
+            for (String key : stateKeys) {
+                try {
+                    Object val = getFieldValueByName(key);
+                    if (val == null) {
+                        _simpleSnapshots.put(key, null);
+                    } else if (val instanceof String || val instanceof Number || val instanceof Boolean) {
+                        _simpleSnapshots.put(key, val);
+                    } else if (!(val instanceof SmartList || val instanceof SmartSet || val instanceof SmartMap)) {
+                        // Es un POJO: guardamos el hash de sus campos
+                        _structureHashes.put(key, getPojoHash(val));
+                    }
+                } catch (Exception ignored) {}
+            }
+            
+            // Recurrimos sobre una copia segura de la lista de hijos
+            List<HtmlComponent> safeChildren = new ArrayList<>(_children);
+            for (HtmlComponent child : safeChildren) {
+                child._captureStateSnapshot();
+            }
+        } finally {
+            lock.unlock();
         }
     }
 
@@ -109,16 +121,21 @@ public abstract class HtmlComponent extends ViewLeaf implements java.io.Serializ
         return slotHtml;
     }
     
-    // 🔥 FIX: Sincronizado por seguridad en la gestión de hijos
     void _addChild(HtmlComponent child) { 
-        synchronized(_children) {
+        lock.lock();
+        try {
             _children.add(child); 
+        } finally {
+            lock.unlock();
         }
     }
 
     List<HtmlComponent> _children() { 
-        synchronized(_children) {
+        lock.lock();
+        try {
             return new ArrayList<>(_children); 
+        } finally {
+            lock.unlock();
         }
     }
     
@@ -164,6 +181,7 @@ public abstract class HtmlComponent extends ViewLeaf implements java.io.Serializ
     @Override
     public Map<String, ReactiveVar<?>> bindings() {
         if (cached == null) {
+            // Doble check locking seguro con synchronized (esto es rápido, no hace I/O)
             synchronized(this) {
                 if (cached == null) cached = ComponentEngine.render(this);
             }
@@ -183,13 +201,18 @@ public abstract class HtmlComponent extends ViewLeaf implements java.io.Serializ
 
     protected abstract String template();
 
-    public synchronized Map<String, ReactiveVar<?>> getRawBindings() {
-        if (map == null) buildBindings();
-        return map;
+    public Map<String, ReactiveVar<?>> getRawBindings() {
+        lock.lock();
+        try {
+            if (map == null) buildBindings();
+            return map;
+        } finally {
+            lock.unlock();
+        }
     }
 
-    // 🔥 FIX: buildBindings debe ser atómico para no duplicar llaves en stateKeys
-    private synchronized void buildBindings() {
+    // Método privado, asumimos que quien lo llama ya tiene el lock
+    private void buildBindings() {
         if (map != null) return;
         map = new HashMap<>();
         stateKeys.clear();
@@ -251,33 +274,38 @@ public abstract class HtmlComponent extends ViewLeaf implements java.io.Serializ
         }
     }
 
-    // 🔥 FIX: Sincronizado para asegurar consistencia entre el valor real y el ReactiveVar
-    public synchronized void _syncState() {
-        if (map == null) buildBindings();
-
-        for (String key : stateKeys) {
-            try {
-                @SuppressWarnings("unchecked")
-                ReactiveVar<Object> rx = (ReactiveVar<Object>) map.get(key);
-                if (rx == null) continue;
-
-                Object newValue = getFieldValueByName(key);
-
-                if (!hasChanged(key, newValue)) {
-                    continue; 
+    public void _syncState() {
+        lock.lock();
+        try {
+            if (map == null) buildBindings();
+    
+            for (String key : stateKeys) {
+                try {
+                    @SuppressWarnings("unchecked")
+                    ReactiveVar<Object> rx = (ReactiveVar<Object>) map.get(key);
+                    if (rx == null) continue;
+    
+                    Object newValue = getFieldValueByName(key);
+    
+                    if (!hasChanged(key, newValue)) {
+                        continue; 
+                    }
+    
+                    rx.set(newValue);
+                    
+                } catch (Exception e) {
+                    System.err.println("Error Smart-Sync '" + key + "': " + e.getMessage());
                 }
-
-                rx.set(newValue);
-                
-            } catch (Exception e) {
-                System.err.println("Error Smart-Sync '" + key + "': " + e.getMessage());
             }
+            
+            // Recurrimos sobre una copia segura
+            List<HtmlComponent> safeChildren = new ArrayList<>(_children);
+            for (HtmlComponent child : safeChildren) {
+                child._syncState();
+            }
+        } finally {
+            lock.unlock();
         }
-        
-        for (HtmlComponent child : _children()) {
-            child._syncState();
-        }
-        
     }
 
     private boolean hasChanged(String key, Object newVal) {
@@ -401,7 +429,8 @@ public abstract class HtmlComponent extends ViewLeaf implements java.io.Serializ
     }
     
     @SuppressWarnings("unchecked")
-    protected synchronized void updateState(String fieldName) {
+    protected void updateState(String fieldName) {
+        lock.lock();
         try {
             Class<?> c = getClass();
             Field found = null;
@@ -418,21 +447,22 @@ public abstract class HtmlComponent extends ViewLeaf implements java.io.Serializ
             if (found == null) {
                 throw new IllegalArgumentException("No @State field named '" + fieldName + "' in " + getClass());
             }
-
+    
             found.setAccessible(true);
             Object currentValue = found.get(this);
-
+    
             State stateAnn = found.getAnnotation(State.class);
             String bindingKey = stateAnn.value().isBlank() ? found.getName() : stateAnn.value();
-
+    
             ReactiveVar<Object> rx = (ReactiveVar<Object>) getRawBindings().get(bindingKey);
             if (rx == null) {
                 throw new IllegalStateException("No ReactiveVar for @State '" + bindingKey + "'");
             }
             rx.set(currentValue);
-
         } catch (Exception e) {
             throw new RuntimeException("Error updating @State '" + fieldName + "'", e);
+        } finally {
+            lock.unlock();
         }
     }
     
@@ -496,17 +526,22 @@ public abstract class HtmlComponent extends ViewLeaf implements java.io.Serializ
      * Calcula qué campos @State han cambiado y devuelve un mapa con los deltas.
      * Útil para optimizar el tráfico de componentes @Client.
      */
-    public synchronized Map<String, Object> _getStateDeltas() {
-        Map<String, Object> deltas = new HashMap<>();
-        for (String key : stateKeys) {
-            try {
-                Object newValue = getFieldValueByName(key);
-                if (hasChanged(key, newValue)) {
-                    deltas.put(key, newValue);
-                }
-            } catch (Exception ignored) {}
+    public Map<String, Object> _getStateDeltas() {
+        lock.lock();
+        try {
+            Map<String, Object> deltas = new HashMap<>();
+            for (String key : stateKeys) {
+                try {
+                    Object newValue = getFieldValueByName(key);
+                    if (hasChanged(key, newValue)) {
+                        deltas.put(key, newValue);
+                    }
+                } catch (Exception ignored) {}
+            }
+            return deltas;
+        } finally {
+            lock.unlock();
         }
-        return deltas;
     }
     
     public long _getVersion() { return _version; }

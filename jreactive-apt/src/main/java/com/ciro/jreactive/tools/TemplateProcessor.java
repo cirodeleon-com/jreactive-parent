@@ -52,7 +52,7 @@ import javax.lang.model.element.VariableElement;
 
 @AutoService(Processor.class)
 @SupportedAnnotationTypes("*")
-@SupportedSourceVersion(SourceVersion.RELEASE_17)
+
 public final class TemplateProcessor extends AbstractProcessor {
 
 	// =========================
@@ -113,6 +113,13 @@ public final class TemplateProcessor extends AbstractProcessor {
 		this.trees = Trees.instance(env);
 		this.filer = env.getFiler();
 	}
+	
+	@Override
+    public SourceVersion getSupportedSourceVersion() {
+        // Esto usa siempre la versión máxima disponible en el compilador actual.
+        // Funciona en Java 17, 21, 25... y evita el error de "symbol not found".
+        return SourceVersion.latest();
+    }
 
 	@Override
 	public boolean process(Set<? extends TypeElement> annotations, RoundEnvironment round) {

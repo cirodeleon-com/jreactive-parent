@@ -25,6 +25,9 @@ spring:
   config:
     activate:
       on-profile: prod
+  threads:
+    virtual:
+      enabled: true    
 
 jreactive:
   # En PROD usamos Híbrido: Velocidad de RAM + Persistencia de Redis

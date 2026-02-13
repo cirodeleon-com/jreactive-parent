@@ -4,12 +4,16 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Consumer;
-import java.util.function.Predicate; // 🔥 Necesario para removeIf
+import java.util.function.Predicate;
 
 public class SmartList<E> extends ArrayList<E> {
 
     private final transient List<Consumer<Change>> listeners = new CopyOnWriteArrayList<>();
+    
+    // 🔒 Usamos ReentrantLock para evitar el "Pinning" de Virtual Threads
+    private final transient ReentrantLock lock = new ReentrantLock();
 
     public SmartList() { super(); }
     public SmartList(Collection<? extends E> c) { super(c); }
@@ -35,107 +39,164 @@ public class SmartList<E> extends ArrayList<E> {
     // --- Operaciones Unitarias ---
 
     @Override
-    public synchronized boolean add(E e) {
-        int index = this.size();
-        boolean result = super.add(e);
-        if (result) fire("ADD", index, e);
-        return result;
-    }
-
-    @Override
-    public synchronized void add(int index, E element) {
-        super.add(index, element);
-        fire("ADD", index, element);
-    }
-
-    @Override
-    public synchronized E remove(int index) {
-        E removed = super.remove(index);
-        fire("REMOVE", index, null); // 🔔 Este es el que avisa al JS
-        return removed;
-    }
-
-    @Override
-    public synchronized boolean remove(Object o) {
-        int index = this.indexOf(o);
-        if (index >= 0) {
-            this.remove(index); // Llamamos a remove(int) para centralizar el fire
-            return true;
+    public boolean add(E e) {
+        lock.lock();
+        try {
+            int index = this.size();
+            boolean result = super.add(e);
+            if (result) fire("ADD", index, e);
+            return result;
+        } finally {
+            lock.unlock();
         }
-        return false;
     }
 
     @Override
-    public synchronized E set(int index, E element) {
-        E old = super.set(index, element);
-        fire("SET", index, element);
-        return old;
+    public void add(int index, E element) {
+        lock.lock();
+        try {
+            super.add(index, element);
+            fire("ADD", index, element);
+        } finally {
+            lock.unlock();
+        }
     }
 
     @Override
-    public synchronized void clear() {
-        if (!isEmpty()) {
-            super.clear();
-            fire("CLEAR", 0, null);
+    public E remove(int index) {
+        lock.lock();
+        try {
+            E removed = super.remove(index);
+            fire("REMOVE", index, null); // 🔔 Este es el que avisa al JS
+            return removed;
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    @Override
+    public boolean remove(Object o) {
+        lock.lock();
+        try {
+            int index = this.indexOf(o);
+            if (index >= 0) {
+                // Llamamos a remove(int) que ya es thread-safe (ReentrantLock permite reentrada)
+                this.remove(index); 
+                return true;
+            }
+            return false;
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    @Override
+    public E set(int index, E element) {
+        lock.lock();
+        try {
+            E old = super.set(index, element);
+            fire("SET", index, element);
+            return old;
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    @Override
+    public void clear() {
+        lock.lock();
+        try {
+            if (!isEmpty()) {
+                super.clear();
+                fire("CLEAR", 0, null);
+            }
+        } finally {
+            lock.unlock();
         }
     }
 
     // --- 🔥 LA CIRUGÍA: removeIf Reactivo ---
 
     @Override
-    public synchronized boolean removeIf(Predicate<? super E> filter) {
-        boolean modified = false;
-        // Iteramos hacia atrás para que los índices no se muevan mientras borramos
-        for (int i = size() - 1; i >= 0; i--) {
-            if (filter.test(get(i))) {
-                this.remove(i); // 🔥 Al llamar a this.remove(i), se dispara el fire("REMOVE")
-                modified = true;
+    public boolean removeIf(Predicate<? super E> filter) {
+        lock.lock();
+        try {
+            boolean modified = false;
+            // Iteramos hacia atrás para que los índices no se muevan mientras borramos
+            for (int i = size() - 1; i >= 0; i--) {
+                if (filter.test(get(i))) {
+                    this.remove(i); // 🔥 Al llamar a this.remove(i), se dispara el fire("REMOVE")
+                    modified = true;
+                }
             }
+            return modified;
+        } finally {
+            lock.unlock();
         }
-        return modified;
     }
 
-    // --- Operaciones Masivas (Ya las tenías bien, pero aseguramos integridad) ---
+    // --- Operaciones Masivas ---
 
     @Override
-    public synchronized boolean removeAll(Collection<?> c) {
-        boolean modified = false;
-        for (Object x : new ArrayList<>(this)) { 
-            if (c.contains(x)) {
-                if (this.remove(x)) modified = true;
+    public boolean removeAll(Collection<?> c) {
+        lock.lock();
+        try {
+            boolean modified = false;
+            // Copia defensiva para iterar sin problemas de concurrencia externa
+            for (Object x : new ArrayList<>(this)) { 
+                if (c.contains(x)) {
+                    if (this.remove(x)) modified = true;
+                }
             }
+            return modified;
+        } finally {
+            lock.unlock();
         }
-        return modified;
     }
 
     @Override
-    public synchronized boolean retainAll(Collection<?> c) {
-        boolean modified = false;
-        for (Object x : new ArrayList<>(this)) {
-            if (!c.contains(x)) {
-                if (this.remove(x)) modified = true;
+    public boolean retainAll(Collection<?> c) {
+        lock.lock();
+        try {
+            boolean modified = false;
+            for (Object x : new ArrayList<>(this)) {
+                if (!c.contains(x)) {
+                    if (this.remove(x)) modified = true;
+                }
             }
+            return modified;
+        } finally {
+            lock.unlock();
         }
-        return modified;
     }
     
     @Override
-    public synchronized boolean addAll(Collection<? extends E> c) {
-        boolean modified = false;
-        for (E e : c) {
-            if (add(e)) modified = true;
+    public boolean addAll(Collection<? extends E> c) {
+        lock.lock();
+        try {
+            boolean modified = false;
+            for (E e : c) {
+                if (add(e)) modified = true;
+            }
+            return modified;
+        } finally {
+            lock.unlock();
         }
-        return modified;
     }
 
     @Override
-    public synchronized boolean addAll(int index, Collection<? extends E> c) {
-        boolean modified = false;
-        int i = index;
-        for (E e : c) {
-            add(i++, e);
-            modified = true;
+    public boolean addAll(int index, Collection<? extends E> c) {
+        lock.lock();
+        try {
+            boolean modified = false;
+            int i = index;
+            for (E e : c) {
+                add(i++, e);
+                modified = true;
+            }
+            return modified;
+        } finally {
+            lock.unlock();
         }
-        return modified;
     }
 }

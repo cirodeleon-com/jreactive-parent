@@ -4,11 +4,13 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.locks.ReentrantLock; // 👈 Import nuevo
 import java.util.function.Consumer;
 
 public class SmartMap<K, V> extends HashMap<K, V> {
 
     private final transient List<Consumer<Change>> listeners = new CopyOnWriteArrayList<>();
+    private final transient ReentrantLock lock = new ReentrantLock(); // 🔒
 
     public SmartMap() { super(); }
     public SmartMap(Map<? extends K, ? extends V> m) { super(m); }
@@ -32,40 +34,65 @@ public class SmartMap<K, V> extends HashMap<K, V> {
     }
 
     @Override
-    public synchronized V put(K key, V value) {
-        V old = super.put(key, value);
-        fire("PUT", key, value);
-        return old;
-    }
-
-    @Override
-    public synchronized void putAll(Map<? extends K, ? extends V> m) {
-        for (Map.Entry<? extends K, ? extends V> e : m.entrySet()) {
-            put(e.getKey(), e.getValue());
+    public V put(K key, V value) {
+        lock.lock();
+        try {
+            V old = super.put(key, value);
+            fire("PUT", key, value);
+            return old;
+        } finally {
+            lock.unlock();
         }
     }
 
     @Override
-    public synchronized V remove(Object key) {
-        if (containsKey(key)) {
-            V value = super.remove(key);
-            fire("REMOVE", key, null);
-            return value;
+    public void putAll(Map<? extends K, ? extends V> m) {
+        lock.lock();
+        try {
+            for (Map.Entry<? extends K, ? extends V> e : m.entrySet()) {
+                put(e.getKey(), e.getValue());
+            }
+        } finally {
+            lock.unlock();
         }
-        return null;
     }
 
     @Override
-    public synchronized void clear() {
-        if (!isEmpty()) {
-            super.clear();
-            fire("CLEAR", null, null);
+    public V remove(Object key) {
+        lock.lock();
+        try {
+            if (containsKey(key)) {
+                V value = super.remove(key);
+                fire("REMOVE", key, null);
+                return value;
+            }
+            return null;
+        } finally {
+            lock.unlock();
         }
     }
 
-    public synchronized void update(K key) {
-        if (this.containsKey(key)) {
-            this.put(key, this.get(key));
+    @Override
+    public void clear() {
+        lock.lock();
+        try {
+            if (!isEmpty()) {
+                super.clear();
+                fire("CLEAR", null, null);
+            }
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    public void update(K key) {
+        lock.lock();
+        try {
+            if (this.containsKey(key)) {
+                this.put(key, this.get(key));
+            }
+        } finally {
+            lock.unlock();
         }
     }
 }

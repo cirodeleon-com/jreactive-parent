@@ -18,7 +18,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class JrxRequestQueue {
 
     private final ConcurrentHashMap<String, SerialExecutor> queues = new ConcurrentHashMap<>();
-    private final Executor backend = Executors.newCachedThreadPool();
+    //private final Executor backend = Executors.newCachedThreadPool();
+    private final Executor backend = Executors.newVirtualThreadPerTaskExecutor();
 
     public <T> T run(String sessionId, String path, Callable<T> task) {
         String key = (sessionId == null ? "null" : sessionId) + "|" + (path == null ? "/" : path);

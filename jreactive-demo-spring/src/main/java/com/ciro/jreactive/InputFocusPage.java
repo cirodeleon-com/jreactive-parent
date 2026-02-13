@@ -2,12 +2,14 @@ package com.ciro.jreactive;
 
 import com.ciro.jreactive.annotations.Call;
 import com.ciro.jreactive.annotations.Client; // 🔥 IMPORTANTE: Activa el Proxy O(1)
+import com.ciro.jreactive.annotations.Stateless;
 import com.ciro.jreactive.router.Route;
 import org.springframework.stereotype.Component;
 
 @Component
 @Route(path = "/focus-test")
 @Client
+@Stateless
 public class InputFocusPage extends AppPage {
 
     @State
