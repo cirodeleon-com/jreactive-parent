@@ -3,6 +3,8 @@ package com.ciro.jreactive.store.redis;
 import com.ciro.jreactive.spi.JrxMessageBroker;
 import com.ciro.jreactive.store.CaffeineStateStore;
 import com.ciro.jreactive.store.StateStore;
+import com.fasterxml.jackson.databind.ObjectMapper;
+
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
@@ -23,8 +25,21 @@ public class RedisStoreConfig {
     private String consistencyMode;
 
     @Bean
-    public RedisStateStore redisStateStore() {
-        return new RedisStateStore(host, port);
+    public RedisStateStore redisStateStore(StateSerializer serializer) {
+        // 🔥 Inyectamos el serializer elegido
+        return new RedisStateStore(host, port, serializer);
+    }
+    
+    @Bean
+    @ConditionalOnProperty(name = "jreactive.store.serialization", havingValue = "json", matchIfMissing = true)
+    public StateSerializer jsonSerializer(ObjectMapper mapper) {
+        return new JacksonStateSerializer(mapper);
+    }
+
+    @Bean
+    @ConditionalOnProperty(name = "jreactive.store.serialization", havingValue = "fst")
+    public StateSerializer fstSerializer() {
+        return new FstStateSerializer();
     }
 
     @Bean

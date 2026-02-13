@@ -33,6 +33,16 @@ jreactive:
   # En PROD usamos Híbrido: Velocidad de RAM + Persistencia de Redis
   store:
     type: hybrid
+    # 🔥 ESTRATEGIA DE SERIALIZACIÓN (Nuevo)
+    # Opciones:
+    #   - json: (Default) Usa Jackson. Más robusto, legible en Redis, tolerante a cambios de clase.
+    #   - fst:  (Turbo) Serialización binaria. Ultra-rápida, payload mínimo, pero frágil si cambias el código.
+    serialization: json 
+    
+    # Configuración de consistencia para HybridStore
+    #   - strong: (Default) Escribe en Redis antes de confirmar (más seguro).
+    #   - eventual: Escribe en RAM y luego asíncrono a Redis (más rápido, riesgo de pérdida si crash).
+    consistency: strong
   
   redis:
     # Cambia esto por la IP real de tu Redis en producción

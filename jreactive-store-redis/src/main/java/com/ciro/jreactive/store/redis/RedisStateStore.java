@@ -2,8 +2,6 @@ package com.ciro.jreactive.store.redis;
 
 import com.ciro.jreactive.HtmlComponent;
 import com.ciro.jreactive.store.StateStore;
-
-import org.nustaq.serialization.FSTConfiguration;
 import redis.clients.jedis.Jedis;
 import redis.clients.jedis.JedisPool;
 import redis.clients.jedis.Pipeline;
@@ -13,10 +11,11 @@ import java.util.Set;
 public class RedisStateStore implements StateStore {
 
     private final JedisPool redisPool;
-    // FST es thread-safe si se usa el singleton default
-    private final FSTConfiguration conf = FSTConfiguration.createDefaultConfiguration();
+    private final StateSerializer serializer; // 🔥 Ahora usamos la interfaz
+    
     private static final int TTL_SECONDS = 1800; // 30 minutos
     
+    // Script Lua para CAS (Compare-And-Swap) optimista
     private static final String CAS_SCRIPT = """
             local key = KEYS[1]
             local expectedVer = tonumber(ARGV[1])
@@ -44,15 +43,21 @@ public class RedisStateStore implements StateStore {
             end
         """;
 
-    public RedisStateStore(String host, int port) {
+    // ✅ Constructor Inyectado: Recibe la estrategia (JSON o FST) desde la configuración
+    public RedisStateStore(String host, int port, StateSerializer serializer) {
         this.redisPool = new JedisPool(host, port);
+        this.serializer = serializer;
+    }
+    
+    // Helper para logs de arranque
+    public String getSerializerName() {
+        return serializer.name();
     }
 
     private byte[] key(String sid, String path) {
         return ("jrx:page:" + sid + ":" + path).getBytes();
     }
     
-    // Clave para el índice (Set) que rastrea qué páginas tiene una sesión
     private String indexKey(String sid) {
         return "jrx:idx:" + sid;
     }
@@ -62,11 +67,11 @@ public class RedisStateStore implements StateStore {
         try (Jedis jedis = redisPool.getResource()) {
             byte[] data = jedis.hget(key(sessionId, path), "data".getBytes());
             if (data == null) return null;
-            // Deserialización ultra-rápida
-            HtmlComponent comp = (HtmlComponent) conf.asObject(data);
             
-            // Leemos versión e inyectamos
-         // En RedisStateStore.java
+            // 🔥 CAMBIO CLAVE: Delegamos la deserialización a la estrategia
+            HtmlComponent comp = serializer.deserialize(data, HtmlComponent.class);
+            
+            // Leemos versión e inyectamos (La versión siempre es texto plano en Redis)
             byte[] verBytes = jedis.hget(key(sessionId, path), "v".getBytes());
             if (verBytes != null) {
                 comp._setVersion(Long.parseLong(new String(verBytes)));
@@ -82,23 +87,16 @@ public class RedisStateStore implements StateStore {
     @Override
     public void put(String sessionId, String path, HtmlComponent component) {
         try (Jedis jedis = redisPool.getResource()) {
-            // 1. Serialización
-            byte[] data = conf.asByteArray(component);
+            // 🔥 CAMBIO CLAVE: Serialización agnóstica
+            byte[] data = serializer.serialize(component);
+            
             byte[] pageKey = key(sessionId, path);
             String idxKey = indexKey(sessionId);
 
-            // 2. Pipeline para eficiencia (1 round-trip en lugar de 3)
             Pipeline p = jedis.pipelined();
-            
-            // Guardar la página con TTL
             p.setex(pageKey, TTL_SECONDS, data);
-            
-            // Añadir la ruta al índice de la sesión
             p.sadd(idxKey, path);
-            
-            // Renovar el TTL del índice también (para que no muera antes que las páginas)
             p.expire(idxKey, TTL_SECONDS);
-            
             p.sync();
         }
     }
@@ -111,7 +109,7 @@ public class RedisStateStore implements StateStore {
             
             Pipeline p = jedis.pipelined();
             p.del(pageKey);
-            p.srem(idxKey, path); // Lo sacamos del índice
+            p.srem(idxKey, path); 
             p.sync();
         }
     }
@@ -120,24 +118,16 @@ public class RedisStateStore implements StateStore {
     public void removeSession(String sessionId) {
         try (Jedis jedis = redisPool.getResource()) {
             String idxKey = indexKey(sessionId);
-            
-            // 1. Obtener todas las rutas activas de esta sesión
             Set<String> paths = jedis.smembers(idxKey);
             
             if (paths != null && !paths.isEmpty()) {
                 Pipeline p = jedis.pipelined();
-                
-                // 2. Borrar cada página individual
                 for (String path : paths) {
                     p.del(key(sessionId, path));
                 }
-                
-                // 3. Borrar el índice mismo
                 p.del(idxKey);
-                
                 p.sync();
             } else {
-                // Si no había índice, asegurar borrado del índice por si acaso
                 jedis.del(idxKey);
             }
         } catch (Exception e) {
@@ -148,10 +138,11 @@ public class RedisStateStore implements StateStore {
     @Override
     public boolean replace(String sid, String path, HtmlComponent comp, long expectVer) {
         try (Jedis jedis = redisPool.getResource()) {
-            byte[] key = key(sid, path); // Asegúrate que tu método key devuelva byte[]
-            byte[] data = conf.asByteArray(comp);
+            byte[] key = key(sid, path);
             
-            // Jedis eval requiere claves y argumentos
+            // 🔥 CAMBIO CLAVE: Serialización agnóstica para el CAS
+            byte[] data = serializer.serialize(comp);
+            
             Object res = jedis.eval(CAS_SCRIPT.getBytes(), 
                                     1, key, 
                                     String.valueOf(expectVer).getBytes(), 
@@ -159,7 +150,6 @@ public class RedisStateStore implements StateStore {
             
             long result = (Long) res;
             if (result == 1) {
-                // Actualizamos la versión del objeto Java local para que coincida
                 comp._setVersion(expectVer + 1);
                 return true;
             }
