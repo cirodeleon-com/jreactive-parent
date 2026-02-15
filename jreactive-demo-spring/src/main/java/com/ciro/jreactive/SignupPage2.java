@@ -1,6 +1,8 @@
 package com.ciro.jreactive;
 
 import com.ciro.jreactive.annotations.Call;
+import com.ciro.jreactive.annotations.Client;
+import com.ciro.jreactive.annotations.Stateless;
 import com.ciro.jreactive.router.Route;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Email;
@@ -12,6 +14,7 @@ import java.io.Serializable;
 
 @Component
 @Route(path = "/signup2")
+@Stateless
 public class SignupPage2 extends AppPage {
 
     public static class SignupForm implements Serializable {
@@ -34,13 +37,19 @@ public class SignupPage2 extends AppPage {
     // Estado reactivo para el checkbox (si lo quieres controlar desde el back)
     @State
     Boolean acceptTerms = false;
+    
+    
+    
+    
 
     @Call
     public void register(@Valid SignupForm form) {
+    	
         if (!form.acceptTerms) {
             state.lastMessage = "Debes aceptar los términos";
         } else {
             state.lastMessage = "Usuario " + form.name + " registrado correctamente";
+            this.form= new SignupForm();
         }
     }
 

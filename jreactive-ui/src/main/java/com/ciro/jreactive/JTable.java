@@ -28,7 +28,7 @@ public class JTable extends HtmlComponent {
                     <tbody>
                         {{#each data as row}}
                             <tr @click="{{onRowClick}}">
-                                """ + slot() + """
+                                <slot />
                             </tr>
                         {{/each}}
                         {{#if !data.size}}

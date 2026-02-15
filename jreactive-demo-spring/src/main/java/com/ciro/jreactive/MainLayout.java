@@ -33,7 +33,7 @@ public class MainLayout extends HtmlComponent {
                 </nav>
 
                 <main id="app">
-                    """ + slot() + """
+                    <slot />
                 </main>
 
                 <footer class="container">

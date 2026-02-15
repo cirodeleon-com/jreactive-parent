@@ -31,7 +31,7 @@ public class JModal extends HtmlComponent {
                             <button @click="close()" style="border:none; background:none; cursor:pointer; font-size:20px;">&times;</button>
                         </div>
                         <div class="jrx-modal-body">
-                            """ + slot() + """
+                            <slot />
                         </div>
                     </div>
                 </div>

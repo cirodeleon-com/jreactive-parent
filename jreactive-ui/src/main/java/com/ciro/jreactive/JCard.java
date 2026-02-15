@@ -26,7 +26,7 @@ public class JCard extends HtmlComponent {
               {{/if}}
 
               <div class="jrx-card-body">
-            """ + slot() + """
+                 <slot />
               </div>
 
             </div>

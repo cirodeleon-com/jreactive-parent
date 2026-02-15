@@ -2,6 +2,7 @@ package com.ciro.jreactive;
 
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.*;
+import com.ciro.jreactive.annotations.Stateless; 
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 
@@ -42,6 +43,9 @@ public class DelegatingWebSocketHandler implements WebSocketHandler {
         }
 
         HtmlComponent page = pageResolver.getPage(sessionId, path);
+        
+        boolean isStateless = page.getClass().isAnnotationPresent(Stateless.class);
+        session.getAttributes().put("isStateless", isStateless);
 
         // 🔥 CAMBIO: Ahora pasamos hubManager, path y sessionId
         JReactiveSocketHandler delegate = new JReactiveSocketHandler(
@@ -71,9 +75,11 @@ public class DelegatingWebSocketHandler implements WebSocketHandler {
     public void afterConnectionClosed(WebSocketSession session, CloseStatus status) throws Exception {
         var delegate = (WebSocketHandler) session.getAttributes().get("delegate");
         if (delegate != null) delegate.afterConnectionClosed(session, status);
+        
+        Boolean isStateless = (Boolean) session.getAttributes().get("isStateless");
 
         // Si el modo es EFÍMERO (false), limpiamos la RAM al cerrar
-        if (!wsConfig.isPersistentState()) { 
+        if (Boolean.TRUE.equals(isStateless) || !wsConfig.isPersistentState()) { 
             String path = (String) session.getAttributes().get("path");
             String sessionId = (String) session.getAttributes().get("sessionId");
 

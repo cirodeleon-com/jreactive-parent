@@ -20,7 +20,7 @@ public class JForm extends HtmlComponent {
               {{/if}}
 
               <div class="jrx-form-body layout-{{layout}}">
-            """ + slot() + """
+                 <slot />
               </div>
 
               {{#if onSubmit}}

@@ -46,6 +46,7 @@
     <module>jreactive-apt</module>
     <module>jreactive-starter-spring</module>
     <module>jreactive-core</module>
+    <module>jreactive-ui</module>
     <module>jreactive-runtime-js</module> 
     <module>jreactive-demo-spring</module>
     <module>jreactive-standalone</module>

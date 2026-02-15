@@ -109,6 +109,8 @@ public class JrxHttpApi {
         if (!violations.isEmpty()) {
             return guard.validationJson(violations);
         }
+        
+        autoUpdateStateFromArgs(owner, args);
 
         // 5) invocar
         try {
@@ -169,6 +171,52 @@ public class JrxHttpApi {
         for (HtmlComponent child : current._children()) {
             collectCallables(rootPage, child, map);
         }
+    }
+    
+    /**
+     * Magia de Framework:
+     * Si recibes un objeto complejo (DTO) como argumento, busca si hay un campo @State
+     * del mismo tipo en el componente y actualízalo automáticamente.
+     */
+    private void autoUpdateStateFromArgs(Object owner, Object[] args) {
+        if (owner == null || args == null) return;
+
+        Class<?> clazz = owner.getClass();
+
+        for (Object arg : args) {
+            if (arg == null) continue;
+
+            // 🛡️ Filtro de seguridad: No auto-bindear primitivos ni Strings
+            // para evitar sobrescribir contadores o textos por accidente.
+            // Solo queremos actualizar DTOs como SignupForm.
+            if (isPrimitiveOrWrapper(arg.getClass()) || arg instanceof String) {
+                continue;
+            }
+
+            // Buscar campos en el componente
+            for (java.lang.reflect.Field field : clazz.getDeclaredFields()) {
+                // Solo campos @State
+                if (field.isAnnotationPresent(com.ciro.jreactive.State.class)) {
+                    // Si el tipo del campo coincide con el del argumento
+                    if (field.getType().isAssignableFrom(arg.getClass())) {
+                        try {
+                            field.setAccessible(true);
+                            field.set(owner, arg); // 🔄 ACTUALIZACIÓN AUTOMÁTICA
+                            // System.out.println("✨ Auto-Binding aplicado a: " + field.getName());
+                        } catch (IllegalAccessException e) {
+                            e.printStackTrace();
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private boolean isPrimitiveOrWrapper(Class<?> type) {
+        return type.isPrimitive() || 
+               Number.class.isAssignableFrom(type) || 
+               Boolean.class.isAssignableFrom(type) || 
+               Character.class.isAssignableFrom(type);
     }
 }
 

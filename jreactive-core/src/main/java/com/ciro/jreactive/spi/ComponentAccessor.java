@@ -16,4 +16,6 @@ public interface ComponentAccessor<T extends HtmlComponent> {
 
     // Reemplaza a Method.invoke()
     Object call(T component, String method, Object... args);
+    
+    default String renderStatic(T component) { return null; }
 }

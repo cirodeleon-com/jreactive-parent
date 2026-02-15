@@ -4,7 +4,6 @@
 	xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
 	<modelVersion>4.0.0</modelVersion>
 
-	<!-- hereda la configuración y el dependencyManagement del padre -->
 	<parent>
 		<groupId>com.ciro</groupId>
 		<artifactId>jreactive-parent</artifactId>
@@ -15,27 +14,17 @@
 	<name>jreactive demo spring</name>
 	<packaging>jar</packaging>
 
-	<!-- 🔑 propiedad que faltaba -->
 	<properties>
-		<!-- todos los sub‑artefactos jreactive usan esta propiedad
-		internamente;
-         la igualamos a la versión del proyecto para que “resuelva” -->
 		<jreactive.version>${project.version}</jreactive.version>
-
-		<!-- si tu parent ya define java.version y spring‑boot.version,
-         estas líneas pueden omitirse -->
-		<java.version>17</java.version>
 	</properties>
 
 	<dependencies>
-		<!-- único starter necesario en tiempo de ejecución -->
 		<dependency>
 			<groupId>com.ciro</groupId>
 			<artifactId>jreactive-starter-spring</artifactId>
 			<version>${project.version}</version>
 		</dependency>
 
-		<!-- pruebas de Spring Boot -->
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-test</artifactId>
@@ -47,18 +36,41 @@
 			<artifactId>jreactive-runtime-jvm</artifactId>
 			<version>${project.version}</version>
 		</dependency>
+		
+		<dependency>
+            <groupId>com.ciro</groupId>
+            <artifactId>jreactive-ui</artifactId>
+            <version>${project.version}</version>
+        </dependency>
 
 		<dependency>
 			<groupId>com.tngtech.archunit</groupId>
 			<artifactId>archunit-junit5</artifactId>
 			<scope>test</scope>
 		</dependency>
-
-
 	</dependencies>
 
 	<build>
 		<plugins>
+			<plugin>
+				<groupId>org.codehaus.mojo</groupId>
+				<artifactId>build-helper-maven-plugin</artifactId>
+				<version>3.4.0</version>
+				<executions>
+					<execution>
+						<id>add-source</id>
+						<phase>generate-sources</phase>
+						<goals>
+							<goal>add-source</goal>
+						</goals>
+						<configuration>
+							<sources>
+								<source>${project.build.directory}/generated-sources/annotations</source>
+							</sources>
+						</configuration>
+					</execution>
+				</executions>
+			</plugin>
 
 			<plugin>
 				<groupId>org.springframework.boot</groupId>
@@ -73,17 +85,12 @@
 				</executions>
 			</plugin>
 
-			
-
-			<!-- compilación + annotation processor -->
 			<plugin>
 				<groupId>org.apache.maven.plugins</groupId>
 				<artifactId>maven-compiler-plugin</artifactId>
-				<!-- usa la versión que definiste en el parent (3.8.1) -->
 				<configuration>
 					<source>${java.version}</source>
 					<target>${java.version}</target>
-
 					<annotationProcessorPaths>
 						<path>
 							<groupId>com.ciro</groupId>
@@ -91,9 +98,6 @@
 							<version>${project.version}</version>
 						</path>
 					</annotationProcessorPaths>
-
-					<!-- necesarios para que el processor acceda al API del
-					compilador -->
 					<fork>true</fork>
 					<compilerArgs>
 						<arg>--add-exports</arg>

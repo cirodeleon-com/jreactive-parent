@@ -17,6 +17,8 @@ import java.util.Collection;
 import java.util.Objects;
 import com.ciro.jreactive.smart.SmartList;
 import com.ciro.jreactive.smart.SmartSet;
+import com.ciro.jreactive.spi.AccessorRegistry;
+import com.ciro.jreactive.spi.ComponentAccessor;
 import com.ciro.jreactive.smart.SmartMap;
 
 public abstract class HtmlComponent extends ViewLeaf implements java.io.Serializable {
@@ -26,10 +28,22 @@ public abstract class HtmlComponent extends ViewLeaf implements java.io.Serializ
     private Map<String, ReactiveVar<?>> map;
     private ComponentEngine.Rendered cached;
     private final List<HtmlComponent> _children = new ArrayList<>();
+ 
+
+ // ──────────────────────────────────────────────────────────────
+ // 🔥 AOT FIX: Pool de reciclaje por render + secuencia estable IDs
+ // ──────────────────────────────────────────────────────────────
+ private transient List<HtmlComponent> _renderPool = null;  // hijos del render anterior (para reuse)
+ private final transient Map<String, Integer> _childIdSeq = new HashMap<>(); // className -> seq estable
+//✅ Alias local -> ref real (namespaced) para hijos
+private final  Map<String, String> _childRefAlias = new HashMap<>();
+
+
     
     private final Set<String> stateKeys = new HashSet<>(); 
+    
 
-    private final AtomicReference<ComponentState> _state =
+    private final transient AtomicReference<ComponentState> _state =
             new AtomicReference<>(ComponentState.UNMOUNTED);
     
     // Snapshots
@@ -96,7 +110,6 @@ public abstract class HtmlComponent extends ViewLeaf implements java.io.Serializ
                         _simpleSnapshots.put(key, null);
                     } else if (val instanceof String || val instanceof Number || val instanceof Boolean) {
                         _simpleSnapshots.put(key, val);
-                    } else if (!(val instanceof SmartList || val instanceof SmartSet || val instanceof SmartMap)) {
                         // Es un POJO: guardamos el hash de sus campos
                         _structureHashes.put(key, getPojoHash(val));
                     }
@@ -121,6 +134,21 @@ public abstract class HtmlComponent extends ViewLeaf implements java.io.Serializ
         return slotHtml;
     }
     
+    /**
+     * Agrega un hijo de forma segura usando el lock del componente.
+     * Vital para el reciclaje de componentes en modo AOT.
+     */
+    public void addChild(HtmlComponent child) {
+        lock.lock();
+        try {
+            if (!this._children.contains(child)) {
+                this._children.add(child);
+            }
+        } finally {
+            lock.unlock();
+        }
+    }
+    
     void _addChild(HtmlComponent child) { 
         lock.lock();
         try {
@@ -129,6 +157,8 @@ public abstract class HtmlComponent extends ViewLeaf implements java.io.Serializ
             lock.unlock();
         }
     }
+    
+    
 
     List<HtmlComponent> _children() { 
         lock.lock();
@@ -138,6 +168,95 @@ public abstract class HtmlComponent extends ViewLeaf implements java.io.Serializ
             lock.unlock();
         }
     }
+    
+    public String _getSlotHtml() {
+        return this.slotHtml;
+    }
+    
+    public String renderChild(String className, Map<String, String> attrs, String slot) {
+        if (attrs != null) {
+            String ref = attrs.get("ref");
+            if (ref != null && !ref.isBlank()) {
+                String qualified = _qualifyChildRef(ref);
+                if (!qualified.equals(ref)) {
+                    // guardamos alias para que findChild("miRef") siga funcionando
+                    _childRefAlias.put(ref, qualified);
+                    attrs.put("ref", qualified);
+                }
+            }
+        }
+        return ComponentEngine.renderChild(this, className, attrs, slot);
+    }
+
+    
+ // ──────────────────────────────────────────────────────────────
+ // 🔥 AOT FIX: ciclo de render (drain -> reuse -> dispose)
+ // Nota: DEBE ser public porque el Accessor AOT se genera en el paquete
+//        del componente (no necesariamente com.ciro.jreactive).
+ // ──────────────────────────────────────────────────────────────
+ public void _beginRenderCycle() {
+     lock.lock();
+     try {
+         // defensivo por reentrancia
+         if (_renderPool != null) return;
+
+         // Pool = hijos anteriores (reusables)
+         _renderPool = new ArrayList<>(_children);
+
+         // Limpiamos la lista real: este render reconstruye el árbol
+         _children.clear();
+         
+         _childIdSeq.clear();
+         
+      
+         
+     } finally {
+         lock.unlock();
+     }
+ }
+
+ public void _endRenderCycle() {
+     List<HtmlComponent> pool;
+     lock.lock();
+     try {
+         pool = _renderPool;
+         _renderPool = null;
+     } finally {
+         lock.unlock();
+     }
+
+     // Desmontar lo NO reutilizado (lo que quedó en pool)
+     if (pool != null) {
+         for (HtmlComponent z : pool) {
+             try { z._unmountRecursive(); } catch (Throwable ignored) {}
+         }
+         pool.clear();
+     }
+ }
+
+ /** Pool actual (solo existe durante render()).
+  *  OJO: se devuelve la referencia para que el engine pueda "consumir" (remove) reusados.
+  */
+ public List<HtmlComponent> _getRenderPool() {
+     return _renderPool;
+ }
+
+ /** Secuencia estable por tipo de hijo (solo se incrementa al CREAR, no al reusar) */
+ public int _nextChildIdSeq(String className) {
+     lock.lock();
+     try {
+         int n = _childIdSeq.getOrDefault(className, 0);
+         _childIdSeq.put(className, n + 1);
+         return n;
+     } finally {
+         lock.unlock();
+     }
+ }
+ 
+ 
+
+    
+    
     
     public void _initIfNeeded() {
         if (!_initialized) {
@@ -168,6 +287,8 @@ public abstract class HtmlComponent extends ViewLeaf implements java.io.Serializ
             cleanupBindings();
         }
     }
+    
+    
 
     public ComponentState _state() {
         return _state.get();
@@ -178,6 +299,7 @@ public abstract class HtmlComponent extends ViewLeaf implements java.io.Serializ
         binds.values().forEach(rx -> rx.clearListeners());
     }
 
+    /*
     @Override
     public Map<String, ReactiveVar<?>> bindings() {
         if (cached == null) {
@@ -188,16 +310,63 @@ public abstract class HtmlComponent extends ViewLeaf implements java.io.Serializ
         }
         return cached.bindings();
     }
+    */
+    
+    @Override
+    public Map<String, ReactiveVar<?>> bindings() {
+        // ✅ Importante: forzamos pasar por render(), así AOT + reciclaje aplica siempre
+        //if (cached == null) render();
+        //return cached.bindings();
+    	
+        if (cached != null) return cached.bindings();
+        
+        // 2. 🔥 FIX MAESTRO: Si no hay caché (ej: venimos de Redis), 
+        // devolvemos los bindings por reflexión (getRawBindings) 
+        // EN LUGAR de forzar un render(). 
+        // Esto evita destruir y recrear los hijos (lo que dañaba el reloj y refs).
+        return getRawBindings();
+    }
+
 
     @Override
     public String render() {
-        if (cached == null) {
-            synchronized(this) {
-                if (cached == null) cached = ComponentEngine.render(this);
+        // 1. Si ya está en caché, lo devolvemos (O(1))
+        if (cached != null) return cached.html();
+
+        synchronized (this) {
+            if (cached != null) return cached.html();
+
+            // 🔥 AOT FIX: arrancamos ciclo de render (pool + rebuild children)
+            _beginRenderCycle();
+            try {
+                // 2. Fast Path AOT
+                @SuppressWarnings("unchecked")
+                Class<HtmlComponent> myClass = (Class<HtmlComponent>) this.getClass();
+
+                ComponentAccessor<HtmlComponent> acc = null;//AccessorRegistry.get(myClass);
+
+                if (acc != null) {
+                    System.out.println("⚡ [AOT-FAST] Renderizando " + this.getClass().getSimpleName());
+                    String html = acc.renderStatic(this);
+                    if (html != null) {
+                        this.cached = new ComponentEngine.Rendered(html, getRawBindings());
+                        return html;
+                    }
+                } else {
+                    System.out.println("🐢 [REFLECTION-SLOW] Renderizando " + this.getClass().getSimpleName());
+                }
+
+                // 3. Slow Path
+                this.cached = ComponentEngine.render(this);
+                return cached.html();
+
+            } finally {
+                // 🔥 AOT FIX: desmonta lo que no se usó en este render
+                _endRenderCycle();
             }
         }
-        return cached.html();
     }
+
 
     protected abstract String template();
 
@@ -416,17 +585,18 @@ public abstract class HtmlComponent extends ViewLeaf implements java.io.Serializ
     
     @SuppressWarnings("unchecked")
     public <T extends HtmlComponent> T findChild(String ref, Class<T> type) {
+        String realRef = _childRefAlias.getOrDefault(ref, ref);
+
         for (HtmlComponent child : _children()) {
-            // En JReactive, el atributo 'ref' del template se convierte en el ID del componente
-            if (ref.equals(child.getId()) && type.isInstance(child)) {
+            if (realRef.equals(child.getId()) && type.isInstance(child)) {
                 return (T) child;
             }
-            // Búsqueda recursiva en profundidad
-            T found = child.findChild(ref, type);
+            T found = child.findChild(ref, type); // pasamos ref local, cada nodo resuelve su mapa
             if (found != null) return found;
         }
         return null;
     }
+
     
     @SuppressWarnings("unchecked")
     protected void updateState(String fieldName) {
@@ -546,4 +716,17 @@ public abstract class HtmlComponent extends ViewLeaf implements java.io.Serializ
     
     public long _getVersion() { return _version; }
     public void _setVersion(long v) { this._version = v; }
+    
+    
+    private String _qualifyChildRef(String ref) {
+        if (ref == null) return null;
+        String r = ref.trim();
+        if (r.isEmpty()) return r;
+
+        String prefix = getId() + ".";
+        return r.startsWith(prefix) ? r : (prefix + r);
+    }
+
+
+    
 }

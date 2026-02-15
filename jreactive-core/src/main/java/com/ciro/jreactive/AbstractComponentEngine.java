@@ -112,10 +112,18 @@ public abstract class AbstractComponentEngine implements ComponentEngine.Strateg
             if (re.isPresent()) { leaf = (ViewLeaf) re.get(); pool.remove(re.get()); }
             else leaf = newInstance(parent, className);
             
-            int index = parent._children().size(); 
-            String stableId = parent.getId() + "-" + className + "-" + index;
+            //int index = parent._children().size(); 
+            //String stableId = parent.getId() + "-" + className + "-" + index;
             
-            leaf.setId(stableId);
+            //leaf.setId(stableId);
+         // ✅ ID estable: si el componente ya existe (reuse), NO lo tocamos.
+         // Solo asignamos ID cuando es NUEVO.
+           // if (leaf.getId() == null || leaf.getId().isBlank()) {
+                int seq = parent._nextChildIdSeq(className);
+                String stableId = parent.getId() + "-" + className + "-" + seq;
+                leaf.setId(stableId);
+           // }
+
         }
         HtmlComponent hc = (HtmlComponent) leaf;
         if (slotHtml != null && !slotHtml.isBlank()) hc._setSlotHtml(slotHtml);
@@ -131,6 +139,23 @@ public abstract class AbstractComponentEngine implements ComponentEngine.Strateg
             	if (isB) {
             	    ReactiveVar<?> pRx = parent.getRawBindings().get(v);
             	    if (pRx == null) pRx = globalBindings.get(v);
+            	    
+            	    if (pRx == null && v.contains(".")) {
+                        // 🔥 FIX ROBUSTO: En lugar de cortar el string, iteramos los hermanos
+                        // para ver si la variable "v" pertenece a alguno de ellos.
+                        for (HtmlComponent sibling : parent._children()) {
+                            String siblingId = sibling.getId();
+                            
+                            // Comprobamos si la variable empieza con el ID del hermano + punto
+                            // Ej: v="page_1.hello.newFruit" empieza con id="page_1.hello" + "."
+                            if (v.startsWith(siblingId + ".")) {
+                                String subPath = v.substring(siblingId.length() + 1); // Extrae "newFruit"
+                                pRx = sibling.getRawBindings().get(subPath);
+                                
+                                if (pRx != null) break; // ¡Encontrado! Dejamos de buscar
+                            }
+                        }
+                    }
 
             	    if (pRx != null) {
             	        target.set(pRx.get());
@@ -166,6 +191,34 @@ public abstract class AbstractComponentEngine implements ComponentEngine.Strateg
                 "'. Verifica el nombre o usa el paquete completo (ej: com.app.ui." + className + ")", e); 
         }
     }
+    
+    
+    @Override
+    public String renderChild(HtmlComponent parent, String className, Map<String, String> attrs, String slot) {
+
+        // ✅ Pool real (viene del _beginRenderCycle del parent)
+        List<HtmlComponent> pool = parent._getRenderPool();
+        if (pool == null) pool = new java.util.ArrayList<>(); // fallback defensivo
+
+        HtmlComponent child = createAndBindComponent(
+            parent,
+            pool,
+            parent.getRawBindings(), // ✅ NO llames parent.bindings() aquí (evita recursion/side effects)
+            className,
+            attrs,
+            slot
+        );
+
+        child._initIfNeeded();
+        child._syncState();
+        child._mountRecursive();
+
+        return child.render();
+    }
+
+    
+    
+    
 
     protected void disposeUnused(List<HtmlComponent> pool) {
         if (pool == null) return;
