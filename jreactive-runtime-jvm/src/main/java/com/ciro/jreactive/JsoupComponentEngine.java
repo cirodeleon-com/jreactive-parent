@@ -57,7 +57,7 @@ public class JsoupComponentEngine extends AbstractComponentEngine {
 		String resources = ctx._getBundledResources();
 		// 1. Pre-procesamiento de bloques (con el fix de anidamiento)
 		String rawTemplate = resources + ctx.template();
-		String htmlWithControlBlocks = processControlBlocks(rawTemplate);
+		String htmlWithControlBlocks = processControlBlocks(rawTemplate,ctx);
 
 		String xmlFriendly = HTML5_VOID_FIX.matcher(htmlWithControlBlocks).replaceAll("<$1$2/>");
 

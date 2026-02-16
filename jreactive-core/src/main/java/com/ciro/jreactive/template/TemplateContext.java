@@ -149,4 +149,13 @@ public class TemplateContext {
     private boolean isNumeric(String str) {
         return str != null && str.matches("-?\\d+(\\.\\d+)?");
     }
+    
+    public static boolean evalSimple(HtmlComponent comp, String expr) {
+    	        if (expr == null || expr.isBlank()) return false;
+    	
+    	        // Creamos un contexto efímero para evaluar una sola expresión
+    	        TemplateContext ctx = new TemplateContext(comp);
+    	        return ctx.evaluate(expr);
+    	    }
+
 }
