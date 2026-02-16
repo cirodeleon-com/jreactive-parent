@@ -69,6 +69,19 @@ public class JrxHttpApi {
         // 1) localizar método
         var callables = collectCallables(page);
         var entry = callables.get(qualified);
+        
+        if (entry == null) {
+            System.out.println("⚠️ [JrxHttpApi] Método '" + qualified + "' no encontrado. Reconstruyendo árbol de componentes...");
+            
+            // Forzamos un renderizado silencioso para que se ejecute el template() 
+            // y se instancien/agreguen los hijos (CounterLeaf, etc.) a la lista _children via _addChild()
+            page.render(); 
+
+            // Re-escaneamos el árbol ahora que está poblado
+            callables = collectCallables(page);
+            entry = callables.get(qualified);
+        }
+        
         if (entry == null) {
             return guard.errorJson("NOT_FOUND", "Método no permitido: " + qualified);
         }

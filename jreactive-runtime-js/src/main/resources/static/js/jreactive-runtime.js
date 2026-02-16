@@ -19,10 +19,17 @@ window.JRX_RENDERERS = window.JRX_RENDERERS || {};
 window.JRX = window.JRX || {};
 window.JRX.renderTemplate = function(html, state) {
   return html.replace(/{{\s*([\w.-]+)\s*}}/g, (m, key) => {
-    // 1. Resolvemos la ruta (ej: "user.name") contra el objeto de estado local
-    const val = key.split('.').reduce((o, i) => (o && o[i] !== undefined ? o[i] : undefined), state);
+    // 1. Intentar acceso directo primero (Optimización para {{id}})
+    if (state.hasOwnProperty(key)) {
+        return (state[key] !== undefined && state[key] !== null) ? state[key] : '';
+    }
     
-    // 2. 🔥 FIX: Si el valor es 0, debe mostrar "0". Solo ponemos "" si es null o undefined.
+    // 2. Resolver ruta profunda (ej: "user.name")
+    const val = key.split('.').reduce((o, i) => (o && o[i] !== undefined ? o[i] : undefined), state);
+
+    // Debug si falla la resolución de un ID (opcional)
+     if ((val === undefined || val === null) && key === 'id') console.warn("⚠️ Falló resolución de {{id}}", state);
+
     return (val !== undefined && val !== null) ? val : '';
   });
 };
@@ -1512,7 +1519,9 @@ function setupEventBindings() {
   const EVENT_DIRECTIVES = ['click', 'change', 'input', 'submit'];
 
   // Lógica central para ejecutar cualquier llamada @Call
-  const executeCall = async (el, evtName, qualified, rawParams, ev) => {
+  const executeCall = async (el, evtName, qualifiedRaw, rawParams, ev) => {
+	
+	const qualified = qualifiedRaw ? qualifiedRaw.split('(')[0] : qualifiedRaw;
     // A) Evitar recargas nativas (menos en file inputs)
     const isFileClick = evtName === 'click' && el instanceof HTMLInputElement && el.type === 'file';
     if (!isFileClick && ev && typeof ev.preventDefault === 'function') {
@@ -1796,6 +1805,11 @@ function applyStateForKey(k, v) {
           }
       });
 
+      // ✅✅✅ FIX CRÍTICO: Inyectar el ID en el contexto local ✅✅✅
+      // Sin esto, {{this.id}} se renderiza vacío y el click falla.
+      localState['this'] = { id: rootId }; 
+      localState['id'] = rootId; 
+
       let rawTpl = "";
       if (typeof renderer.getTemplate === 'function') {
           rawTpl = renderer.getTemplate();
@@ -1813,13 +1827,8 @@ function applyStateForKey(k, v) {
                       if (fromEl.nodeType !== 1) return;
 
                       // 🔥 PROTECCIÓN TOTAL DE FOCO
-                      // Si este elemento tiene el foco, IMPEDIMOS que el servidor lo toque.
-                      // Retornar false cancela la actualización de este nodo específico.
                       if (fromEl === document.activeElement && 
                          (fromEl.tagName === 'INPUT' || fromEl.tagName === 'TEXTAREA' || fromEl.tagName === 'SELECT')) {
-                          
-                          // Opcional: Si quieres ser muy preciso, podrías copiar atributos nuevos
-                          // pero mantener el valor del usuario. Por ahora, "congelarlo" es lo más seguro.
                           return false; 
                       }
                   }
@@ -1830,12 +1839,8 @@ function applyStateForKey(k, v) {
       }
 
       // 2. 🔥 FIX FINAL: Hidratación Fuerza Bruta
-      // Después de que Idiomorph termina, el DOM tiene los atributos @click crudos.
-      // Recorremos TODO el componente, borramos memoria vieja y re-hidratamos.
-      
       const allNodes = [targetEl, ...targetEl.querySelectorAll('*')];
       allNodes.forEach(node => {
-          // Borramos la bandera para obligar a hydrate a procesarlo
           delete node._jrxHydratedEvents; 
       });
 
