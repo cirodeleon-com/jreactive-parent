@@ -38,6 +38,17 @@ public class JsoupComponentEngine extends AbstractComponentEngine {
 		ctx._initIfNeeded();
 
 		ctx._syncState();
+		
+		// =========================================================
+        // 🔥 FIX CRÍTICO: Registrar bindings del ROOT al INICIO
+        // Esto permite que los hijos (como JSelect dentro de un Slot)
+        // encuentren "ClientsPage#1.statusOptions" en 'globalBindings'.
+        // =========================================================
+        String rootPrefix = ctx.getId() + ".";
+        ctx.getRawBindings().forEach((k, v) -> {
+            all.put(k, v);              // Acceso local "statusOptions"
+            all.put(rootPrefix + k, v); // Acceso global "ClientsPage#1.statusOptions"
+        });
 
 		if (ctx.getClass().isAnnotationPresent(com.ciro.jreactive.annotations.Client.class)) {
 			String resources = ctx._getBundledResources();
@@ -67,7 +78,7 @@ public class JsoupComponentEngine extends AbstractComponentEngine {
 		// 2. Procesar Árbol
 		processNodeTree(doc, ctx, pool, all, "");
 
-		all.putAll(ctx.getRawBindings());
+		//all.putAll(ctx.getRawBindings());
 
 		String html = doc.html();
 		if (doc.children().size() == 1
@@ -144,6 +155,15 @@ public class JsoupComponentEngine extends AbstractComponentEngine {
 		String className = el.tagName();
 		Map<String, String> attrs = new HashMap<>();
 		el.attributes().forEach(a -> attrs.put(a.getKey(), a.getValue()));
+		
+		// Usamos el ID del contexto actual (ClientsPage) para asegurar que JSelect encuentre la variable
+        String slotNamespace = ctx.getId() + ".";
+        
+        // Recorremos los hijos (el contenido del slot) y reescribimos sus atributos
+        
+        for (Element child : el.children()) {
+            namespaceAttributesRecursive(child, slotNamespace);
+        }
 
 		// 1. Extraer slot y aplicar namespace del padre (ctx)
 		String rawSlot = el.html();
@@ -157,6 +177,8 @@ public class JsoupComponentEngine extends AbstractComponentEngine {
 
 		String childId = childComp.getId();
 		String childNs = childId + ".";
+		
+		childComp.getRawBindings().forEach((k, v) -> all.put(childNs + k, v));
 
 		childComp._beginRenderCycle();
 
@@ -231,6 +253,68 @@ public class JsoupComponentEngine extends AbstractComponentEngine {
 			childComp._mountRecursive();
 		}
 	}
+	
+	/**
+     * Recorre recursivamente el árbol del slot y reescribe atributos reactivos (:prop, @event)
+     * agregando el namespace del padre.
+     */
+    private void namespaceAttributesRecursive(Element el, String ns) {
+        // 1. Procesar atributos del elemento actual
+        List<Attribute> attrs = new ArrayList<>(el.attributes().asList());
+        for (Attribute attr : attrs) {
+            String key = attr.getKey();
+            String val = attr.getValue();
+
+            // Directivas de valor (:options, :field, etc.)
+            if (key.startsWith(":")) {
+                if (//!val.contains(".") && 
+                		!val.startsWith(ns)) { // Evitar doble prefijo
+                	
+                    // Ignoramos literales (true/false/números/'string')
+                    if (!isLiteral(val)) {
+                        el.attr(key, ns + val);
+                    }
+                }
+            }
+            
+            // Directivas de control (data-if, data-each)
+            if (key.equals("data-if") || key.equals("data-each")) {
+                 // data-each="items as item" -> data-each="Page#1.items as item"
+                 if (!val.contains(ns)) {
+                     // Lógica simple: prefijar el primer token si no es alias
+                     String[] parts = val.split(":"); // o espacio
+                     if (!parts[0].contains(".")) {
+                         el.attr(key, ns + val);
+                     }
+                 }
+            }
+
+            // Eventos (@click)
+            if (key.startsWith("@") || key.equals("data-call")) {
+                // Reescribir "save()" -> "Page#1.save()"
+                if (!val.contains("(") || !val.contains(".")) {
+                     // Implementación simple: si no tiene punto, asumimos método local
+                     // (Tu rewriteEvent ya hace algo similar, pero esto es pre-procesamiento de string)
+                     if (!val.startsWith(ns)) {
+                         String cleanVal = val.trim();
+                         // Si es solo nombre de método "save()", prefijar
+                         if (cleanVal.matches("^[a-zA-Z0-9_]+\\(.*")) {
+                             el.attr(key, ns + cleanVal);
+                         }
+                     }
+                }
+            }
+        }
+
+        // 2. Recursión a los hijos
+        for (Element child : el.children()) {
+            namespaceAttributesRecursive(child, ns);
+        }
+    }
+
+    private boolean isLiteral(String s) {
+        return s.matches("true|false|-?\\d+(\\.\\d+)?|'.*'");
+    }
 
 	// Método auxiliar para recolectar bindings recursivamente de un árbol de
 	// componentes

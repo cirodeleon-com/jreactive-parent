@@ -14,51 +14,52 @@ import com.ciro.jreactive.router.Route;
 @Route(path = "/newStateTest")
 public class NewStateTestPage extends AppPage {
 
-    // 1) @State SIN Type ni $()
-    @State
-    public PageState state = new PageState();
+    
 
     // 2) Input normal con @Bind + Type (esto sí sigue con Type)
     @State
     public String newItem = "";
 
-    public static class PageState implements Serializable{
-        public String title = "Demo @State sin Type";
-        public List<String> items = new ArrayList<>(
-            List.of("Uno", "Dos", "Tres")
-        );
+    @State
+    public String title = "Demo @State sin Type";
+    
+    @State
+    public List<String> items = new ArrayList<>();
+    
+    
+    @Override
+    public void onInit(){
+    	items.add("pera");
+    	items.add("coca cola");
+    	items.add("cero");
+    	newItem="o";
     }
 
     @Call
     public void addItem(String value) {
-        if (value == null || value.isBlank()) return;
-
-        var copy = new ArrayList<>(state.items);
-        copy.add(value);
-        state.items = copy;
-
-        newItem="";
+        items.add(value);
+        this.newItem="";
     }
 
     @Call
     public void resetList() {
-        state.items = new ArrayList<>();
+        items.clear();
     }
 
     @Call
     public void changeTitle(String title) {
-        state.title = title;
+        this.title = title;
     }
 
     @Override
     protected String template() {
         return """
         <fieldset style='border:1px solid #888;padding:8px;width:360px'>
-          <legend>{{state.title}}</legend>
+          <legend>{{title}}</legend>
 
           <div>
             <strong>Total:</strong>
-            {{state.items.size}}
+            {{items.size}}
           </div>
 
           <div style='margin:8px 0'>
@@ -69,7 +70,7 @@ public class NewStateTestPage extends AppPage {
           </div>
 
           <ul>
-            {{#each state.items as it}}
+            {{#each items as it}}
               <li>{{it}}</li>
             {{/each}}
           </ul>

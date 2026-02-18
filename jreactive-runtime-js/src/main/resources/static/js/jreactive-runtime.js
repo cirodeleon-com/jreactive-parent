@@ -548,8 +548,27 @@ function mount(tpl) {
   
   // 2. 🔥 LA CLAVE: Forzar renderizado inicial de los nuevos nodos texto
   bindings.forEach((nodes, key) => {
+	
+	const currentVal = resolveExpr(key);
+	
     nodes.forEach(node => {
-      if (node.nodeType === Node.TEXT_NODE) renderText(node);
+       if (node.nodeType === Node.TEXT_NODE){ 
+		  renderText(node);
+	   }
+	   else if (node.tagName && currentVal !== undefined && currentVal !== null) {
+	             // Checkboxes / Radios
+	             if (node.type === 'checkbox' || node.type === 'radio') {
+	                // Comparamos string vs boolean por seguridad
+	                node.checked = (String(currentVal) === 'true' || currentVal === true);
+	             } 
+	             // Inputs normales / Selects / Textareas
+	             else if (node.type !== 'file') {
+	                // Solo asignamos si difiere para no perder cursor (aunque en mount da igual)
+	                if (node.value != currentVal) {
+	                    node.value = currentVal;
+	                }
+	             }
+	         }
     });
   });
 
@@ -892,24 +911,28 @@ function applyDelta(key, type, changes) {
   if (!target && type !== 'json') return;
   
   if (type === 'json') {
-      // 🔥 PARCHE CSR: Fusionar los cambios en el estado local
-      // 'changes' aquí es el mapa {count: 6}
-      const deltas = Array.isArray(changes) ? changes[0] : changes;
+      // 🟢 FIX: Normalizamos a array y procesamos TODOS los elementos, no solo el [0]
+      const changeList = Array.isArray(changes) ? changes : [changes];
       
-      // Actualizamos el estado global para cada sub-llave
-      Object.keys(deltas).forEach(subKey => {
-          const fullKey = `${key}.${subKey}`;
-          state[fullKey] = deltas[subKey];
-          
-          // También actualizamos el objeto padre en el state por si el renderizador lo usa
-          if (state[key]) state[key][subKey] = deltas[subKey];
+      changeList.forEach(deltas => {
+          // Actualizamos el estado global para cada sub-llave que venga en este delta
+          Object.keys(deltas).forEach(subKey => {
+              const fullKey = `${key}.${subKey}`;
+              state[fullKey] = deltas[subKey];
+              
+              // También actualizamos el objeto padre en el state por si el renderizador lo usa
+              if (state[key]) {
+                  state[key][subKey] = deltas[subKey];
+              }
+          });
       });
 
-      // Forzamos el renderizado del componente @Client
+      // Forzamos el renderizado del componente @Client una sola vez con el estado FINAL acumulado
       applyStateForKey(key, state[key]); 
       return;
   }
 
+  // --- Lógica estándar para colecciones ---
   if (!Array.isArray(changes)) changes = [];
 
   changes.forEach(ch => {
@@ -922,7 +945,6 @@ function applyDelta(key, type, changes) {
   updateIfBlocks();
   updateEachBlocks();
 }
-
 
 function applyListChange(arr, ch) {
     // ch = { op: "ADD"|"REMOVE"|"CLEAR", index: 1, item: ... }
@@ -1522,6 +1544,9 @@ function setupEventBindings() {
   const executeCall = async (el, evtName, qualifiedRaw, rawParams, ev) => {
 	
 	const qualified = qualifiedRaw ? qualifiedRaw.split('(')[0] : qualifiedRaw;
+	
+	
+	
     // A) Evitar recargas nativas (menos en file inputs)
     const isFileClick = evtName === 'click' && el instanceof HTMLInputElement && el.type === 'file';
     if (!isFileClick && ev && typeof ev.preventDefault === 'function') {
@@ -1540,7 +1565,8 @@ function setupEventBindings() {
 
     // C) Preparación
     clearValidationErrors();
-    startLoading();
+	
+	startLoading();
 
     const paramList = (rawParams || '').split(',').map(p => p.trim()).filter(Boolean);
     const args = [];
@@ -1576,7 +1602,7 @@ function setupEventBindings() {
         ok = false;
         error = e?.message || String(e);
       } finally {
-        stopLoading();
+		stopLoading();
       }
 
       // Feedback visual
@@ -1774,110 +1800,130 @@ function updateDomForKey(k, v) {
 // 🔥 FIX FINAL DEFINITIVO: applyStateForKey (Hidratación Explicita Post-Morph)
 // =====================================================================================
 function applyStateForKey(k, v) {
+  // 1. Actualizar memoria global
   state[k] = v;
+  
+  // Propagación de Store
   const parts = k.split('.');
-  const last  = parts.at(-1);
-
-  // Propagación de Store Global
-  if (last === 'store' && v && typeof v === 'object') {
-    Object.entries(v).forEach(([childKey, childVal]) => {
-      const globalKey = `store.${childKey}`;
-      applyStateForKey(globalKey, childVal);
-    });
+  if (parts.at(-1) === 'store' && v && typeof v === 'object') {
+    Object.entries(v).forEach(([ck, cv]) => applyStateForKey(`store.${ck}`, cv));
   }
 
-  // 🔥 INTERCEPCIÓN CSR (@Client)
   const rootId = k.includes('.') ? k.split('.')[0] : k;
   const el = document.getElementById(rootId);
 
+  // --- LÓGICA CSR (@Client) MEJORADA ---
   if (el && el.dataset.jrxClient) {
+    
+    // ⚡ PASO 1: INTENTO O(1) (Actualización directa de valores)
+    // Actualizamos los inputs existentes INMEDIATAMENTE para que se sienta instantáneo.
+    // Esto evita que el usuario note lag mientras se procesa el HTML.
+    if (el.children.length > 0) {
+        const updateLeafs = (ck, cv) => {
+            if (cv !== null && typeof cv === 'object' && !Array.isArray(cv)) {
+                Object.entries(cv).forEach(([sk, sv]) => updateLeafs(ck + '.' + sk, sv));
+            } else {
+                updateDomForKey(ck, cv); // O(1) usando el mapa de bindings
+            }
+        };
+        updateLeafs(k, v);
+    }
+
+    // ⚡ PASO 2: DECISIÓN INTELIGENTE (¿Necesitamos Morph?)
+    // Si la actualización es SOLO de valores de formulario, el Paso 1 ya lo resolvió.
+    // Pero si hay cambios estructurales (data-if, data-each) o reseteos complejos,
+    // necesitamos el Morph para garantizar que el DOM coincida con el estado.
+    
+    // Ejecutamos el render completo para asegurar estructura correcta (Mensajes de error, listas, etc)
     const compName = el.dataset.jrxClient;
+    const renderer = window.JRX_RENDERERS[compName];
 
-    const doCsrRender = (targetEl) => { 
-      const renderer = window.JRX_RENDERERS[compName];
-      if (!renderer) return;
+    if (!renderer) {
+        if (!loadedCsrScripts.has(compName)) {
+            loadedCsrScripts.add(compName);
+            const s = document.createElement('script');
+            s.src = `/js/jrx/${compName}.jrx.js`;
+            s.onload = () => applyStateForKey(k, v);
+            document.head.appendChild(s);
+        }
+        return;
+    }
 
-      const localState = {};
-      const prefix = rootId + ".";
-      Object.keys(state).forEach(fullKey => {
-          if (fullKey.startsWith(prefix)) {
-              localState[fullKey.substring(prefix.length)] = state[fullKey];
-          }
-      });
+    const doRender = async () => {
+        const localState = {};
+        const prefix = rootId + ".";
+        Object.keys(state).forEach(fullKey => {
+            if (fullKey.startsWith(prefix)) localState[fullKey.substring(prefix.length)] = state[fullKey];
+        });
+        localState['this'] = { id: rootId };
+        localState['id'] = rootId;
 
-      // ✅✅✅ FIX CRÍTICO: Inyectar el ID en el contexto local ✅✅✅
-      // Sin esto, {{this.id}} se renderiza vacío y el click falla.
-      localState['this'] = { id: rootId }; 
-      localState['id'] = rootId; 
+        // Generar HTML
+        let rawTpl = (typeof renderer.getTemplate === 'function') ? renderer.getTemplate() : "";
+        let processedTpl = await expandComponentsAsync(rawTpl, localState);
+        processedTpl = transpileLogic(processedTpl);
+        const newHtml = window.JRX.renderTemplate(processedTpl, localState);
 
-      let rawTpl = "";
-      if (typeof renderer.getTemplate === 'function') {
-          rawTpl = renderer.getTemplate();
-      } else if (typeof renderer === 'function') { return; }
-      
-      const newHtml = window.JRX.renderTemplate(rawTpl, localState);
+        // 🟢 PRE-HIDRATACIÓN (Tatuaje de valores)
+        const tempDiv = document.createElement('div');
+        tempDiv.innerHTML = newHtml;
+        tempDiv.querySelectorAll('input, select, textarea').forEach(input => {
+            const name = input.getAttribute('name');
+            if (name) {
+                const val = resolveDeep(name, localState);
+                if (val !== undefined && val !== null) {
+                    if (input.type === 'checkbox' || input.type === 'radio') {
+                        if (val) input.setAttribute('checked', ''); else input.removeAttribute('checked');
+                    } else {
+                        input.setAttribute('value', val);
+                        input.value = val;
+                        if (input.tagName === 'TEXTAREA') input.textContent = val;
+                        if (input.tagName === 'SELECT') {
+                             const opt = input.querySelector(`option[value="${val}"]`);
+                             if(opt) opt.setAttribute('selected', '');
+                        }
+                    }
+                }
+            }
+        });
+        
+        // 🟢 MORPHING INTELIGENTE
+        // Idiomorph detectará que los inputs ya fueron actualizados en el PASO 1
+        // y NO los tocará, preservando el foco y selección.
+        // Solo tocará la estructura (el mensaje <p>) si es necesario.
+        if (window.Idiomorph) {
+            Idiomorph.morph(el, tempDiv.innerHTML, {
+                morphStyle: 'innerHTML',
+                callbacks: {
+                    beforeNodeMorphed: (fromEl, toEl) => {
+                        if (fromEl.nodeType !== 1) return;
+                        // Protección extra de foco
+                        if (fromEl === document.activeElement) return false;
+                    }
+                }
+            });
+        } else {
+            el.innerHTML = tempDiv.innerHTML;
+        }
 
-      
-      // 1. Aplicar Morphing con protección de Foco
-      if (window.Idiomorph) {
-          Idiomorph.morph(targetEl, newHtml, {
-              morphStyle: 'innerHTML', 
-              callbacks: {
-                  beforeNodeMorphed: (fromEl, toEl) => {
-                      if (fromEl.nodeType !== 1) return;
-
-                      // 🔥 PROTECCIÓN TOTAL DE FOCO
-                      if (fromEl === document.activeElement && 
-                         (fromEl.tagName === 'INPUT' || fromEl.tagName === 'TEXTAREA' || fromEl.tagName === 'SELECT')) {
-                          return false; 
-                      }
-                  }
-              }
-          });
-      } else {
-          targetEl.innerHTML = newHtml;
-      }
-
-      // 2. 🔥 FIX FINAL: Hidratación Fuerza Bruta
-      const allNodes = [targetEl, ...targetEl.querySelectorAll('*')];
-      allNodes.forEach(node => {
-          delete node._jrxHydratedEvents; 
-      });
-
-      // Ahora sí, convertimos @click -> data-call con el namespace correcto
-      hydrateEventDirectives(targetEl, rootId + ".");
-      
-      // Conectamos los listeners
-      setupEventBindings();
+        // Reconectar eventos y re-indexar bindings para que el PASO 1 funcione la próxima vez
+        const allNodes = [el, ...el.querySelectorAll('*')];
+        allNodes.forEach(node => delete node._jrxHydratedEvents);
+        hydrateEventDirectives(el, rootId + ".");
+        reindexBindings(); 
+        setupEventBindings();
     };
 
-    // Ejecución Lazy o Inmediata
-    if (window.JRX_RENDERERS[compName]) {
-      doCsrRender(el);
-      return; 
-    } 
-    
-    if (!loadedCsrScripts.has(compName)) {
-      loadedCsrScripts.add(compName);
-      const s = document.createElement('script');
-      s.src = `/js/jrx/${compName}.jrx.js`;
-      s.onload = () => { doCsrRender(el); };
-      document.head.appendChild(s);
-    }
-    return; 
+    doRender();
+    return;
   }
 
-  // SSR Clásico (Para componentes no @Client)
+  // SSR Clásico
   updateIfBlocks();
   updateEachBlocks();
   updateDomForKey(k, v);
-  
   if (v && typeof v === 'object' && !Array.isArray(v)) {
-      Object.keys(v).forEach(subKey => {
-          const childKey = `${k}.${subKey}`; 
-          const childVal = v[subKey];
-          applyStateForKey(childKey, childVal);
-      });
+      Object.keys(v).forEach(subKey => applyStateForKey(`${k}.${subKey}`, v[subKey]));
   }
 }
 /* ──────────────────────────────────────────────────────────────
@@ -2227,6 +2273,187 @@ window.addEventListener('pageshow', (event) => {
     }
 });
 
+
+/* ------------------------------------------------------------------
+ * ⚡ PARSER AOT V2: Soporte de Slots y Anidamiento
+ * ------------------------------------------------------------------ */
+
+// Caché de promesas (déjalo como estaba)
+/* ------------------------------------------------------------------
+ * ⚡ PARSER AOT V2: Soporte de Slots y Anidamiento
+ * ------------------------------------------------------------------ */
+
+// Caché de promesas (igual que antes)
+const pendingScripts = new Map();
+
+function loadComponentScript(compName) {
+    if (window.JRX_RENDERERS[compName]) return Promise.resolve();
+    if (pendingScripts.has(compName)) return pendingScripts.get(compName);
+
+    console.log(`⏳ Descargando componente: ${compName}...`);
+    const promise = new Promise((resolve) => {
+        const s = document.createElement('script');
+        s.src = `/js/jrx/${compName}.jrx.js`;
+        s.onload = () => resolve();
+        s.onerror = () => { console.error(`Fallo carga: ${compName}`); resolve(); };
+        document.head.appendChild(s);
+    });
+    pendingScripts.set(compName, promise);
+    return promise;
+}
+
+// 🔥 LA NUEVA FUNCIÓN MAESTRA (Con Reemplazo Explícito de Props)
+async function expandComponentsAsync(html, parentState) {
+    // 1. Precarga de scripts
+    const componentRegex = /<([A-Z]\w+)/g; 
+    const required = new Set();
+    let m;
+    while ((m = componentRegex.exec(html)) !== null) required.add(m[1]);
+    
+    const missing = [...required].filter(n => !window.JRX_RENDERERS[n]);
+    if (missing.length > 0) await Promise.all(missing.map(n => loadComponentScript(n)));
+
+    // 2. Parsing iterativo
+    let result = "";
+    let lastIndex = 0;
+    
+    const tagRegex = /<([A-Z]\w+)([^>]*?)(\/?)>/g;
+    let match;
+
+    while ((match = tagRegex.exec(html)) !== null) {
+        const [fullTag, tagName, attrsRaw, selfClosing] = match;
+        const startIndex = match.index;
+
+        result += html.substring(lastIndex, startIndex);
+
+        const renderer = window.JRX_RENDERERS[tagName];
+        if (!renderer) {
+            result += fullTag; 
+            lastIndex = startIndex + fullTag.length;
+            continue;
+        }
+
+        // --- A. Extracción de Contenido (SLOT) ---
+        let slotContent = "";
+        let newLastIndex = startIndex + fullTag.length;
+
+        if (!selfClosing) {
+            const closeTagStr = `</${tagName}>`;
+            const closeIndex = html.indexOf(closeTagStr, newLastIndex);
+
+            if (closeIndex !== -1) {
+                slotContent = html.substring(newLastIndex, closeIndex);
+                newLastIndex = closeIndex + closeTagStr.length; 
+            }
+        }
+
+        // --- B. Procesamiento del Componente ---
+        
+        // 1. Expandir el contenido del SLOT
+        const expandedSlot = await expandComponentsAsync(slotContent, parentState);
+
+        // 2. Preparar props del hijo
+        const props = {};
+        const attrRegex = /([:\w-]+)=["']([^"']*)["']/g;
+        let attrMatch;
+        while ((attrMatch = attrRegex.exec(attrsRaw)) !== null) {
+            let [_, key, val] = attrMatch;
+            
+            // Limpieza: quitamos los dos puntos de :field
+            if (key.startsWith(':')) key = key.substring(1);
+            
+            props[key] = val;
+        }
+
+        let childTpl = renderer.getTemplate();
+        
+        // Contexto para lógica interna
+        const childContext = { ...parentState, ...props };
+
+        // 3. Resolver lógica interna (#if locales)
+        let bakedTpl = resolvePropsLogic(childTpl, childContext);
+
+        // 🔥🔥🔥 4. FIX DEFINITIVO: Reemplazo MANUAL de props 🔥🔥🔥
+        // Iteramos las propiedades que pasamos (label, type, onSubmit) y las estampamos a la fuerza.
+        Object.keys(props).forEach(propName => {
+            const propVal = props[propName];
+            // Regex global para reemplazar {{propName}}
+            const re = new RegExp(`{{\\s*${propName}\\s*}}`, 'g');
+            // Usamos una función de reemplazo para evitar problemas con símbolos especiales como $ en el valor
+            bakedTpl = bakedTpl.replace(re, () => propVal);
+        });
+
+        // 5. Renderizar resto de variables (estado global que el hijo use)
+        bakedTpl = window.JRX.renderTemplate(bakedTpl, childContext);
+
+        // 6. Inyectar Slot
+        if (bakedTpl.includes('<slot')) {
+            bakedTpl = bakedTpl.replace(/<slot\s*\/?>/gi, expandedSlot)
+                               .replace(/<slot>[\s\S]*?<\/slot>/gi, expandedSlot);
+        }
+
+        // 7. Expandir nietos
+        const fullyExpandedTpl = await expandComponentsAsync(bakedTpl, childContext);
+
+        result += fullyExpandedTpl;
+        lastIndex = newLastIndex;
+        tagRegex.lastIndex = lastIndex; 
+    }
+
+    result += html.substring(lastIndex);
+    return result;
+}
+
+// (Asegúrate de mantener transpileLogic y resolvePropsLogic que te pasé antes)
+// Convierte sintaxis Mustache ({{#if}}) a sintaxis DOM (<template data-if>)
+function transpileLogic(html) {
+    if (!html) return "";
+    let res = html;
+
+    // 1. Transformar {{#if cond}} -> <template data-if="cond">
+    res = res.replace(/{{\s*#if\s+([^}]+)\s*}}/g, '<template data-if="$1">');
+    
+    // 2. Transformar {{else}} -> <template data-else> (Ojo: requiere estructura específica, simplificado aquí)
+    // Para simplificar, asumimos que tu Runtime actual maneja bloques separados. 
+    // Si usas {{else}}, tu lógica actual de updateIfBlocks podría necesitar ajustes, 
+    // pero para arreglar lo que se ve en pantalla (los cierres), esto basta:
+    
+    // 3. Transformar {{#each list as item}} -> <template data-each="list:item">
+    res = res.replace(/{{\s*#each\s+([^\s]+)\s+as\s+([^\s}]+)\s*}}/g, '<template data-each="$1:$2">');
+
+    // 4. Cerrar bloques {{/if}} y {{/each}} -> </template>
+    res = res.replace(/{{\s*\/(if|each)\s*}}/g, '</template>');
+
+    return res;
+}
+
+// 🔥 NUEVO: Resuelve lógica estática (#if) usando las PROPS locales del componente
+// Esto es vital para que componentes como JForm o JCard funcionen con sus atributos.
+function resolvePropsLogic(html, context) {
+    if (!html) return "";
+    let res = html;
+
+    // Busca bloques {{#if var}} ... {{/if}}
+    // Nota: Usamos un bucle para soportar anidamiento simple si fuera necesario
+    const regex = /{{\s*#if\s+([\w.-]+)\s*}}([\s\S]*?){{\s*\/if\s*}}/g;
+    
+    // Ejecutamos reemplazos hasta que no queden bloques (para manejo básico de anidados)
+    // Ojo: Para recursividad real se requiere un parser, pero esto cubre el 99% de casos UI planos.
+    while (regex.test(res)) {
+        res = res.replace(regex, (match, key, content) => {
+            // Buscamos el valor en el contexto (props + state)
+            const val = resolveDeep(key, context);
+            
+            // Evaluamos Truthy (string no vacío, true, numero != 0)
+            if (val && val !== 'false' && val !== false && val !== 0) {
+                return content; // Dejamos el contenido
+            } else {
+                return ""; // Ocultamos el bloque
+            }
+        });
+    }
+    return res;
+}
 
 
   

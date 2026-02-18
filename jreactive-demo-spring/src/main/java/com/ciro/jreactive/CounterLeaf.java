@@ -1,8 +1,10 @@
 package com.ciro.jreactive;
 
 import com.ciro.jreactive.annotations.Client;
+import com.ciro.jreactive.annotations.Stateless;
 
 @Client
+@Stateless
 public class CounterLeaf extends BaseCounter {
 
     @Override

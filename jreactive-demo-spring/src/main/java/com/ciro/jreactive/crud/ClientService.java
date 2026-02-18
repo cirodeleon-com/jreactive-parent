@@ -1,0 +1,27 @@
+package com.ciro.jreactive.crud;
+
+
+import org.springframework.stereotype.Service;
+import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
+
+@Service
+public class ClientService {
+    // DB Simulada
+    private final Map<String, Client> db = new ConcurrentHashMap<>();
+
+    public List<Client> findAll() {
+        return new ArrayList<>(db.values());
+    }
+
+    public void save(Client client) {
+        if (client.id == null || client.id.isBlank()) {
+            client.id = UUID.randomUUID().toString();
+        }
+        db.put(client.id, client);
+    }
+
+    public void delete(String id) {
+        db.remove(id);
+    }
+}

@@ -8,8 +8,8 @@ import org.springframework.stereotype.Component;
 
 @Component
 @Route(path = "/focus-test")
-@Client
 @Stateless
+@Client
 public class InputFocusPage extends AppPage {
 
     @State

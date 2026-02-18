@@ -1,12 +1,14 @@
 package com.ciro.jreactive;
 
 import static com.ciro.jreactive.Type.$;
+
+import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.List;
 
 public class JSelect extends HtmlComponent {
 
-    public static class Option {
+    public static class Option implements Serializable{
         public String value;
         public String label;
         public boolean disabled;

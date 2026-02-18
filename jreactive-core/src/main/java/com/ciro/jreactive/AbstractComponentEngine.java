@@ -141,6 +141,20 @@ public abstract class AbstractComponentEngine implements ComponentEngine.Strateg
             	    if (pRx == null) pRx = globalBindings.get(v);
             	    
             	    if (pRx == null && v.contains(".")) {
+                        String shortKey = v.substring(v.indexOf('.') + 1);
+                        //String shortKey = v.split("\\.")[0];;
+                        // Buscamos primero en el padre
+                        pRx = parent.getRawBindings().get(shortKey);
+                        // Si no está, buscamos en globales
+                        if (pRx == null) pRx = globalBindings.get(shortKey);
+                    }
+            	    
+            	    if (pRx == null && v.startsWith(parent.getId() + ".")) {
+                        String shortKey = v.substring(parent.getId().length() + 1);
+                        pRx = parent.getRawBindings().get(shortKey);
+                    }
+            	    
+            	    if (pRx == null && v.contains(".")) {
                         // 🔥 FIX ROBUSTO: En lugar de cortar el string, iteramos los hermanos
                         // para ver si la variable "v" pertenece a alguno de ellos.
                         for (HtmlComponent sibling : parent._children()) {
@@ -178,17 +192,24 @@ public abstract class AbstractComponentEngine implements ComponentEngine.Strateg
         try {
             Class<?> raw;
             try {
-                // 1. Intento rápido: mismo paquete que el padre
+                // 1. Intento rápido: mismo paquete que el padre (ej: com.ciro.jreactive.crud.JButton)
                 String localPackageClass = ctx.getClass().getPackageName() + "." + className;
                 raw = Class.forName(localPackageClass);
             } catch (ClassNotFoundException e) {
-                // 2. Fallback: Buscar por nombre global (reutilización entre paquetes)
-                raw = Class.forName(className); 
+                try {
+                    // 2. Fallback: Buscar por nombre global (si el template tiene el nombre completo)
+                    raw = Class.forName(className);
+                } catch (ClassNotFoundException e2) {
+                    // 🔥 3. FIX: Buscar en el paquete base de componentes UI (com.ciro.jreactive)
+                    // Esto permite que <JButton> funcione desde cualquier subpaquete
+                    String uiPackageClass = "com.ciro.jreactive." + className;
+                    raw = Class.forName(uiPackageClass);
+                }
             }
             return (ViewLeaf) componentFactory.create((Class<? extends ViewLeaf>) raw);
         } catch (Exception e) { 
             throw new RuntimeException("Error: No se encontró el componente '" + className + 
-                "'. Verifica el nombre o usa el paquete completo (ej: com.app.ui." + className + ")", e); 
+                "'. Verifica el nombre, imports o usa el paquete completo (ej: com.app.ui." + className + ")", e); 
         }
     }
     

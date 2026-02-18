@@ -1,6 +1,7 @@
 package com.ciro.jreactive;
 
 import com.ciro.jreactive.annotations.Call;
+import com.ciro.jreactive.annotations.Stateless;
 import com.ciro.jreactive.router.Layout;
 import com.ciro.jreactive.router.Param;
 import com.fasterxml.jackson.databind.JavaType;
@@ -128,7 +129,15 @@ public class JrxHttpApi {
         // 5) invocar
         try {
             if (owner instanceof HtmlComponent comp) {
-                comp._captureStateSnapshot();
+            	
+            	if (comp._state() == ComponentState.UNMOUNTED) {
+                    comp._initIfNeeded();
+                    comp._mountRecursive();
+                }
+            	
+            	if (!comp.getClass().isAnnotationPresent(Stateless.class)) {
+                   comp._captureStateSnapshot();
+            	}
             }
 
             Object result = target.invoke(owner, args);
@@ -191,36 +200,56 @@ public class JrxHttpApi {
      * Si recibes un objeto complejo (DTO) como argumento, busca si hay un campo @State
      * del mismo tipo en el componente y actualízalo automáticamente.
      */
+    /**
+     * Magia de Framework: Auto-Binding de DTOs.
+     * 🔥 MODIFICADO: Ahora soporta Proxies (CGLIB) recorriendo la jerarquía.
+     * Esto no afecta a componentes normales, simplemente busca más a fondo si no encuentra el campo al principio.
+     */
     private void autoUpdateStateFromArgs(Object owner, Object[] args) {
         if (owner == null || args == null) return;
-
-        Class<?> clazz = owner.getClass();
 
         for (Object arg : args) {
             if (arg == null) continue;
 
-            // 🛡️ Filtro de seguridad: No auto-bindear primitivos ni Strings
-            // para evitar sobrescribir contadores o textos por accidente.
-            // Solo queremos actualizar DTOs como SignupForm.
+            // 1. Seguridad: Ignoramos tipos básicos para no sobrescribir contadores o flags por error
             if (isPrimitiveOrWrapper(arg.getClass()) || arg instanceof String) {
                 continue;
             }
 
-            // Buscar campos en el componente
-            for (java.lang.reflect.Field field : clazz.getDeclaredFields()) {
-                // Solo campos @State
-                if (field.isAnnotationPresent(com.ciro.jreactive.State.class)) {
-                    // Si el tipo del campo coincide con el del argumento
-                    if (field.getType().isAssignableFrom(arg.getClass())) {
-                        try {
-                            field.setAccessible(true);
-                            field.set(owner, arg); // 🔄 ACTUALIZACIÓN AUTOMÁTICA
-                            // System.out.println("✨ Auto-Binding aplicado a: " + field.getName());
-                        } catch (IllegalAccessException e) {
-                            e.printStackTrace();
+            // 2. Inicio de la búsqueda en la clase del objeto
+            Class<?> clazz = owner.getClass();
+            boolean inyectado = false;
+
+            // 3. Bucle para subir por la herencia (Proxy -> Clase Real -> Padre)
+            while (clazz != null && clazz != Object.class) {
+                
+                for (java.lang.reflect.Field field : clazz.getDeclaredFields()) {
+                    // Solo nos interesan los campos marcados como Estado
+                    if (field.isAnnotationPresent(com.ciro.jreactive.State.class)) {
+                        
+                        // Si el tipo del campo es compatible con el argumento recibido
+                        if (field.getType().isAssignableFrom(arg.getClass())) {
+                            try {
+                                field.setAccessible(true);
+                                field.set(owner, arg); // 🔄 Inyección del valor
+                                inyectado = true;
+                                System.out.println("✅ [JRX-BIND] Inyección exitosa en: " + field.getName() + " (Clase: " + clazz.getSimpleName() + ")");
+                                // Opcional: Break aquí si solo quieres bindear el primero que encuentres
+                                // para evitar asignar el mismo DTO a dos campos diferentes.
+                            } catch (IllegalAccessException e) {
+                                e.printStackTrace();
+                            }
                         }
                     }
                 }
+                
+                // ⬆️ Subimos un nivel en la jerarquía
+                clazz = clazz.getSuperclass();
+            }
+            
+            if (!inyectado) {
+                System.err.println("⚠️ [JRX-BIND] No se encontró campo @State compatible para el argumento: " + arg.getClass().getSimpleName());
+                System.err.println("   -> Buscado en jerarquía de: " + owner.getClass().getName());
             }
         }
     }

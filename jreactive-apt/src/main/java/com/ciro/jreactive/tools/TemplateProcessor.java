@@ -96,9 +96,9 @@ public final class TemplateProcessor extends AbstractProcessor {
                     generateHtmlResource(clazz, processedHtml);
 
                     // 4. Generar JS para cliente (@Client)
-                    if (clazz.getAnnotation(Client.class) != null) {
+                    //if (clazz.getAnnotation(Client.class) != null) {
                         generateClientJs(clazz, processedHtml);
-                    }
+                    //}
 
                     // 5. Generar Accessor Java
                     if (shouldGenerateAccessor(clazz)) {
@@ -184,7 +184,10 @@ public final class TemplateProcessor extends AbstractProcessor {
                         .replace("${", "\\${")
                         .replace("\r", "");
                 writer.write("    return `" + escapedHtml + "`;\n");
-                writer.write("  }\n};\n");
+                writer.write("  }\n");
+
+                writer.write("};\n");
+                
             }
         } catch (IOException e) { 
             processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR, "Error generando JS: " + e);

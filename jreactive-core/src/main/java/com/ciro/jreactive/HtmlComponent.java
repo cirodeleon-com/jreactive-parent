@@ -59,7 +59,7 @@ private final  Map<String, String> _childRefAlias = new HashMap<>();
     // 🔒 Lock para gestión de estado y árbol (Anti-Pinning)
     private final transient ReentrantLock lock = new ReentrantLock();
     
-    String _getBundledResources() {
+    public String _getBundledResources() {
         return RESOURCE_CACHE.computeIfAbsent(this.getClass(), clazz -> {
             StringBuilder bundle = new StringBuilder();
             String baseName = clazz.getSimpleName(); // Ej: "UserPage"

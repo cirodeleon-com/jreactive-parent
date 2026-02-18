@@ -43,6 +43,15 @@ public class JReactiveSocketHandler extends TextWebSocketHandler {
         this.sessionId = sessionId;
         this.pageResolver = pageResolver;
         this.page=page;
+        
+        if (this.page._state() == ComponentState.UNMOUNTED) {
+            this.page._initIfNeeded();
+            this.page._mountRecursive();
+        }
+        // Construimos el árbol de componentes (crea los hijos JTable, CounterLeaf, etc.)
+        this.page.render();
+        
+        
         Runnable saveStrategy = cfg.isPersistentState() 
                 ? () -> this.pageResolver.persist(sessionId, path, this.page)
                 : null;
@@ -80,10 +89,12 @@ public class JReactiveSocketHandler extends TextWebSocketHandler {
         
         // 🔥 FIX CRÍTICO: Asegurar que la página esté montada (Timers corriendo)
         // Esto es necesario si el usuario viene de una reconexión y el objeto estaba "dormido" en Redis
+        /*
         if (page._state() == ComponentState.UNMOUNTED) {
             page._initIfNeeded();
             page._mountRecursive();
         }
+        */
 
         // 👇 2. Obtener el Hub para esta sesión (si existe)
         JrxPushHub hub = (hubManager != null) ? hubManager.hub(sessionId, path) : null;
