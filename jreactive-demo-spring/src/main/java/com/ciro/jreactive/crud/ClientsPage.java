@@ -4,6 +4,7 @@ package com.ciro.jreactive.crud;
 
 import com.ciro.jreactive.*;
 import com.ciro.jreactive.annotations.Call;
+import com.ciro.jreactive.annotations.Stateless;
 import com.ciro.jreactive.router.Route;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
@@ -13,6 +14,7 @@ import java.util.List;
 
 @Component
 @Route(path = "/clients")
+@Stateless
 public class ClientsPage extends AppPage {
 
     @Autowired
@@ -113,6 +115,9 @@ public class ClientsPage extends AppPage {
                 <JModal ref="clientModal" :title="modalTitle">
                     
                     <JForm onSubmit="save(form)">
+
+                        <input type="hidden" name="form.id" value="{{form.id}}">                        
+                    
                         <JInput 
                             label="Nombre Completo" 
                             :field="form.name" 

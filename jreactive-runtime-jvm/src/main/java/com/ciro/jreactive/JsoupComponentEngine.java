@@ -162,7 +162,7 @@ public class JsoupComponentEngine extends AbstractComponentEngine {
         // Recorremos los hijos (el contenido del slot) y reescribimos sus atributos
         
         for (Element child : el.children()) {
-            namespaceAttributesRecursive(child, slotNamespace);
+            namespaceAttributesRecursive(child, slotNamespace, ctx);
         }
 
 		// 1. Extraer slot y aplicar namespace del padre (ctx)
@@ -254,63 +254,55 @@ public class JsoupComponentEngine extends AbstractComponentEngine {
 		}
 	}
 	
-	/**
-     * Recorre recursivamente el árbol del slot y reescribe atributos reactivos (:prop, @event)
-     * agregando el namespace del padre.
-     */
-    private void namespaceAttributesRecursive(Element el, String ns) {
-        // 1. Procesar atributos del elemento actual
-        List<Attribute> attrs = new ArrayList<>(el.attributes().asList());
-        for (Attribute attr : attrs) {
-            String key = attr.getKey();
-            String val = attr.getValue();
+	
 
-            // Directivas de valor (:options, :field, etc.)
-            if (key.startsWith(":")) {
-                if (//!val.contains(".") && 
-                		!val.startsWith(ns)) { // Evitar doble prefijo
-                	
-                    // Ignoramos literales (true/false/números/'string')
-                    if (!isLiteral(val)) {
-                        el.attr(key, ns + val);
-                    }
-                }
-            }
-            
-            // Directivas de control (data-if, data-each)
-            if (key.equals("data-if") || key.equals("data-each")) {
-                 // data-each="items as item" -> data-each="Page#1.items as item"
-                 if (!val.contains(ns)) {
-                     // Lógica simple: prefijar el primer token si no es alias
-                     String[] parts = val.split(":"); // o espacio
-                     if (!parts[0].contains(".")) {
-                         el.attr(key, ns + val);
-                     }
-                 }
-            }
+	// AHORA:
+	private void namespaceAttributesRecursive(Element el, String ns, HtmlComponent ctx) {
+	    List<Attribute> attrs = new ArrayList<>(el.attributes().asList());
+	    for (Attribute attr : attrs) {
+	        String key = attr.getKey();
+	        String val = attr.getValue();
 
-            // Eventos (@click)
-            if (key.startsWith("@") || key.equals("data-call")) {
-                // Reescribir "save()" -> "Page#1.save()"
-                if (!val.contains("(") || !val.contains(".")) {
-                     // Implementación simple: si no tiene punto, asumimos método local
-                     // (Tu rewriteEvent ya hace algo similar, pero esto es pre-procesamiento de string)
-                     if (!val.startsWith(ns)) {
-                         String cleanVal = val.trim();
-                         // Si es solo nombre de método "save()", prefijar
-                         if (cleanVal.matches("^[a-zA-Z0-9_]+\\(.*")) {
-                             el.attr(key, ns + cleanVal);
-                         }
-                     }
-                }
-            }
-        }
+	        // --- FIX PARA PROPIEDADES (:field, :options) ---
+	        if (key.startsWith(":")) {
+	            if (!val.startsWith(ns)) { 
+	                if (!isLiteral(val)) {
+	                    // 🔥 EL GUARDIÁN: ¿Esta variable pertenece a 'ctx'?
+	                    String root = val.split("\\.")[0];
+	                    if (ctx.getRawBindings().containsKey(root)) {
+	                         el.attr(key, ns + val);
+	                    }
+	                    // Si NO pertenece (ej: es del padre), NO se toca.
+	                }
+	            }
+	        }
+	        
+	        // --- FIX PARA CONTROL (data-if, data-each) ---
+	        if (key.equals("data-if") || key.equals("data-else") || key.equals("data-each")) {
+	             String root = val.split("[: ]")[0].split("\\.")[0];
+	             // 🔥 EL GUARDIÁN TAMBIÉN AQUÍ
+	             if (ctx.getRawBindings().containsKey(root) && !val.contains(ns)) {
+	                 el.attr(key, ns + val);
+	             }
+	        }
 
-        // 2. Recursión a los hijos
-        for (Element child : el.children()) {
-            namespaceAttributesRecursive(child, ns);
-        }
-    }
+	        // --- EVENTOS (@click) ---
+	        if (key.startsWith("@") || key.equals("data-call")) {
+	            if (!val.contains("(") || !val.contains(".")) {
+	                  String methodName = val.split("\\(")[0].trim();
+	                  // Ya existía hasCallable, solo aseguramos que no tenga prefijo ya
+	                  if (hasCallable(ctx, methodName) && !val.startsWith(ns)) {
+	                      el.attr(key, ns + val);
+	                  }
+	            }
+	        }
+	    }
+
+	    // Recursión pasando el contexto
+	    for (Element child : el.children()) {
+	        namespaceAttributesRecursive(child, ns, ctx);
+	    }
+	}
 
     private boolean isLiteral(String s) {
         return s.matches("true|false|-?\\d+(\\.\\d+)?|'.*'");
