@@ -15,13 +15,10 @@
   <name>jreactive core</name>
 
   <dependencies>
-    <!-- requerido porque JsoupComponentEngine está en core -->
-    <!--
     <dependency>
-      <groupId>org.jsoup</groupId>
-      <artifactId>jsoup</artifactId>
-      <version>1.17.2</version>
+        <groupId>com.helger</groupId>
+        <artifactId>ph-css</artifactId>
+        <version>7.0.3</version> 
     </dependency>
-    -->
   </dependencies>
 </project>

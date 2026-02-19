@@ -19,12 +19,14 @@ public class JrxHttpApi {
     private final ObjectMapper objectMapper;
     private final CallGuard guard;
     private final boolean persistenceEnabled;
+    private final JrxHubManager hubManager;
 
-    public JrxHttpApi(PageResolver pageResolver, ObjectMapper objectMapper, CallGuard guard, boolean persistenceEnabled) {
+    public JrxHttpApi(PageResolver pageResolver, ObjectMapper objectMapper, CallGuard guard, boolean persistenceEnabled, JrxHubManager hubManager) {
         this.pageResolver = pageResolver;
         this.objectMapper = objectMapper;
         this.guard = guard;
         this.persistenceEnabled = persistenceEnabled;
+        this.hubManager = hubManager;
     }
 
     /** Render HTML del componente asociado a sessionId + path */
@@ -66,10 +68,35 @@ public class JrxHttpApi {
     public String call(String sessionId, String path, String qualified, Map<String, Object> body) {
 
         HtmlComponent page = pageResolver.getPage(sessionId, path);
+        
+        if (page._state() == ComponentState.UNMOUNTED) {
+            System.out.println("♻️ [JrxHttpApi] Página no montada detectada. Hidratando árbol para: " + qualified);
+            page.render();
+        }
+        
+        
 
         // 1) localizar método
         var callables = collectCallables(page);
         var entry = callables.get(qualified);
+        
+        if (entry == null && qualified.contains(".")) {
+            int dotIdx = qualified.indexOf('.');
+            String potentialRef = qualified.substring(0, dotIdx); // "miModal"
+            String methodName = qualified.substring(dotIdx + 1);  // "open"
+            
+            // Le preguntamos a la página raíz si conoce ese alias
+            String realId = page._resolveRef(potentialRef); 
+            
+            if (realId != null) {
+                // Traducimos: "miModal.open" -> "ModalTestPage-JModal-0.open"
+                String translated = realId + "." + methodName;
+                entry = callables.get(translated);
+                
+                // (Opcional) Debug para ver la magia
+                 System.out.println("🔄 Traducción de Call: " + qualified + " -> " + translated);
+            }
+        }
         
         if (entry == null) {
             System.out.println("⚠️ [JrxHttpApi] Método '" + qualified + "' no encontrado. Reconstruyendo árbol de componentes...");
@@ -85,6 +112,10 @@ public class JrxHttpApi {
         
         if (entry == null) {
             return guard.errorJson("NOT_FOUND", "Método no permitido: " + qualified);
+        }
+        
+        if (hubManager != null) {
+            hubManager.ensureSync(sessionId, path, page);
         }
 
         Method target = entry.getKey();
@@ -135,9 +166,9 @@ public class JrxHttpApi {
                     comp._mountRecursive();
                 }
             	
-            	if (!comp.getClass().isAnnotationPresent(Stateless.class)) {
+            	//if (!comp.getClass().isAnnotationPresent(Stateless.class)) {
                    comp._captureStateSnapshot();
-            	}
+            	//}
             }
 
             Object result = target.invoke(owner, args);

@@ -5,6 +5,7 @@ package com.ciro.jreactive.crud;
 import com.ciro.jreactive.*;
 import com.ciro.jreactive.annotations.Call;
 import com.ciro.jreactive.annotations.Stateless;
+import com.ciro.jreactive.annotations.Client;
 import com.ciro.jreactive.router.Route;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
@@ -21,8 +22,8 @@ public class ClientsPage extends AppPage {
     private transient ClientService service;
 
     // --- ESTADO ---
-    @State public List<Client> clients = new ArrayList<>();
-    @State public Client form = new Client(); // Objeto para el formulario
+    @State public List<Client_> clients = new ArrayList<>();
+    @State public Client_ form = new Client_(); // Objeto para el formulario
     @State public boolean isEditing = false;
     @State public String modalTitle = "Nuevo Cliente";
     
@@ -36,8 +37,9 @@ public class ClientsPage extends AppPage {
         // Carga inicial (Solo ocurre 1 vez por sesión)
         this.clients = service.findAll();
         
-        this.statusOptions.add(new JSelect.Option("Activo", "Activo"));
-        this.statusOptions.add(new JSelect.Option("Inactivo", "Inactivo"));
+        this.statusOptions = JSelect.from("Activo", "Inactivo");
+        
+        this.form.setStatus("Activo");
         
     }
 
@@ -45,18 +47,24 @@ public class ClientsPage extends AppPage {
 
     @Call
     public void openCreate() {
-        this.form = new Client(); // Limpiar form
+        this.form = new Client_(); // Limpiar form
         this.isEditing = false;
         // Abrimos el modal por referencia (usando el ID del componente hijo)
         
         this.modalTitle = "Crear Cliente";
-        findChild("clientModal", JModal.class).open();
+        var modal = findChild("clientModal", JModal.class);
+        if (modal != null) {
+            modal.open();
+        } else {
+            // Esto te avisa en la consola en lugar de romper toda la petición
+            System.err.println("⚠️ Error crítico: El modal 'clientModal' no se encontró. Verifica el template.");
+        }
     }
 
     @Call
-    public void openEdit(Client row) {
+    public void openEdit(Client_ row) {
         // Clonamos para no editar la tabla en tiempo real antes de guardar
-        this.form = new Client(); 
+        this.form = new Client_(); 
         this.form.setId(row.getId());
         this.form.name = row.name;
         this.form.email = row.email;
@@ -68,11 +76,17 @@ public class ClientsPage extends AppPage {
         
         
         
-        findChild("clientModal", JModal.class).open();
+        var modal = findChild("clientModal", JModal.class);
+        if (modal != null) {
+            modal.open();
+        } else {
+            // Esto te avisa en la consola en lugar de romper toda la petición
+            System.err.println("⚠️ Error crítico: El modal 'clientModal' no se encontró. Verifica el template.");
+        }
     }
 
     @Call
-    public void save(Client form) {
+    public void save(Client_ form) {
         // 1. Guardar en DB
         service.save(form);
         
@@ -80,11 +94,17 @@ public class ClientsPage extends AppPage {
         this.clients = service.findAll();
         
         // 3. Cerrar modal
-        findChild("clientModal", JModal.class).close();
+        var modal = findChild("clientModal", JModal.class);
+        if (modal != null) {
+            modal.close();
+        } else {
+            // Esto te avisa en la consola en lugar de romper toda la petición
+            System.err.println("⚠️ Error crítico: El modal 'clientModal' no se encontró. Verifica el template.");
+        }
     }
 
     @Call
-    public void delete(Client row) {
+    public void delete(Client_ row) {
         service.delete(row.id);
         this.clients = service.findAll();
     }

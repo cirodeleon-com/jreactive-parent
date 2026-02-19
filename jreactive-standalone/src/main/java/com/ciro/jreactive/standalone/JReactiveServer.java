@@ -85,7 +85,7 @@ public class JReactiveServer {
         WsEndpoint wsEndpoint = new WsEndpoint(pageResolver, mapper, scheduler, sessionManager, hubManager);
         
         PageEndpoint pageEndpoint = new PageEndpoint(registry, sessionManager);
-        CallEndpoint callEndpoint = new CallEndpoint(pageResolver, callGuard, mapper, sessionManager);
+        CallEndpoint callEndpoint = new CallEndpoint(pageResolver, callGuard, mapper, sessionManager,hubManager);
 
         HttpHandler fallback = exchange -> {
             sessionManager.ensureSession(exchange);

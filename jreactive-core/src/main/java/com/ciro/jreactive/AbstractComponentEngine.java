@@ -103,86 +103,112 @@ public abstract class AbstractComponentEngine implements ComponentEngine.Strateg
     protected HtmlComponent createAndBindComponent(HtmlComponent parent, List<HtmlComponent> pool, Map<String, ReactiveVar<?>> globalBindings, String className, Map<String, String> attrs, String slotHtml) {
         String ref = attrs.get("ref");
         ViewLeaf leaf;
-        if (ref != null) {
-            leaf = pool.stream().filter(c -> ref.equals(c.getId())).map(c -> (ViewLeaf) c).findFirst()
-                    .orElseGet(() -> { ViewLeaf f = newInstance(parent, className); f.setId(ref); return f; });
-            pool.removeIf(c -> c == leaf);
-        } else {
-            Optional<HtmlComponent> re = pool.stream().filter(c -> c.getClass().getSimpleName().equals(className)).findFirst();
-            if (re.isPresent()) { leaf = (ViewLeaf) re.get(); pool.remove(re.get()); }
-            else leaf = newInstance(parent, className);
-            
-            //int index = parent._children().size(); 
-            //String stableId = parent.getId() + "-" + className + "-" + index;
-            
-            //leaf.setId(stableId);
-         // ✅ ID estable: si el componente ya existe (reuse), NO lo tocamos.
-         // Solo asignamos ID cuando es NUEVO.
-           // if (leaf.getId() == null || leaf.getId().isBlank()) {
-                int seq = parent._nextChildIdSeq(className);
-                String stableId = parent.getId() + "-" + className + "-" + seq;
-                leaf.setId(stableId);
-           // }
 
+        // ---------------------------------------------------------
+        // 1. GENERACIÓN DETERMINISTA DE ID (La Solución)
+        // ---------------------------------------------------------
+        // No importa si tiene ref o no. Siempre calculamos el ID basado 
+        // en el orden (secuencia). Así, si el servidor reinicia, 
+        // el primer JModal siempre será "Page-JModal-0".
+        int seq = parent._nextChildIdSeq(className);
+        String stableId = parent.getId() + "-" + className + "-" + seq;
+
+        // 2. BUSCAR EN EL POOL (Reciclaje)
+        // Buscamos si existe un componente con este ID exacto
+        Optional<HtmlComponent> match = pool.stream()
+                .filter(c -> c.getId().equals(stableId))
+                .findFirst();
+
+        if (match.isPresent()) {
+            // ¡Lo encontramos! (Caso Stateful o mismo render)
+            leaf = (ViewLeaf) match.get();
+            pool.remove(leaf); 
+        } else {
+            // No existe (Caso Stateless / Reinicio / Primera vez)
+            // Creamos uno nuevo y le FORZAMOS el ID estable.
+            leaf = newInstance(parent, className);
+            leaf.setId(stableId); 
         }
+        
         HtmlComponent hc = (HtmlComponent) leaf;
         if (slotHtml != null && !slotHtml.isBlank()) hc._setSlotHtml(slotHtml);
+        
+        // 3. REGISTRO DE ALIAS (Para que findChild funcione)
+        // Aunque el ID sea "Page-Modal-0", guardamos que "clientModal" apunta a él.
+        if (ref != null && !ref.isBlank()) {
+            String simpleRef = ref;
+            if (ref.contains(parent.getId() + ".")) {
+                simpleRef = ref.replace(parent.getId() + ".", "");
+            }
+            parent._registerRef(simpleRef, hc.getId());
+        }
+        
         parent._addChild(hc);
         
+        // 4. BINDINGS (Tu lógica original intacta)
         Map<String, ReactiveVar<?>> childBinds = hc.getRawBindings();
         attrs.forEach((k, v) -> {
             if (k.equals("ref")) return;
             boolean isB = k.startsWith(":");
             String prop = isB ? k.substring(1) : k;
             ReactiveVar<Object> target = (ReactiveVar<Object>) childBinds.get(prop);
+            
             if (target != null) {
-            	if (isB) {
-            	    ReactiveVar<?> pRx = parent.getRawBindings().get(v);
-            	    if (pRx == null) pRx = globalBindings.get(v);
-            	    
-            	    if (pRx == null && v.contains(".")) {
+                if (isB) {
+                    ReactiveVar<?> pRx = parent.getRawBindings().get(v);
+                    if (pRx == null) pRx = globalBindings.get(v);
+                    
+                    if (pRx == null && v.contains(".")) {
                         String shortKey = v.substring(v.indexOf('.') + 1);
-                        //String shortKey = v.split("\\.")[0];;
-                        // Buscamos primero en el padre
                         pRx = parent.getRawBindings().get(shortKey);
-                        // Si no está, buscamos en globales
                         if (pRx == null) pRx = globalBindings.get(shortKey);
                     }
-            	    
-            	    if (pRx == null && v.startsWith(parent.getId() + ".")) {
+                    
+                    if (pRx == null && v.startsWith(parent.getId() + ".")) {
                         String shortKey = v.substring(parent.getId().length() + 1);
                         pRx = parent.getRawBindings().get(shortKey);
                     }
-            	    
-            	    if (pRx == null && v.contains(".")) {
-                        // 🔥 FIX ROBUSTO: En lugar de cortar el string, iteramos los hermanos
-                        // para ver si la variable "v" pertenece a alguno de ellos.
+                    
+                    // Tu Fix Robusto para hermanos
+                    if (pRx == null && v.contains(".")) {
+                        String refKey = v.substring(0, v.indexOf('.')); // "hello"
+                        String varName = v.substring(v.indexOf('.') + 1); // "newFruit"
+
+                        // A. Traducir el alias ("hello" -> "HomePage-HelloLeaf-0")
+                        String resolvedId = parent._resolveRef(refKey);
+
                         for (HtmlComponent sibling : parent._children()) {
-                            String siblingId = sibling.getId();
+                            // 1. Coincidencia por Alias Resuelto (Lo nuevo)
+                            if (resolvedId != null && sibling.getId().equals(resolvedId)) {
+                                pRx = sibling.getRawBindings().get(varName);
+                                if (pRx != null) break;
+                            }
                             
-                            // Comprobamos si la variable empieza con el ID del hermano + punto
-                            // Ej: v="page_1.hello.newFruit" empieza con id="page_1.hello" + "."
-                            if (v.startsWith(siblingId + ".")) {
-                                String subPath = v.substring(siblingId.length() + 1); // Extrae "newFruit"
-                                pRx = sibling.getRawBindings().get(subPath);
-                                
-                                if (pRx != null) break; // ¡Encontrado! Dejamos de buscar
+                            // 2. Coincidencia directa (Legacy o si usaron el ID largo)
+                            if (sibling.getId().equals(refKey)) {
+                                pRx = sibling.getRawBindings().get(varName);
+                                if (pRx != null) break;
+                            }
+                            
+                            // 3. Tu lógica anterior (Por si el nombre de variable incluye ID)
+                            if (v.startsWith(sibling.getId() + ".")) {
+                                String sub = v.substring(sibling.getId().length() + 1);
+                                pRx = sibling.getRawBindings().get(sub);
+                                if (pRx != null) break;
                             }
                         }
                     }
 
-            	    if (pRx != null) {
-            	        target.set(pRx.get());
-            	        pRx.onChange(target::set);
-            	    } else {
-            	        // ✅ Fallback robusto: si no es binding real, es literal (ej: "form.country")
-            	        target.set(coerceLiteral(v));
-            	    }
-            	} else {
-            	    String fixed = qualifyEventPropIfNeeded(parent, prop, v);
-            	    target.set(fixed);
-            	}
-
+                    if (pRx != null) {
+                        target.set(pRx.get());
+                        pRx.onChange(target::set);
+                    } else {
+                        target.set(coerceLiteral(v));
+                    }
+                } else {
+                    String fixed = qualifyEventPropIfNeeded(parent, prop, v);
+                    target.set(fixed);
+                }
             }
         });
         return hc;

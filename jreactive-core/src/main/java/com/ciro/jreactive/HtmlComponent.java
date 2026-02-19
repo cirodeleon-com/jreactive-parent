@@ -63,15 +63,23 @@ private final  Map<String, String> _childRefAlias = new HashMap<>();
         return RESOURCE_CACHE.computeIfAbsent(this.getClass(), clazz -> {
             StringBuilder bundle = new StringBuilder();
             String baseName = clazz.getSimpleName(); // Ej: "UserPage"
+            
+            String scopeId = _getScopeId();
 
             // 1. Intentar cargar CSS (UserPage.css)
             try (InputStream is = clazz.getResourceAsStream(baseName + ".css")) {
                 if (is != null) {
-                    String css = new String(is.readAllBytes(), StandardCharsets.UTF_8);
+                    String rawCss = new String(is.readAllBytes(), StandardCharsets.UTF_8);
                     // Inyectamos con un data-resource para facilitar depuración en DevTools
-                    bundle.append("\n<style data-resource=\"").append(baseName).append("\">\n")
-                          .append(css)
-                          .append("\n</style>\n");
+                    String scopedCss = CssScoper.scope(rawCss, scopeId);
+                    
+                    if (!scopedCss.isEmpty()) {
+                        bundle.append("\n<style data-resource=\"").append(baseName).append("\">")
+                              .append(scopedCss)
+                              .append("</style>");
+                    }
+                    
+                    
                 }
             } catch (Exception e) {
                 System.err.println("⚠️ JReactive: Error leyendo CSS para " + baseName + ": " + e.getMessage());
@@ -93,6 +101,10 @@ private final  Map<String, String> _childRefAlias = new HashMap<>();
 
             return bundle.toString();
         });
+    }
+    
+    public String _getScopeId() {
+        return "jrx-sc-" + this.getClass().getSimpleName();
     }
     
     public void _captureStateSnapshot() {
@@ -208,6 +220,7 @@ private final  Map<String, String> _childRefAlias = new HashMap<>();
          
          _childIdSeq.clear();
          
+         _childRefAlias.clear();
       
          
      } finally {
@@ -728,5 +741,23 @@ private final  Map<String, String> _childRefAlias = new HashMap<>();
     }
 
 
+    public void _registerRef(String alias, String realId) {
+        if (alias == null || realId == null) return;
+        lock.lock();
+        try {
+            _childRefAlias.put(alias, realId);
+        } finally {
+            lock.unlock();
+        }
+    }
+    
+    public String _resolveRef(String alias) {
+        lock.lock();
+        try {
+            return _childRefAlias.get(alias);
+        } finally {
+            lock.unlock();
+        }
+    }
     
 }

@@ -19,9 +19,9 @@ public class PageController {
                           ObjectMapper objectMapper,
                           CallGuard guard,
                           WsConfig wsConfig,
-                          JrxRequestQueue queue) {
+                          JrxRequestQueue queue,JrxHubManager hubManager) {
         this.pageResolver = pageResolver;
-        this.api = new JrxHttpApi(pageResolver, objectMapper, guard, wsConfig.isPersistentState());
+        this.api = new JrxHttpApi(pageResolver, objectMapper, guard, wsConfig.isPersistentState(),hubManager);
         this.queue = queue;
     }
 

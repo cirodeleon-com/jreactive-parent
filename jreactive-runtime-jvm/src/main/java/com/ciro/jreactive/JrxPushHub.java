@@ -50,7 +50,7 @@ public class JrxPushHub {
 
     private final JrxMessageBroker broker;
     private final String sessionId;
-    private final HtmlComponent pageInstance;
+    private HtmlComponent pageInstance;
     private final transient Runnable persistenceCallback;
 
     public JrxPushHub(HtmlComponent root, ObjectMapper mapper, int maxBuffer, JrxMessageBroker broker, String sessionId, Runnable persistenceCallback) {
@@ -62,7 +62,11 @@ public class JrxPushHub {
         this.persistenceCallback = persistenceCallback;
         // 👇 Esto llenará bindings Y owners
         this.bindings = collect(root); 
-
+        setupListeners();
+        
+    }
+    
+    private void setupListeners() {
         bindings.forEach((k, rv) -> {
             Object initial = rv.get();
             updateSmartSubscription(k, initial);
@@ -70,27 +74,43 @@ public class JrxPushHub {
             Runnable unsub = rv.onChange(val -> {
                 updateSmartSubscription(k, val);
                 
-                // 👇 2. LÓGICA INTELEGENTE (@Client vs SSR)
                 HtmlComponent owner = owners.get(rv);
                 
                 if (owner != null && owner.getClass().isAnnotationPresent(com.ciro.jreactive.annotations.Client.class)) {
-                    // MODO OPTIMIZADO (CSR): Enviar solo el delta JSON
+                    // MODO CSR: Solo delta JSON
                     String localKey = k.contains(".") ? k.substring(k.lastIndexOf('.') + 1) : k;
                     Map<String, Object> delta = Map.of(localKey, val);
-                    
-                    // Enviamos al ID del componente ("CounterLeaf#1"), tipo "json", cambios [delta]
                     onDelta(owner.getId(), "json", delta);
-                    
-                    // Log opcional para depuración
-                    // System.out.println("⚡ [SSE] JSON Delta: " + owner.getId() + " -> " + delta);
                 } else {
-                    // MODO CLÁSICO (SSR): Enviar snapshot completo de la variable
+                    // MODO SSR: Snapshot completo
                     onSnapshot(k, val); 
                 }
             });
 
             disposables.add(unsub);
         });
+    }
+
+    // 🔥 3. NUEVO: Capacidad de cambiar la página vigilada en caliente
+    public synchronized void rebind(HtmlComponent newPage) {
+        if (this.pageInstance == newPage) return; 
+
+        // A. Limpieza de escuchas viejos
+        disposables.forEach(Runnable::run);
+        disposables.clear();
+        
+        activeSmartCleanups.values().forEach(Runnable::run);
+        activeSmartCleanups.clear();
+        
+        owners.clear();
+        bindings.clear();
+
+        // B. Cambio de referencia
+        this.pageInstance = newPage;
+
+        // C. Recolección y reconexión a la nueva instancia
+        this.bindings.putAll(collect(newPage));
+        setupListeners();
     }
     
     public HtmlComponent getPageInstance() {
@@ -256,33 +276,46 @@ public class JrxPushHub {
         return m;
     }
 
- // 👇 ESTE ES EL MÉTODO QUE NECESITAS PARA QUE SSE/POLL VEA LOS HIJOS (RELOJ)
     private Map<String, ReactiveVar<?>> collect(ViewNode n) {
+        return collectRecursive(n, this.pageInstance);
+    }
+
+    private Map<String, ReactiveVar<?>> collectRecursive(ViewNode n, HtmlComponent rootPage) {
         Map<String, ReactiveVar<?>> m = new HashMap<>();
 
-        // 1. Si es un componente HTML (ViewLeaf)
         if (n instanceof HtmlComponent hc) {
-            // A. Registramos sus propias variables
-            Map<String, ReactiveVar<?>> selfBinds = hc.bindings();
-            selfBinds.values().forEach(rv -> owners.put(rv, hc)); // Registramos dueño
-            m.putAll(selfBinds);
+            // A. Calcular prefijo (Namespace)
+            String prefix = "";
+            
+            // Si el componente NO es la página raíz, DEBE usar su ID como prefijo.
+            // Esto alinea la llave del WebSocket con la llave del DOM.
+            if (hc != rootPage) {
+                prefix = hc.getId() + ".";
+            }
 
-            // B. 🔥 CRÍTICO: ¡Entrar recursivamente en los hijos!
-            // Sin esto, el Hub no ve el 'clock' del ClockLeaf porque está anidado.
+            // B. Registrar las variables con el prefijo correcto
+            Map<String, ReactiveVar<?>> selfBinds = hc.bindings();
+            for (Map.Entry<String, ReactiveVar<?>> entry : selfBinds.entrySet()) {
+                String key = prefix + entry.getKey(); // "visible" -> "ClientsPage-JModal-0.visible"
+                ReactiveVar<?> rv = entry.getValue();
+                
+                owners.put(rv, hc);
+                m.put(key, rv);
+            }
+
+            // C. Recursión a los hijos
             for (HtmlComponent child : hc._children()) {
-                m.putAll(collect(child));
+                m.putAll(collectRecursive(child, rootPage));
             }
             return m; 
         }
 
-        // 2. Soporte para ViewComposite puros
         if (n instanceof ViewComposite c) {
-            c.children().forEach(ch -> m.putAll(collect(ch)));
+            c.children().forEach(ch -> m.putAll(collectRecursive(ch, rootPage)));
         }
         
-        // 3. Fallback
         if (n instanceof ViewLeaf leaf) {
-            m.putAll(leaf.bindings());
+            leaf.bindings().forEach((k, v) -> m.put(k, v)); 
         }
         
         return m;

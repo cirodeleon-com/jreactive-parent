@@ -22,83 +22,119 @@ public class JsoupComponentEngine extends AbstractComponentEngine {
 	}
 
 	@Override
+
 	public ComponentEngine.Rendered render(HtmlComponent ctx) {
 
-		// List<HtmlComponent> pool = new ArrayList<>(ctx._children());
-		// ctx._children().clear();
 
-		List<HtmlComponent> pool = ctx._getRenderPool();
-		if (pool == null)
-			pool = new ArrayList<>();
+	// List<HtmlComponent> pool = new ArrayList<>(ctx._children());
+	// ctx._children().clear();
 
-		Map<String, ReactiveVar<?>> all = new HashMap<>();
+	List<HtmlComponent> pool = ctx._getRenderPool();
 
-		// 🔥 1. CICLO DE VIDA (Pre-Render)
-		// Ejecutamos la lógica de carga de datos del usuario
-		ctx._initIfNeeded();
+	if (pool == null)
+    pool = new ArrayList<>();
 
-		ctx._syncState();
-		
-		// =========================================================
-        // 🔥 FIX CRÍTICO: Registrar bindings del ROOT al INICIO
-        // Esto permite que los hijos (como JSelect dentro de un Slot)
-        // encuentren "ClientsPage#1.statusOptions" en 'globalBindings'.
-        // =========================================================
-        String rootPrefix = ctx.getId() + ".";
-        ctx.getRawBindings().forEach((k, v) -> {
-            all.put(k, v);              // Acceso local "statusOptions"
-            all.put(rootPrefix + k, v); // Acceso global "ClientsPage#1.statusOptions"
-        });
 
-		if (ctx.getClass().isAnnotationPresent(com.ciro.jreactive.annotations.Client.class)) {
-			String resources = ctx._getBundledResources();
-			String id = ctx.getId(); // Ej: "page_focus_test"
-			String name = ctx.getClass().getSimpleName();
+	Map<String, ReactiveVar<?>> all = new HashMap<>();
 
-			String shellHtml = resources + "<div id=\"" + id + "\" data-jrx-client=\"" + name + "\"></div>";
+	Set<String> emittedResources = new HashSet<>();
 
-			collectBindingsRecursive(ctx, all);
 
-			disposeUnused(pool);
-			ctx._mountRecursive();
 
-			return new ComponentEngine.Rendered(shellHtml, all);
-		}
+	// 🔥 1. CICLO DE VIDA (Pre-Render)
 
-		String resources = ctx._getBundledResources();
-		// 1. Pre-procesamiento de bloques (con el fix de anidamiento)
-		String rawTemplate = resources + ctx.template();
-		String htmlWithControlBlocks = processControlBlocks(rawTemplate,ctx);
+	// Ejecutamos la lógica de carga de datos del usuario
 
-		String xmlFriendly = HTML5_VOID_FIX.matcher(htmlWithControlBlocks).replaceAll("<$1$2/>");
+	ctx._initIfNeeded();
+	ctx._syncState();
 
-		Document doc = Jsoup.parse(xmlFriendly, "", Parser.xmlParser());
-		doc.outputSettings().prettyPrint(false).syntax(Document.OutputSettings.Syntax.html);
 
-		// 2. Procesar Árbol
-		processNodeTree(doc, ctx, pool, all, "");
+	        // =========================================================
+	        // 🔥 FIX CRÍTICO: Registrar bindings del ROOT al INICIO
+	        // Esto permite que los hijos (como JSelect dentro de un Slot)
+	        // encuentren "ClientsPage#1.statusOptions" en 'globalBindings'.
+	        // =========================================================
 
-		//all.putAll(ctx.getRawBindings());
+	        String rootPrefix = ctx.getId() + ".";
+	        ctx.getRawBindings().forEach((k, v) -> {
+	            all.put(k, v);              // Acceso local "statusOptions"
+	            all.put(rootPrefix + k, v); // Acceso global "ClientsPage#1.statusOptions"
 
-		String html = doc.html();
-		if (doc.children().size() == 1
-				&& (doc.child(0).tagName().equals("#root") || doc.child(0).tagName().equals("html"))) {
-			html = doc.body().html();
-		}
+	        });
 
-		disposeUnused(pool);
-		ctx._mountRecursive();
 
-		return new ComponentEngine.Rendered(html, all);
+
+	if (ctx.getClass().isAnnotationPresent(com.ciro.jreactive.annotations.Client.class)) {
+	   String resources = getResourcesOnce(ctx, emittedResources);
+	   String id = ctx.getId(); // Ej: "page_focus_test"
+	   String name = ctx.getClass().getSimpleName();
+	   String shellHtml = resources + "<div id=\"" + id + "\" data-jrx-client=\"" + name + "\"></div>";
+	   collectBindingsRecursive(ctx, all);
+	   disposeUnused(pool);
+	   ctx._mountRecursive();
+	   return new ComponentEngine.Rendered(shellHtml, all);
+
 	}
 
+
+
+	String resources = getResourcesOnce(ctx, emittedResources);
+	// 1. Pre-procesamiento de bloques (con el fix de anidamiento)
+	String rawTemplate = resources + ctx.template();
+	String htmlWithControlBlocks = processControlBlocks(rawTemplate,ctx);
+	String xmlFriendly = HTML5_VOID_FIX.matcher(htmlWithControlBlocks).replaceAll("<$1$2/>");
+
+	Document doc = Jsoup.parse(xmlFriendly, "", Parser.xmlParser());
+
+	doc.outputSettings().prettyPrint(false).syntax(Document.OutputSettings.Syntax.html);
+
+
+	String scopeId = ctx._getScopeId();
+
+
+	     for (Element child : doc.children()) {
+	            // Jsoup a veces envuelve en #root, html o body. Buscamos los elementos reales del usuario.
+
+	            if (!child.tagName().equals("#root") && !child.tagName().equals("html")) {
+	                child.addClass(scopeId);
+	            } else {
+	                // Si Jsoup creó html/body, bajamos un nivel para encontrar el div/button del usuario
+	                for (Element sub : child.children()) {
+	                    if (!sub.tagName().equals("head") && !sub.tagName().equals("body"))
+	                       sub.addClass(scopeId);
+	                    else if (sub.tagName().equals("body")) 
+	                       for(Element b : sub.children()) b.addClass(scopeId);
+	                }
+	            }
+	       }
+
+	// 2. Procesar Árbol
+	processNodeTree(doc, ctx, pool, all, "", emittedResources);
+	//all.putAll(ctx.getRawBindings());
+	String html = doc.html();
+
+	if (doc.children().size() == 1
+	&& (doc.child(0).tagName().equals("#root") || doc.child(0).tagName().equals("html"))) {
+	   html = doc.body().html();
+	}
+
+
+	disposeUnused(pool);
+    ctx._mountRecursive();
+	return new ComponentEngine.Rendered(html, all);
+
+	}
+
+
 	private void processNodeTree(Node node, HtmlComponent ctx, List<HtmlComponent> pool,
-			Map<String, ReactiveVar<?>> all, String namespacePrefix) {
+			Map<String, ReactiveVar<?>> all, String namespacePrefix,Set<String> emittedResources) {
 		// 1) Procesar el nodo actual (ROOT incluido)
 		if (node instanceof Element el) {
+			
+			//processElementAttributes(el, ctx, namespacePrefix);
 			// Si el ROOT es un componente, delega y corta
 			if (isComponent(el)) {
-				handleChildComponent(el, ctx, pool, all, namespacePrefix);
+				handleChildComponent(el, ctx, pool, all, namespacePrefix,emittedResources);
 				return;
 			}
 
@@ -128,7 +164,7 @@ public class JsoupComponentEngine extends AbstractComponentEngine {
 					 * procesarlos.
 					 */
 					for (Node sn : slotNodes) {
-						processNodeTree(sn, ctx, pool, all, namespacePrefix);
+						processNodeTree(sn, ctx, pool, all, namespacePrefix, emittedResources);
 					}
 				}
 
@@ -146,12 +182,12 @@ public class JsoupComponentEngine extends AbstractComponentEngine {
 		// 2) Procesar hijos (snapshot para evitar concurrent modification)
 		List<Node> children = new ArrayList<>(node.childNodes());
 		for (Node child : children) {
-			processNodeTree(child, ctx, pool, all, namespacePrefix);
+			processNodeTree(child, ctx, pool, all, namespacePrefix, emittedResources);
 		}
 	}
 
 	private void handleChildComponent(Element el, HtmlComponent ctx, List<HtmlComponent> pool,
-			Map<String, ReactiveVar<?>> all, String namespacePrefix) {
+			Map<String, ReactiveVar<?>> all, String namespacePrefix, Set<String> emittedResources) {
 		String className = el.tagName();
 		Map<String, String> attrs = new HashMap<>();
 		el.attributes().forEach(a -> attrs.put(a.getKey(), a.getValue()));
@@ -194,6 +230,14 @@ public class JsoupComponentEngine extends AbstractComponentEngine {
 				// 1. Creamos un "Cascarón" (Shell) vacío.
 				// Usamos 'div' por defecto, o mantenemos el tag si prefieres custom elements.
 				Element shell = new Element("div");
+				
+				String css = getResourcesOnce(childComp, emittedResources); // <--- CAMBIO AQUÍ
+		        if (!css.isEmpty()) {
+		            List<Node> styleNodes = Parser.parseXmlFragment(css, "");
+		            for (Node sn : styleNodes) {
+		                shell.before(sn);
+		            }
+		        }
 
 				// 2. Le ponemos las marcas vitales para el Runtime JS
 				shell.attr("id", childId);
@@ -221,7 +265,7 @@ public class JsoupComponentEngine extends AbstractComponentEngine {
 			}
 			// =================================================================================
 
-			String childResources = childComp._getBundledResources();
+			String childResources = getResourcesOnce(childComp, emittedResources);
 			// 3. Procesar plantilla del hijo (MODO SSR - Clásico)
 			String childRawTpl = childResources + childComp.template();
 			String childProcessedTpl = processControlBlocks(childRawTpl);
@@ -229,9 +273,16 @@ public class JsoupComponentEngine extends AbstractComponentEngine {
 
 			// 4. PARSEAR E INYECTAR RECURSIVAMENTE
 			List<Node> childNodes = Parser.parseXmlFragment(childXml, "");
+			
+			String childScopeId = childComp._getScopeId();
+		    for (Node n : childNodes) {
+		        if (n instanceof Element elNode) {
+		            elNode.addClass(childScopeId);
+		        }
+		    }
 
 			for (Node n : childNodes) {
-				processNodeTree(n, childComp, childPool, all, childNs);
+				processNodeTree(n, childComp, childPool, all, childNs, emittedResources);
 			}
 
 			// 5. Reemplazar el tag <JButton> o <JSelect> por el contenido renderizado
@@ -334,7 +385,9 @@ public class JsoupComponentEngine extends AbstractComponentEngine {
 			if (key.equals("name") && !val.contains("{{")) {
 				String root = val.split("\\.")[0];
 				if (ctx.getRawBindings().containsKey(root)) {
-					el.attr(key, ns + val);
+					if (!ns.isEmpty() && !val.startsWith(ns)) {
+					   el.attr(key, ns + val);
+					}
 				}
 				continue;
 			}
@@ -695,5 +748,18 @@ public class JsoupComponentEngine extends AbstractComponentEngine {
 			return false;
 		}
 	}
+	
+	
 
+	// 🔥 HELPER NUEVO: Verifica si ya enviamos los recursos de esta clase
+    private String getResourcesOnce(HtmlComponent comp, Set<String> emitted) {
+        String key = comp.getClass().getName();
+        // Si el Set ya tiene el nombre de la clase, devolvemos vacío ""
+        if (emitted.contains(key)) {
+            return ""; 
+        }
+        // Si no, lo agregamos y devolvemos los recursos reales (CSS/JS)
+        emitted.add(key);
+        return comp._getBundledResources();
+    }
 }

@@ -870,6 +870,18 @@ function updateEachBlocks() {
     /* 5. Inserción en el DOM real */
     tpl._end.before(frag);
     tpl._keyMap = next;
+	
+	if (tpl.parentElement && tpl.parentElement.tagName === 'SELECT') {
+	        const selectEl = tpl.parentElement;
+	        const modelKey = selectEl.getAttribute('name');
+	        if (modelKey) {
+	            const val = resolveExpr(modelKey);
+	            if (val !== undefined && val !== null) {
+	                selectEl.value = val;
+	            }
+	        }
+	  }
+	
   });
 }
 

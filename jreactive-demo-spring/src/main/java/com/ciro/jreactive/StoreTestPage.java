@@ -7,6 +7,8 @@ import org.springframework.stereotype.Component;
 
 import com.ciro.jreactive.HtmlComponent;
 import com.ciro.jreactive.annotations.Call;
+import com.ciro.jreactive.annotations.Client;
+import com.ciro.jreactive.annotations.Stateless;
 import com.ciro.jreactive.router.Route;
 import com.ciro.jreactive.State;
 

@@ -3,16 +3,16 @@ package com.ciro.jreactive.crud;
 import java.io.Serializable;
 import java.util.UUID;
 
-public class Client implements Serializable {
+public class Client_ implements Serializable {
     public String id;
     public String name;
     public String email;
     public String status; // "Activo", "Inactivo"
 
     // Constructor vacío necesario para Jackson/FST
-    public Client() {} 
+    public Client_() {} 
 
-    public Client(String name, String email) {
+    public Client_(String name, String email) {
         this.id = UUID.randomUUID().toString();
         this.name = name;
         this.email = email;

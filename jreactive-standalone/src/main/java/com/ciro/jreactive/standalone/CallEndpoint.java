@@ -2,6 +2,7 @@ package com.ciro.jreactive.standalone;
 
 import com.ciro.jreactive.CallGuard;
 import com.ciro.jreactive.JrxHttpApi;
+import com.ciro.jreactive.JrxHubManager;
 import com.ciro.jreactive.PageResolver;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.undertow.server.HttpHandler;
@@ -28,10 +29,10 @@ public final class CallEndpoint implements HttpHandler {
     public CallEndpoint(PageResolver pageResolver,
                         CallGuard callGuard,
                         ObjectMapper objectMapper,
-                        StandaloneSessionManager sessions) {
+                        StandaloneSessionManager sessions, JrxHubManager hubManager) {
         this.objectMapper = objectMapper;
         this.sessions = sessions;
-        this.api = new JrxHttpApi(pageResolver, objectMapper, callGuard,true);
+        this.api = new JrxHttpApi(pageResolver, objectMapper, callGuard,true,hubManager);
     }
 
     @Override

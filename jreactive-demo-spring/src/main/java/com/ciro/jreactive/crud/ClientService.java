@@ -8,13 +8,13 @@ import java.util.concurrent.ConcurrentHashMap;
 @Service
 public class ClientService {
     // DB Simulada
-    private final Map<String, Client> db = new ConcurrentHashMap<>();
+    private final Map<String, Client_> db = new ConcurrentHashMap<>();
 
-    public List<Client> findAll() {
+    public List<Client_> findAll() {
         return new ArrayList<>(db.values());
     }
 
-    public void save(Client client) {
+    public void save(Client_ client) {
         if (client.id == null || client.id.isBlank()) {
             client.id = UUID.randomUUID().toString();
         }

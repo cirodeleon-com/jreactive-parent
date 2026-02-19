@@ -20,6 +20,7 @@ public class JModal extends HtmlComponent {
     @Override
     protected String template() {
         return """
+          <div style="display: contents;">		
             {{#if visible}}
                 <div class="jrx-modal-backdrop" 
                      client:mount="document.body.style.overflow='hidden'" 
@@ -36,6 +37,7 @@ public class JModal extends HtmlComponent {
                     </div>
                 </div>
             {{/if}}
+           </div>
         """;
     }
 }

@@ -108,6 +108,20 @@ public class JrxHubManager {
         hubs.asMap().keySet().removeIf(k -> k.sessionId().equals(sessionId));
     }
     
+    public void ensureSync(String sessionId, String path, HtmlComponent activePage) {
+        Key key = new Key(sessionId, path);
+        
+        // Solo nos importa si YA existe un hub (significa que hay un cliente escuchando)
+        JrxPushHub hub = hubs.getIfPresent(key);
+        
+        if (hub != null && hub.getPageInstance() != activePage) {
+            // ¡Desfase detectado! La llamada HTTP creó una página nueva,
+            // pero el WebSocket sigue mirando la vieja.
+            // Forzamos al Hub a mirar la nueva.
+            hub.rebind(activePage);
+        }
+    }
+    
     public void evict(String sessionId, String path) {
         Key key = new Key(sessionId, path);
         JrxPushHub hub = hubs.getIfPresent(key);
