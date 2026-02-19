@@ -112,6 +112,7 @@ public class ClientsPage extends AppPage {
     // --- VISTA (Template) ---
     @Override
     protected String template() {
+    	// language=html
         return """
             <div style="padding: 20px;">
                 <h1>Gestión de Clientes</h1>

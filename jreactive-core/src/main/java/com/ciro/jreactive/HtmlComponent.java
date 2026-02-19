@@ -13,6 +13,9 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.ReentrantLock;
+
+import org.intellij.lang.annotations.Language;
+
 import java.util.Collection;
 import java.util.Objects;
 import com.ciro.jreactive.smart.SmartList;
@@ -41,6 +44,7 @@ private final  Map<String, String> _childRefAlias = new HashMap<>();
 
     
     private final Set<String> stateKeys = new HashSet<>(); 
+    
     
 
     private final transient AtomicReference<ComponentState> _state =
@@ -380,7 +384,7 @@ private final  Map<String, String> _childRefAlias = new HashMap<>();
         }
     }
 
-
+    @Language("html")
     protected abstract String template();
 
     public Map<String, ReactiveVar<?>> getRawBindings() {
@@ -420,6 +424,8 @@ private final  Map<String, String> _childRefAlias = new HashMap<>();
                         String key = bindAnn.value().isBlank() ? f.getName() : bindAnn.value();
                         rx.setActiveGuard(() -> _state() == ComponentState.MOUNTED);
                         map.put(key, rx);
+                        
+                        
                     }
 
                     if (stateAnn != null) {
@@ -759,5 +765,7 @@ private final  Map<String, String> _childRefAlias = new HashMap<>();
             lock.unlock();
         }
     }
+    
+   
     
 }

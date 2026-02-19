@@ -2,56 +2,47 @@ package com.ciro.jreactive.template;
 
 import java.util.ArrayDeque;
 import java.util.Deque;
+import java.util.List;
 
 public class PureTemplateParser {
-    private static final String OPEN = "{{";
-    private static final String CLOSE = "}}";
 
     public TemplateNode parse(String src) {
-        if (src == null) return new ContainerNode();
+        if (src == null || src.isEmpty()) return new ContainerNode();
+        
         ContainerNode root = new ContainerNode();
         Deque<ContainerNode> stack = new ArrayDeque<>();
         stack.push(root);
 
-        int pos = 0;
-        int len = src.length();
+        // 1. Extraemos los tokens de forma segura con el nuevo Lexer
+        List<JrxTemplateLexer.Token> tokens = JrxTemplateLexer.lex(src);
 
-        while (pos < len) {
-            int nextOpen = src.indexOf(OPEN, pos);
-            if (nextOpen == -1) {
-                stack.peek().addChild(new TextNode(src.substring(pos)));
-                break;
+        // 2. Armamos el árbol usando un Switch limpio
+        for (JrxTemplateLexer.Token token : tokens) {
+            switch (token.type()) {
+                case TEXT -> 
+                    stack.peek().addChild(new TextNode(token.content()));
+                    
+                case VAR -> 
+                    stack.peek().addChild(new VarNode(token.content()));
+                    
+                case BLOCK_OPEN -> {
+                    ContainerNode node = createBlock(token.content());
+                    stack.peek().addChild(node);
+                    stack.push(node); // Entramos al nuevo contexto
+                }
+                
+                case BLOCK_CLOSE -> {
+                    if (stack.size() > 1) {
+                        stack.pop(); // Salimos del contexto
+                    }
+                }
+                
+                case BLOCK_ELSE -> 
+                    stack.peek().enableElse();
             }
-            if (nextOpen > pos) {
-                stack.peek().addChild(new TextNode(src.substring(pos, nextOpen)));
-            }
-
-            int startTag = nextOpen + OPEN.length();
-            int nextClose = src.indexOf(CLOSE, startTag);
-            if (nextClose == -1) break;
-
-            String content = src.substring(startTag, nextClose).trim();
-            processTag(content, stack);
-            pos = nextClose + CLOSE.length();
         }
-        return root;
-    }
-
-    private void processTag(String content, Deque<ContainerNode> stack) {
-        if (content.isEmpty()) return;
         
-        if (content.startsWith("#")) {
-            String cmd = content.substring(1).trim();
-            ContainerNode node = createBlock(cmd);
-            stack.peek().addChild(node);
-            stack.push(node);
-        } else if (content.startsWith("/")) {
-            if (stack.size() > 1) stack.pop();
-        } else if (content.equals("else")) {
-            stack.peek().enableElse();
-        } else {
-            stack.peek().addChild(new VarNode(content));
-        }
+        return root;
     }
 
     private ContainerNode createBlock(String command) {
