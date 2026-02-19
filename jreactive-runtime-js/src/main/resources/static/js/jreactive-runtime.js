@@ -79,6 +79,15 @@ const Store = {
     if (globalState[key] !== undefined) {
       try { fn(globalState[key]); } catch (e) { console.error(e); }
     }
+	
+	return () => {
+	      const arr = storeListeners.get(key);
+	      if (arr) {
+	        storeListeners.set(key, arr.filter(f => f !== fn));
+	      }
+	    };
+	
+	
   }
 };
 
@@ -377,58 +386,88 @@ function applyBatch(batch) {
 
 
 /* ==========================================================
- * NUEVA CONEXIÓN ROBUSTA CON SOCKJS
+ * 1. CONEXIÓN HÍBRIDA: SOCKJS (Spring) / WEBSOCKET NATIVO (Standalone)
  * ========================================================== */
 function connectTransport(path) {
-  // 1. Limpieza preventiva
   if (socket) {
      try { socket.close(); } catch (_) {}
      socket = null;
   }
   if (reconnectTimer) clearTimeout(reconnectTimer);
 
-  console.log(`🔌 Conectando JReactive a ${path} vía SockJS...`);
-
-  // 2. Construir URL base (sin ws://, SockJS usa http:// relativo o absoluto)
-  // Nota: SockJS añade automáticamente /websocket, /info, etc.
-  const protocol = location.protocol === 'https:' ? 'https:' : 'http:';
   const port = location.port ? ':' + location.port : '';
-  const baseUrl = `${protocol}//${location.hostname}${port}/jrx`; // 🔥 Ruta configurada en Spring
+  const isSockJSAvailable = typeof SockJS !== 'undefined';
 
-  // Pasamos 'path' y 'since' como query params. SockJS los ignorará en el handshake,
-  // pero nuestro PathInterceptor de Spring los leerá.
-  const connectUrl = `${baseUrl}?path=${encodeURIComponent(path)}&since=${lastSeq || 0}`;
+  console.log(`🔌 Conectando JReactive a ${path} vía ${isSockJSAvailable ? 'SockJS' : 'WebSocket nativo'}...`);
 
-  // 3. ✨ Instanciar SockJS
-  socket = new SockJS(connectUrl);
-
-  // --- EVENTOS ---
+  if (isSockJSAvailable) {
+      const protocol = location.protocol === 'https:' ? 'https:' : 'http:';
+      const baseUrl = `${protocol}//${location.hostname}${port}/jrx`;
+      const connectUrl = `${baseUrl}?path=${encodeURIComponent(path)}&since=${lastSeq || 0}`;
+      socket = new SockJS(connectUrl);
+  } else {
+      const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const baseUrl = `${wsProtocol}//${location.hostname}${port}/ws`;
+      const connectUrl = `${baseUrl}?path=${encodeURIComponent(path)}&since=${lastSeq || 0}`;
+      socket = new WebSocket(connectUrl);
+  }
 
   socket.onopen = function() {
-      console.log(`🟢 Conectado usando transporte: ${socket.transport}`);
-      // (Opcional) Si necesitas enviar un "HOLA" inicial:
-      // socket.send(JSON.stringify({ type: 'INIT', path: path }));
+      const transportName = isSockJSAvailable ? socket.transport : 'nativo';
+      console.log(`🟢 Conectado usando transporte: ${transportName}`);
   };
 
   socket.onmessage = function(e) {
-      // SockJS entrega el string JSON directamente en e.data
       const pkt = JSON.parse(e.data);
       const batch = normalizeIncoming(pkt);
       applyBatch(batch);
   };
 
   socket.onclose = function(e) {
-      // 1000 = Cierre normal (ej: navegación SPA)
       if (e.code === 1000 && e.reason === "route-change") return;
-
       console.warn(`🔴 Desconectado (${e.code}). Reconectando en 1s...`);
-      
-      // SockJS no reconecta solo, lo hacemos nosotros
-      reconnectTimer = setTimeout(() => {
-          connectTransport(path);
-      }, 1000); 
+      reconnectTimer = setTimeout(() => connectTransport(path), 1000); 
+  };
+  
+  socket.onerror = function(e) {
+      if (!isSockJSAvailable) console.error("⚠️ Error en el WebSocket nativo.");
   };
 }
+
+/* ==========================================================
+ * 🛡️ ESCUDO HTTP (DEGRADACIÓN ELEGANTE HTMX-STYLE)
+ * ========================================================== */
+async function syncStateHttp() {
+    // Si el socket está vivo (estado 1), ahorramos peticiones
+    if (socket && socket.readyState === 1) return; 
+
+    try {
+        const separator = currentPath.includes('?') ? '&' : '?';
+        const url = currentPath + separator + 't=' + Date.now();
+        
+        const html = await fetch(url, { 
+            headers: { 'X-Partial': '1' },
+            credentials: 'include' 
+        }).then(r => r.text());
+
+        if (window.Idiomorph) {
+            Idiomorph.morph(document.getElementById('app'), html, { morphStyle: 'innerHTML' });
+        } else {
+            document.getElementById('app').innerHTML = html;
+        }
+
+        reindexBindings();
+        hydrateEventDirectives(document.getElementById('app'));
+        setupEventBindings();
+    } catch (e) {
+        console.warn("🔇 Sync HTTP fallida. Reintentando luego...");
+    }
+}
+
+// Bucle de respaldo pasivo: Trae cambios de otros usuarios cada 5s si el WS está muerto
+setInterval(() => {
+    if (!socket || socket.readyState !== 1) syncStateHttp();
+}, 5000);
 
 
 
@@ -1234,7 +1273,7 @@ window.addEventListener('popstate', () => {
 
 async function sendSet(k, v) {
   // SockJS tiene readyState igual que WS (1 = OPEN)
-  if (socket && socket.readyState === SockJS.OPEN) {
+  if (socket && socket.readyState === 1) {
     socket.send(JSON.stringify({ k, v }));
     return;
   }
@@ -1253,6 +1292,10 @@ async function sendSet(k, v) {
           },
           body: JSON.stringify({ k, v })
         });
+		
+		
+		await syncStateHttp();
+		
         // Ya no necesitamos triggerImmediatePoll() porque SockJS se encarga
       } catch (e) {
         console.warn('[SET HTTP failed]', e);
@@ -1270,45 +1313,63 @@ function reindexBindings() {
   const app = document.getElementById('app') || document.body;
 
   const reG = /{{\s*([\w#.-]+)\s*}}/g;
-  const walker = document.createTreeWalker(app, NodeFilter.SHOW_TEXT);
+  // 🔥 MODO HÍBRIDO (SHOW_COMMENT | SHOW_TEXT)
+    const walker = document.createTreeWalker(app, NodeFilter.SHOW_COMMENT | NodeFilter.SHOW_TEXT);
+    
+    let pendingTpl = null;
+    let node;
 
-  let node;
-  while ((node = walker.nextNode())) {
-    // 👇 Usamos el template original si existe, NO el texto ya renderizado
-    const tpl = node.__tpl || node.textContent;
-    if (!reG.test(tpl)) continue;
+    while ((node = walker.nextNode())) {
+      
+      // 1. Leemos el template oculto dejado por Java
+      if (node.nodeType === Node.COMMENT_NODE) {
+          if (node.nodeValue.startsWith('jrx:')) {
+              pendingTpl = node.nodeValue.substring(4);
+          }
+          continue;
+      }
+      
+      // 2. Enganchamos el template al nodo de texto real
+      if (node.nodeType === Node.TEXT_NODE) {
+          let tpl = node.__tpl;
+          
+          // Si venimos de un comentario SSR, tatuamos el template al nodo
+          if (pendingTpl) {
+			  //if (node.textContent.trim() === '') continue;
+              tpl = pendingTpl;
+              node.__tpl = tpl;
+              pendingTpl = null; // Consumido
+          } else if (!tpl) {
+              tpl = node.textContent;
+          }
 
-    node.__tpl = tpl;
-    reG.lastIndex = 0;
+          if (!reG.test(tpl)) continue;
+          node.__tpl = tpl;
+          reG.lastIndex = 0;
 
-    for (const m of tpl.matchAll(reG)) {
-  const expr   = m[1];                    // ej. "FireTestLeaf#5.orders.size"
-  const parts  = expr.split('.');
-  const root   = parts[0];
-  const simple = parts[parts.length - 1];
+          for (const m of tpl.matchAll(reG)) {
+              const expr   = m[1];
+              const parts  = expr.split('.');
+              const root   = parts[0];
+              const simple = parts[parts.length - 1];
 
-  const keys = new Set();
+              const keys = new Set();
+              keys.add(expr);
+              keys.add(root);
+              keys.add(simple);
 
-  // expresión completa
-  keys.add(expr);
-  // raíz y último segmento
-  keys.add(root);
-  keys.add(simple);
+              if (parts.length > 1) {
+                for (let i = 1; i < parts.length; i++) {
+                  keys.add(parts.slice(0, i + 1).join('.'));
+                }
+              }
 
-  // 🔥 prefijos: "FireTestLeaf#5", "FireTestLeaf#5.orders"
-  if (parts.length > 1) {
-    for (let i = 1; i < parts.length; i++) {
-      const prefix = parts.slice(0, i + 1).join('.');
-      keys.add(prefix);
+              keys.forEach(key => {
+                (bindings.get(key) || bindings.set(key, []).get(key)).push(node);
+              });
+          }
+      }
     }
-  }
-
-  keys.forEach(key => {
-    (bindings.get(key) || bindings.set(key, []).get(key)).push(node);
-  });
-}
-
-  }
 
   $$('input,textarea,select').forEach(el => {
     const k = el.name || el.id;
@@ -1348,7 +1409,7 @@ function reindexBindings() {
     const file = el.files && el.files[0];
     const info = file ? file.name : null;
 
-    if (socket && socket.readyState === SockJS.OPEN) {
+    if (socket && socket.readyState === 1) {
       socket.send(JSON.stringify({ k, v : info}));
       return;
     } else {
@@ -1359,7 +1420,7 @@ function reindexBindings() {
 
   const v = (el.type === 'checkbox' || el.type === 'radio') ? el.checked : el.value;
 
-  if (socket && socket.readyState === SockJS.OPEN) {
+  if (socket && socket.readyState === 1) {
     socket.send(JSON.stringify({ k, v }));
     return;
   } else {
@@ -1606,15 +1667,19 @@ function setupEventBindings() {
       ev.preventDefault();
     }
 
-    // B) DEBOUNCE: Si no es WebSocket puro, esperamos un poco para no saturar
-    const isWebsocket = socket && socket.transport === 'websocket';
     
-    if (evtName === 'input' && !isWebsocket) { // ✅ CORREGIDO
-      if (el._jrxDebounce) clearTimeout(el._jrxDebounce);
-      await new Promise(resolve => {
-        el._jrxDebounce = setTimeout(resolve, 300);
-      });
-    }
+	// B) DEBOUNCE: Evalúa correctamente si es WS rápido o Polling lento
+	    let isFastTransport = false;
+	    if (socket) {
+	        isFastTransport = (typeof SockJS !== 'undefined') ? (socket.transport === 'websocket') : true;
+	    }
+	    
+	    if (evtName === 'input' && !isFastTransport) { 
+	      if (el._jrxDebounce) clearTimeout(el._jrxDebounce);
+	      await new Promise(resolve => {
+	        el._jrxDebounce = setTimeout(resolve, 300);
+	      });
+	    }
 
     // C) Preparación
     clearValidationErrors();
@@ -1692,6 +1757,12 @@ function setupEventBindings() {
         error = e?.message || String(e);
       } finally {
 		stopLoading();
+		
+		// 🛡️ AÑADIDO: Si no hay socket, refrescamos el HTML
+		if (!socket || socket.readyState !== 1) {
+		   await syncStateHttp();
+		}
+		
       }
 	  
 	  
@@ -1718,7 +1789,7 @@ function setupEventBindings() {
     };
 
     // E) ENCOLAMIENTO: Si es HTTP, ¡a la fila! (Esto arregla el race condition del país)
-    if (socket && socket.readyState === SockJS.OPEN) {
+    if (socket && socket.readyState === 1) {
        netTask(); // WS es rápido y ordenado, va directo
     } else {
        enqueueHttp(netTask); // HTTP debe esperar a que terminen los set previos

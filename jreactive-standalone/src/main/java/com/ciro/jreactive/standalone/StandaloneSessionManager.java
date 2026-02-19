@@ -7,13 +7,19 @@ import io.undertow.util.Headers;
 import java.security.SecureRandom;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
+
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
 
 public class StandaloneSessionManager {
 
     public static final String COOKIE_NAME = "JRXID";
     private static final SecureRandom RNG = new SecureRandom();
 
-    private final Map<String, SessionData> sessions = new ConcurrentHashMap<>();
+    private final Cache<String, SessionData> sessions = Caffeine.newBuilder()
+            .expireAfterAccess(2, TimeUnit.HOURS) // Si el usuario no interactúa en 2h, muere la sesión
+            .build();
 
     public static final class SessionData {
         public final String id;
@@ -31,7 +37,7 @@ public class StandaloneSessionManager {
             CookieUtil.setCookie(exchange, COOKIE_NAME, sid);
         }
 
-        SessionData data = sessions.computeIfAbsent(sid, SessionData::new);
+        SessionData data = sessions.get(sid, SessionData::new);
 
         // disponibilidad en attachment por request
         exchange.putAttachment(UndertowAttachments.SESSION_ID, sid);
@@ -49,13 +55,13 @@ public class StandaloneSessionManager {
 
     public void setLastPath(String sessionId, String path) {
         if (sessionId == null) return;
-        SessionData data = sessions.computeIfAbsent(sessionId, SessionData::new);
+        SessionData data = sessions.get(sessionId, SessionData::new);
         data.lastPath = (path == null || path.isBlank()) ? "/" : path;
     }
 
     public String getLastPath(String sessionId) {
         if (sessionId == null) return "/";
-        SessionData data = sessions.get(sessionId);
+        SessionData data = sessions.getIfPresent(sessionId);
         return data != null ? (data.lastPath != null ? data.lastPath : "/") : "/";
     }
 

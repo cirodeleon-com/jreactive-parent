@@ -2,6 +2,9 @@ package com.ciro.jreactive;
 
 import org.springframework.stereotype.Component;
 
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
+
 import java.util.ArrayDeque;
 import java.util.Queue;
 import java.util.concurrent.*;
@@ -17,13 +20,17 @@ import java.util.concurrent.atomic.AtomicBoolean;
 @Component
 public class JrxRequestQueue {
 
-    private final ConcurrentHashMap<String, SerialExecutor> queues = new ConcurrentHashMap<>();
+	private final Cache<String, SerialExecutor> queues = Caffeine.newBuilder()
+            .expireAfterAccess(30, TimeUnit.MINUTES)
+            .maximumSize(50_000)
+            .build();
+	
     //private final Executor backend = Executors.newCachedThreadPool();
     private final Executor backend = Executors.newVirtualThreadPerTaskExecutor();
 
     public <T> T run(String sessionId, String path, Callable<T> task) {
         String key = (sessionId == null ? "null" : sessionId) + "|" + (path == null ? "/" : path);
-        SerialExecutor q = queues.computeIfAbsent(key, _k -> new SerialExecutor(backend));
+        SerialExecutor q = queues.get(key, _k -> new SerialExecutor(backend));
         try {
             return q.submit(task).get(); // orden garantizado
         } catch (ExecutionException e) {

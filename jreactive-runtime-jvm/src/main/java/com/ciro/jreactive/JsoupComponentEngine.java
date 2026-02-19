@@ -431,13 +431,62 @@ public class JsoupComponentEngine extends AbstractComponentEngine {
 	}
 
 	private void processTextNode(TextNode node, HtmlComponent ctx, String ns) {
-		String text = node.getWholeText();
-		if (!text.contains("{{"))
-			return;
-		// Solo namespace, NO inyección de valor en texto (para no romper hidratación
-		// JS)
-		node.text(namespaceString(text, ns, ctx));
-	}
+        String text = node.getWholeText();
+        if (!text.contains("{{")) return;
+
+        String namespacedTpl = namespaceString(text, ns, ctx);
+
+        // 🔥 FIX 1: Si está dentro de un <template> (if/each), NO lo tocamos. 
+        // El JS necesita el {{var}} intacto para clonarlo.
+        if (isInsideTemplate(node)) {
+            node.text(namespacedTpl);
+            return;
+        }
+
+        String currentVal = namespacedTpl;
+        Matcher m = VAR_PATTERN.matcher(namespacedTpl);
+        boolean fullyResolved = true; // Bandera de seguridad
+
+        while (m.find()) {
+            String token = m.group(0);
+            String fullKey = m.group(1);
+            String localKey = fullKey;
+            
+            if (!ns.isEmpty() && localKey.startsWith(ns)) {
+                localKey = localKey.substring(ns.length());
+            }
+            if (localKey.startsWith("this.")) localKey = localKey.substring(5);
+
+            ReactiveVar<?> var = ctx.getRawBindings().get(localKey);
+            
+            // 🔥 FIX 2: Solo reemplazamos si conocemos el valor plano.
+            if (var != null && var.get() != null) {
+                currentVal = currentVal.replace(token, String.valueOf(var.get()));
+            } else {
+                // Si la variable es un DTO profundo (ej: store.ui.theme), abortamos el truco
+                // y dejamos que el JS lo resuelva para no dañar el HTML.
+                fullyResolved = false;
+            }
+        }
+
+        // 3. Solo aplicamos el truco del comentario si logramos resolver TODAS las variables
+        if (fullyResolved && !currentVal.equals(namespacedTpl)) {
+            node.before(new Comment("jrx:" + namespacedTpl));
+            node.text(currentVal);
+        } else {
+            node.text(namespacedTpl);
+        }
+    }
+	
+	// Helper para detectar si un nodo está dentro de un bloque de control
+    private boolean isInsideTemplate(Node node) {
+        Node current = node.parent();
+        while (current != null) {
+            if (current.nodeName().equalsIgnoreCase("template")) return true;
+            current = current.parent();
+        }
+        return false;
+    }
 
 	private String namespaceString(String input, String ns, HtmlComponent ctx) {
 		if (ns.isEmpty())
