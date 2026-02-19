@@ -669,8 +669,23 @@ function updateIfBlocks() {
  * ================================================================ */
 
 /** clave estable: si el item tiene .id la usamos, si no el índice */
+/** Clave estable y determinista para reconciliación del DOM */
 function getKey(item, idx) {
-  return (item && item.id !== undefined) ? item.id : idx;
+  if (item === null || item === undefined) return 'null_' + idx;
+  
+  // 1. Si es un DTO u objeto complejo con un 'id' (ej. Client_)
+  if (typeof item === 'object' && item.id !== undefined && item.id !== null) {
+      return String(item.id);
+  }
+  
+  // 2. Si es un tipo primitivo (como la List<String> de DeltaTestPage)
+  // Usamos el propio texto como identificador único.
+  if (typeof item === 'string' || typeof item === 'number') {
+      return String(item);
+  }
+  
+  // 3. Fallback en caso de objetos anónimos sin ID
+  return 'idx_' + idx;
 }
 
 /** Crea nodos DOM a partir del HTML procesado */
@@ -1496,16 +1511,42 @@ async function buildValue(nsRoot, el) {
     return deepClone(state[nsKey]);
   }
 
-  /* 3) --------- Literal JS en @click="{…}" ------------------------- */
-  try { return eval(`(${nsRoot})`); } catch (_) {}
+  /* 3) --------- Literales Seguros (Sin eval) ------------------------- */
+    const trimmed = nsRoot.trim();
 
-  /* 4) --------- Números / booleanos simples ------------------------ */
-  if (/^-?\d+(\.\d+)?$/.test(nsRoot)) return Number(nsRoot);
-  if (nsRoot === 'true')  return true;
-  if (nsRoot === 'false') return false;
+    // A. Booleanos y Null explícitos
+    if (trimmed === 'true') return true;
+    if (trimmed === 'false') return false;
+    if (trimmed === 'null') return null;
 
-  /* 5) --------- Fallback: string tal cual -------------------------- */
-  return nsRoot;
+    // B. Números puros
+    if (/^-?\d+(\.\d+)?$/.test(trimmed)) return Number(trimmed);
+
+    // C. Strings entre comillas ('texto' o "texto")
+    if ((trimmed.startsWith("'") && trimmed.endsWith("'")) || 
+        (trimmed.startsWith('"') && trimmed.endsWith('"'))) {
+        return trimmed.slice(1, -1);
+    }
+
+    // D. Objetos o Arrays literales (JSON)
+    if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || 
+        (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
+        try {
+            // Intento 1: Parseo directo como JSON estricto
+            return JSON.parse(trimmed);
+        } catch (e1) {
+            try {
+                // Intento 2: Relajado (cambia comillas simples por dobles para ayudar al developer)
+                return JSON.parse(trimmed.replace(/'/g, '"'));
+            } catch (e2) {
+                console.warn(`⚠️ [JReactive] Literal ignorado. Usa formato JSON válido (con comillas dobles): ${trimmed}`);
+                return null; // Fallamos de forma segura
+            }
+        }
+    }
+
+    /* 4) --------- Fallback: string tal cual (Ej: "form.email") --------- */
+    return nsRoot;
 }
 
 
@@ -1578,6 +1619,42 @@ function setupEventBindings() {
     // C) Preparación
     clearValidationErrors();
 	
+	let rollbackData = null;
+	    const optCode = el.getAttribute('data-optimistic');
+	    
+	    if (optCode) {
+	        rollbackData = {};
+	        try {
+	            // Creamos un Proxy inteligente que intercepta lecturas y escrituras
+	            const optProxy = new Proxy(state, {
+	                get(target, prop) {
+	                    // Resuelve nombres cortos (ej: "count" -> "CounterLeaf#1.count")
+	                    const realKey = target[prop] !== undefined ? prop : Object.keys(target).find(k => k.endsWith('.' + prop));
+	                    return realKey ? target[realKey] : undefined;
+	                },
+	                set(target, prop, value) {
+	                    const realKey = target[prop] !== undefined ? prop : Object.keys(target).find(k => k.endsWith('.' + prop)) || prop;
+	                    
+	                    // Guardamos la copia de seguridad solo la primera vez que se toca
+	                    if (!(realKey in rollbackData)) {
+	                        rollbackData[realKey] = target[realKey]; 
+	                    }
+	                    
+	                    // Aplicamos el cambio al estado local y actualizamos el DOM en 0ms
+	                    target[realKey] = value;
+	                    updateDomForKey(realKey, value); 
+	                    return true;
+	                }
+	            });
+	            
+	            // Ejecutamos el código del desarrollador inyectándole el proxy como 'state'
+	            new Function('state', optCode).call(el, optProxy);
+	        } catch (err) {
+	            console.warn("⚠️ [JReactive] Error en Optimistic UI, ignorando predicción:", err);
+	            rollbackData = null;
+	        }
+	    }
+	
 	startLoading();
 
     const paramList = (rawParams || '').split(',').map(p => p.trim()).filter(Boolean);
@@ -1616,6 +1693,16 @@ function setupEventBindings() {
       } finally {
 		stopLoading();
       }
+	  
+	  
+	  if (!ok && rollbackData) {
+	     console.warn("🔄 [JReactive] Petición fallida. Haciendo rollback de la UI Optimista...");
+	     for (const [k, v] of Object.entries(rollbackData)) {
+	        state[k] = v;          // Restaurar valor en memoria
+	        updateDomForKey(k, v); // Restaurar DOM visualmente
+	     }
+	  }
+	  
 
       // Feedback visual
       const detail = { element: el, qualified, args, ok, code, error, payload };
