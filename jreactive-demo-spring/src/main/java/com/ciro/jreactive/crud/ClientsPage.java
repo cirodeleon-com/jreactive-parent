@@ -4,8 +4,10 @@ package com.ciro.jreactive.crud;
 
 import com.ciro.jreactive.*;
 import com.ciro.jreactive.annotations.Call;
+import com.ciro.jreactive.annotations.StatefulRam;
 import com.ciro.jreactive.annotations.Stateless;
 import com.ciro.jreactive.annotations.Client;
+import com.ciro.jreactive.annotations.Stateful;
 import com.ciro.jreactive.router.Route;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;

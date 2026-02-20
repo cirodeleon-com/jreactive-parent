@@ -6,11 +6,10 @@ import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
 
 /**
- * Activa el modo 100% Stateless (Cero Memoria en Servidor).
- * El estado viaja firmado criptográficamente hacia el cliente en el HTML,
- * y regresa en cada petición HTTP para ser hidratado al vuelo.
+ * Marca un componente para que se serialize y se envie a Redis/Base de Datos.
+ * 
  */
 @Retention(RetentionPolicy.RUNTIME)
 @Target(ElementType.TYPE)
-public @interface Stateless {
+public @interface Stateful {
 }

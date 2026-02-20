@@ -27,7 +27,11 @@ public class ClockLeaf extends HtmlComponent {
         timer = new java.util.Timer(true);
         timer.scheduleAtFixedRate(new java.util.TimerTask() {
             @Override public void run() {
-                clock.set(java.time.LocalTime.now().withNano(0).toString());
+            	try {
+                    clock.set(java.time.LocalTime.now().withNano(0).toString());
+            	} catch (Exception e) {
+                    System.err.println("Reloj falló este tick, pero sigue vivo.");
+                }
             }
         }, 1000, 1000);
     }

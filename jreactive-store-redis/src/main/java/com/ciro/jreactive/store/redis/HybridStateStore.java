@@ -1,7 +1,7 @@
 package com.ciro.jreactive.store.redis;
 
 import com.ciro.jreactive.HtmlComponent;
-import com.ciro.jreactive.annotations.Stateless; // 👈 Importante
+import com.ciro.jreactive.annotations.StatefulRam; // 👈 Importante
 import com.ciro.jreactive.store.StateStore;
 
 import java.util.concurrent.CompletableFuture;
@@ -39,7 +39,7 @@ public class HybridStateStore implements StateStore {
         l1.put(sid, path, comp);
 
         // 2. 🔥 CHECK STATELESS: Si el componente es efímero, NO tocamos Redis
-        if (comp.getClass().isAnnotationPresent(Stateless.class)) {
+        if (comp.getClass().isAnnotationPresent(StatefulRam.class)) {
             return; // 🚀 Salida temprana: Ahorro de IO y Serialización
         }
 
@@ -60,8 +60,8 @@ public class HybridStateStore implements StateStore {
     @Override
     public boolean replace(String sid, String path, HtmlComponent comp, long expectedVersion) {
         
-        // 1. 🔥 CHECK STATELESS: Gestión de concurrencia solo en RAM
-        if (comp.getClass().isAnnotationPresent(Stateless.class)) {
+        // 1. 🔥 CHECK STATEFULLRAM: Gestión de concurrencia solo en RAM
+        if (comp.getClass().isAnnotationPresent(StatefulRam.class)) {
             // Delegamos la atomicidad a Caffeine (que usa Atomic/Compute)
             // No necesitamos Script Lua ni red.
             return l1.replace(sid, path, comp, expectedVersion);

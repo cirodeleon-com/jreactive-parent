@@ -3,6 +3,7 @@ package com.ciro.jreactive;
 import com.ciro.jreactive.router.RouteProvider;
 import com.ciro.jreactive.store.StateStore;
 import java.util.Map;
+import com.ciro.jreactive.annotations.Stateless;
 
 public class PageResolver {
 
@@ -17,6 +18,11 @@ public class PageResolver {
     public HtmlComponent getPage(String sessionId, String path) {
         // 1. Intentar obtener del store (RAM, Redis, etc.)
         HtmlComponent comp = store.get(sessionId, path);
+        
+        if (comp != null && comp.getClass().isAnnotationPresent(Stateless.class)) {
+            store.remove(sessionId, path);
+            comp = null;
+        }
 
         // 2. Si no existe (Cache Miss), crear nueva instancia
         if (comp == null) {
@@ -27,8 +33,9 @@ public class PageResolver {
             String stableId = generateStableIdFromPath(path);
             comp.setId(stableId);
             
-            // 3. Guardar en el store
-            store.put(sessionId, path, comp);
+            if (!comp.getClass().isAnnotationPresent(Stateless.class)) {
+                store.put(sessionId, path, comp);
+            }
         }
         return comp;
     }
@@ -63,7 +70,11 @@ public class PageResolver {
      * Debe llamarse al final de un request para asegurar que los cambios se guarden.
      */
     public void persist(String sessionId, String path, HtmlComponent comp) {
-        store.put(sessionId, path, comp);
+    	
+    	if (!comp.getClass().isAnnotationPresent(Stateless.class)) {
+            store.put(sessionId, path, comp);
+        }
+        
     }
 
     public void evict(String sessionId, String path) {

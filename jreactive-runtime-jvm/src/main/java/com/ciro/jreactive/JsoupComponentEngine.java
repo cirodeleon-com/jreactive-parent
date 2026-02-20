@@ -64,17 +64,33 @@ public class JsoupComponentEngine extends AbstractComponentEngine {
 
 
 
-	if (ctx.getClass().isAnnotationPresent(com.ciro.jreactive.annotations.Client.class)) {
-	   String resources = getResourcesOnce(ctx, emittedResources);
-	   String id = ctx.getId(); // Ej: "page_focus_test"
-	   String name = ctx.getClass().getSimpleName();
-	   String shellHtml = resources + "<div id=\"" + id + "\" data-jrx-client=\"" + name + "\"></div>";
-	   collectBindingsRecursive(ctx, all);
-	   disposeUnused(pool);
-	   ctx._mountRecursive();
-	   return new ComponentEngine.Rendered(shellHtml, all);
+	        if (ctx.getClass().isAnnotationPresent(com.ciro.jreactive.annotations.Client.class)) {
+	            String resources = getResourcesOnce(ctx, emittedResources);
+	            String id = ctx.getId(); // Ej: "page_focus_test"
+	            String name = ctx.getClass().getSimpleName();
+	            String shellHtml = resources + "<div id=\"" + id + "\" data-jrx-client=\"" + name + "\"></div>";
 
-	}
+	            // 🔥 FIX 1: ¡Inyectar la mochila de estado (Token) incluso en el cascarón de Client!
+	            if (ctx.getClass().isAnnotationPresent(com.ciro.jreactive.annotations.Stateless.class)) {
+	                try {
+	                    com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+	                    mapper.findAndRegisterModules();
+	                    Map<String, Object> initialState = new HashMap<>();
+	                    ctx.getRawBindings().forEach((k, v) -> initialState.put(k, v.get()));
+	                    String token = JrxStateToken.encode(mapper, initialState);
+	                    
+	                    // Prependemos el meta tag al cascarón
+	                    shellHtml = "<meta name=\"jrx-state\" content=\"" + token + "\">\n" + shellHtml;
+	                } catch (Exception e) {
+	                    e.printStackTrace();
+	                }
+	            }
+
+	            collectBindingsRecursive(ctx, all);
+	            disposeUnused(pool);
+	            ctx._mountRecursive();
+	            return new ComponentEngine.Rendered(shellHtml, all);
+	        }
 
 
 
@@ -117,6 +133,26 @@ public class JsoupComponentEngine extends AbstractComponentEngine {
 	&& (doc.child(0).tagName().equals("#root") || doc.child(0).tagName().equals("html"))) {
 	   html = doc.body().html();
 	}
+	
+	if (ctx.getClass().isAnnotationPresent(com.ciro.jreactive.annotations.Stateless.class)) {
+        try {
+            com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+            mapper.findAndRegisterModules();
+            
+            Map<String, Object> initialState = new HashMap<>();
+            all.forEach((k, v) -> initialState.put(k, v.get()));
+            
+            String token = JrxStateToken.encode(mapper, initialState);
+            String rawJson = mapper.writeValueAsString(initialState);
+            
+            // Inyectamos la mochila cifrada Y el estado inicial para el JS
+            html = "<meta name=\"jrx-state\" content=\"" + token + "\">\n" +
+                   "<script>window.__JRX_STATE__ = " + rawJson + ";</script>\n" + 
+                   html;
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
 
 
 	disposeUnused(pool);

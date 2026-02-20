@@ -616,6 +616,9 @@ function mount(tpl) {
 
   // 3. Conectar los listeners de eventos a los nuevos elementos
   setupEventBindings();
+  
+  //updateIfBlocks();
+  //updateEachBlocks();
 }
 
   function unmount(tpl) {
@@ -683,23 +686,46 @@ function parsePrimary(tokens) {
 
 
 function updateIfBlocks() {
-  // plantilla con data-if
-  document.querySelectorAll('template[data-if]').forEach(tpl => {
-    const cond = tpl.dataset.if;
-    const show = evalCond(cond);
+  let mountedAny = true;
+  let depth = 0;
+  
+  // Bucle para desanidar templates recursivamente (Ej: JModal -> JForm -> Button)
+  // Máximo 5 niveles de profundidad por seguridad para evitar bucles infinitos.
+  while (mountedAny && depth < 5) {
+    mountedAny = false;
+    
+    // plantilla con data-if
+    document.querySelectorAll('template[data-if]').forEach(tpl => {
+      const cond = tpl.dataset.if;
+      const show = evalCond(cond);
 
-    if (show && !tpl._nodes) mount(tpl);
-    if (!show && tpl._nodes) unmount(tpl);
-  });
+      if (show && !tpl._nodes) { 
+          mount(tpl); 
+          mountedAny = true; 
+      }
+      if (!show && tpl._nodes) { 
+          unmount(tpl); 
+          mountedAny = true; 
+      }
+    });
 
-  // plantilla complementaria data-else (misma key)
-  document.querySelectorAll('template[data-else]').forEach(tpl => {
-    const cond = tpl.dataset.else;
-    const show = !evalCond(cond);
+    // plantilla complementaria data-else
+    document.querySelectorAll('template[data-else]').forEach(tpl => {
+      const cond = tpl.dataset.else;
+      const show = !evalCond(cond);
 
-    if (show && !tpl._nodes) mount(tpl);
-    if (!show && tpl._nodes) unmount(tpl);
-  });
+      if (show && !tpl._nodes) { 
+          mount(tpl); 
+          mountedAny = true; 
+      }
+      if (!show && tpl._nodes) { 
+          unmount(tpl); 
+          mountedAny = true; 
+      }
+    });
+    
+    depth++;
+  }
 }
 
 
@@ -1143,6 +1169,7 @@ function checkUnmount(el) {
    * 6. Primera pasada cuando el DOM está listo
    * ------------------------------------------------------------------ */
 document.addEventListener('DOMContentLoaded', () => {
+  syncInitialState();	
   ensureLoadingUI();	
   reindexBindings(); 	
   updateIfBlocks();
@@ -1201,6 +1228,7 @@ async function loadRoute(path = location.pathname) {
     app.innerHTML = html;
     
     executeInlineScripts(app);
+	syncInitialState();
     reindexBindings();
 
     // ---------------------------------------------------------
@@ -1419,6 +1447,8 @@ function reindexBindings() {
   }
 
   const v = (el.type === 'checkbox' || el.type === 'radio') ? el.checked : el.value;
+  
+  state[k] = v;
 
   if (socket && socket.readyState === 1) {
     socket.send(JSON.stringify({ k, v }));
@@ -1729,64 +1759,75 @@ function setupEventBindings() {
     }
 
     // D) La tarea de red encapsulada
-    const netTask = async () => {
-      let ok = true, code = null, error = null, payload = null;
-      try {
-        const res = await fetch('/call/' + encodeURIComponent(qualified), {
-          method: 'POST',
-          headers: { 'X-Requested-With': 'JReactive', 'Content-Type': 'application/json' },
-          body: JSON.stringify({ args })
-        });
+	// D) La tarea de red encapsulada
+	    const netTask = async () => {
+	      let ok = true, code = null, error = null, payload = null;
+	      try {
+	        // 🔥 1. Recolectar el Token de Estado (Si es Stateless)
+	        const metaState = document.querySelector('meta[name="jrx-state"]');
+	        const stateToken = metaState ? metaState.getAttribute('content') : null;
 
-        const text = await res.text();
-        if (text) try { payload = JSON.parse(text); } catch (_) { payload = text; }
+	        const res = await fetch('/call/' + encodeURIComponent(qualified), {
+	          method: 'POST',
+	          headers: { 'X-Requested-With': 'JReactive', 'Content-Type': 'application/json' },
+	          // 🔥 2. Enviar el Token
+	          body: JSON.stringify({ args, stateToken })
+	        });
 
-        if (!res.ok) {
-          ok = false;
-          error = res.statusText || ('HTTP ' + res.status);
-        } else if (payload && typeof payload === 'object') {
-          if ('ok' in payload) ok = !!payload.ok;
-          if (!ok && 'error' in payload) error = payload.error;
-          if ('code' in payload) code = payload.code;
-        }
+	        const text = await res.text();
+	        if (text) try { payload = JSON.parse(text); } catch (_) { payload = text; }
 
-        
+	        if (!res.ok) {
+	          ok = false;
+	          error = res.statusText || ('HTTP ' + res.status);
+	        } else if (payload && typeof payload === 'object') {
+	          if ('ok' in payload) ok = !!payload.ok;
+	          if (!ok && 'error' in payload) error = payload.error;
+	          if ('code' in payload) code = payload.code;
 
-      } catch (e) {
-        ok = false;
-        error = e?.message || String(e);
-      } finally {
-		stopLoading();
-		
-		// 🛡️ AÑADIDO: Si no hay socket, refrescamos el HTML
-		if (!socket || socket.readyState !== 1) {
-		   await syncStateHttp();
-		}
-		
-      }
-	  
-	  
-	  if (!ok && rollbackData) {
-	     console.warn("🔄 [JReactive] Petición fallida. Haciendo rollback de la UI Optimista...");
-	     for (const [k, v] of Object.entries(rollbackData)) {
-	        state[k] = v;          // Restaurar valor en memoria
-	        updateDomForKey(k, v); // Restaurar DOM visualmente
-	     }
-	  }
-	  
+	          // 🔥 3. Actualizar la Mochila (Token)
+	          if (payload.newStateToken && metaState) {
+	              metaState.setAttribute('content', payload.newStateToken);
+	          }
+	          
+	          // 🔥 4. Aplicar Deltas directos al DOM sin WebSocket
+	          if (payload.batch && Array.isArray(payload.batch)) {
+	              applyBatch(payload.batch);
+	          }
+	        }
 
-      // Feedback visual
-      const detail = { element: el, qualified, args, ok, code, error, payload };
-      if (!ok && code === 'VALIDATION' && payload?.violations) {
-        applyValidationErrors(payload.violations, el);
-      }
-      window.dispatchEvent(new CustomEvent('jrx:call', { detail }));
-      if (ok) window.dispatchEvent(new CustomEvent('jrx:call:success', { detail }));
-      else {
-        window.dispatchEvent(new CustomEvent('jrx:call:error', { detail }));
-        console.error('[JReactive @Call error]', detail);
-      }
-    };
+	      } catch (e) {
+	        ok = false;
+	        error = e?.message || String(e);
+	      } finally {
+	        stopLoading();
+	        if (!socket || socket.readyState !== 1) {
+	           // await syncStateHttp(); (Puedes quitar esto temporalmente si causa ruido con el Stateless)
+	        }
+	      }
+	      
+	      // Rollback y feedback visual... (el resto queda igual)
+	      if (!ok && rollbackData) {
+	         console.warn("🔄 [JReactive] Petición fallida. Haciendo rollback de la UI Optimista...");
+	         for (const [k, v] of Object.entries(rollbackData)) {
+	            state[k] = v;          
+	            updateDomForKey(k, v); 
+	         }
+	      }
+
+	      const detail = { element: el, qualified, args, ok, code, error, payload };
+	      if (!ok && code === 'VALIDATION' && payload?.violations) {
+	        applyValidationErrors(payload.violations, el);
+	      }
+	      window.dispatchEvent(new CustomEvent('jrx:call', { detail }));
+	      if (ok) window.dispatchEvent(new CustomEvent('jrx:call:success', { detail }));
+	      else {
+	        window.dispatchEvent(new CustomEvent('jrx:call:error', { detail }));
+	        console.error('[JReactive @Call error]', detail);
+	      }
+	    };
+	
+	
 
     // E) ENCOLAMIENTO: Si es HTTP, ¡a la fila! (Esto arregla el race condition del país)
     if (socket && socket.readyState === 1) {
@@ -1915,6 +1956,11 @@ function updateDomForKey(k, v) {
   if (typeof inFlightUpdates !== 'undefined' && inFlightUpdates.has(k)) return;
 
   let nodes = bindings.get(k);
+  
+  if (nodes) {
+        nodes = nodes.filter(n => document.body.contains(n));
+        bindings.set(k, nodes);
+  }
   
   // Reindexado defensivo si no encontramos nodos
   if (!nodes || !nodes.length) {
@@ -2082,6 +2128,9 @@ function applyStateForKey(k, v) {
         hydrateEventDirectives(el, rootId + ".");
         reindexBindings(); 
         setupEventBindings();
+		updateIfBlocks();
+		updateEachBlocks();
+		
     };
 
     doRender();
@@ -2623,6 +2672,13 @@ function resolvePropsLogic(html, context) {
         });
     }
     return res;
+}
+
+function syncInitialState() {
+    if (window.__JRX_STATE__) {
+        Object.assign(state, window.__JRX_STATE__);
+        window.__JRX_STATE__ = null; // Lo consumimos para no repetir
+    }
 }
 
 

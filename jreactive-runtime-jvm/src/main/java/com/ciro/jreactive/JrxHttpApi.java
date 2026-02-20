@@ -1,7 +1,7 @@
 package com.ciro.jreactive;
 
 import com.ciro.jreactive.annotations.Call;
-import com.ciro.jreactive.annotations.Stateless;
+import com.ciro.jreactive.annotations.StatefulRam;
 import com.ciro.jreactive.router.Layout;
 import com.ciro.jreactive.router.Param;
 import com.fasterxml.jackson.databind.JavaType;
@@ -12,6 +12,7 @@ import java.lang.reflect.Parameter;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 public class JrxHttpApi {
 
@@ -149,50 +150,107 @@ public class JrxHttpApi {
             return guard.errorJson("RATE_LIMIT", "Demasiadas llamadas, inténtalo en un instante");
         }
 
-        // 4) Bean Validation
+     // 4) Bean Validation
         var violations = guard.validateParams(owner, target, args);
         if (!violations.isEmpty()) {
             return guard.validationJson(violations);
         }
-        
-        autoUpdateStateFromArgs(owner, args);
 
-        // 5) invocar
+        // 5) EJECUCIÓN CRONOLÓGICA PERFECTA
         try {
+            boolean isStateless = owner.getClass().isAnnotationPresent(com.ciro.jreactive.annotations.Stateless.class);
+            Map<String, Object> oldState = new HashMap<>();
+
+            // A. Montar página si es necesario
             if (owner instanceof HtmlComponent comp) {
-            	
-            	if (comp._state() == ComponentState.UNMOUNTED) {
+                if (comp._state() == ComponentState.UNMOUNTED) {
                     comp._initIfNeeded();
                     comp._mountRecursive();
                 }
-            	
-            	//if (!comp.getClass().isAnnotationPresent(Stateless.class)) {
-                   comp._captureStateSnapshot();
-            	//}
             }
 
+            Map<String, ReactiveVar<?>> allBinds = new HashMap<>();
+            collectBindingsRecursive(page, allBinds);
+
+            // B. EL PASADO: Hidratar desde la Mochila (Token)
+            if (isStateless) {
+                String token = (String) body.get("stateToken");
+                if (token != null && !token.isBlank()) {
+                    oldState = JrxStateToken.decode(objectMapper, token);
+                    for (Map.Entry<String, Object> entryVar : oldState.entrySet()) {
+                        @SuppressWarnings("unchecked")
+                        ReactiveVar<Object> rv = (ReactiveVar<Object>) allBinds.get(entryVar.getKey());
+                        if (rv != null && rv.get() != null) {
+                            Object typedV = objectMapper.convertValue(entryVar.getValue(), objectMapper.constructType(rv.get().getClass()));
+                            rv.set(typedV);
+                        }
+                    }
+                }
+            } else if (owner instanceof HtmlComponent comp) {
+                // Si es Stateful, tomar la foto del "Antes"
+                comp._captureStateSnapshot();
+            }
+
+            // C. EL PRESENTE: Inyectar lo que el usuario acaba de enviar en el formulario
+            autoUpdateStateFromArgs(owner, args);
+            if (owner instanceof HtmlComponent comp) {
+                comp._syncState(); // Obligar a los ReactiveVars a enterarse de los nuevos datos
+            }
+
+            // D. LA ACCIÓN: Ejecutar lógica de negocio (@Call)
             Object result = target.invoke(owner, args);
 
-            Call callAnn = target.getAnnotation(Call.class);
-            if (callAnn != null && callAnn.sync() && owner instanceof HtmlComponent comp) {
+            // E. EL FUTURO: Sincronizar consecuencias (ej. lastMessage = "Debes aceptar...")
+            if (owner instanceof HtmlComponent comp) {
                 comp._syncState();
-                if (this.persistenceEnabled) {
-                   pageResolver.persist(sessionId, path, page);
-                }
             }
 
+            // F. PREPARAR RESPUESTA
             Map<String, Object> envelope = new HashMap<>();
             envelope.put("ok", true);
             if (result != null) envelope.put("result", result);
+
+            if (isStateless) {
+                // Recolectar nuevo estado completo
+                Map<String, Object> newState = new HashMap<>();
+                allBinds.forEach((k, v) -> newState.put(k, v.get()));
+
+                // Calcular Deltas manualmente comparando contra oldState
+                List<Map<String, Object>> batch = new java.util.ArrayList<>();
+                for (Map.Entry<String, Object> entryVar : newState.entrySet()) {
+                    String k = entryVar.getKey();
+                    Object v = entryVar.getValue();
+                    if (!Objects.equals(v, oldState.get(k))) {
+                        batch.add(Map.of("k", k, "v", v));
+                    }
+                }
+                
+                // Guardar la nueva mochila en el HTML
+                envelope.put("newStateToken", JrxStateToken.encode(objectMapper, newState));
+                if (!batch.isEmpty()) envelope.put("batch", batch);
+
+            } else {
+                // Flujo Stateful Normal
+                Call callAnn = target.getAnnotation(Call.class);
+                if (callAnn != null && callAnn.sync() && owner instanceof HtmlComponent comp) {
+                    if (this.persistenceEnabled) {
+                        pageResolver.persist(sessionId, path, page);
+                    }
+                }
+            }
 
             return objectMapper.writeValueAsString(envelope);
 
         } catch (Exception e) {
             e.printStackTrace();
-            return guard.errorJson("INVOKE_ERROR",
-                    "Error al invocar " + qualified + ": " + e.getMessage());
+            return guard.errorJson("INVOKE_ERROR", "Error al invocar " + qualified + ": " + e.getMessage());
         }
+        
     }
+    
+    
+    
+    
 
     /** Igualito a tu lógica actual, movida al core */
     private Map<String, Map.Entry<Method, HtmlComponent>> collectCallables(HtmlComponent rootPage) {
@@ -236,6 +294,11 @@ public class JrxHttpApi {
      * 🔥 MODIFICADO: Ahora soporta Proxies (CGLIB) recorriendo la jerarquía.
      * Esto no afecta a componentes normales, simplemente busca más a fondo si no encuentra el campo al principio.
      */
+    /**
+     * Magia de Framework: Auto-Binding de DTOs.
+     * Busca un campo @State en el componente (o sus padres) que coincida 
+     * con el tipo del argumento recibido y lo inyecta automáticamente.
+     */
     private void autoUpdateStateFromArgs(Object owner, Object[] args) {
         if (owner == null || args == null) return;
 
@@ -265,8 +328,8 @@ public class JrxHttpApi {
                                 field.set(owner, arg); // 🔄 Inyección del valor
                                 inyectado = true;
                                 System.out.println("✅ [JRX-BIND] Inyección exitosa en: " + field.getName() + " (Clase: " + clazz.getSimpleName() + ")");
-                                // Opcional: Break aquí si solo quieres bindear el primero que encuentres
-                                // para evitar asignar el mismo DTO a dos campos diferentes.
+                                // Break aquí para evitar asignar el mismo DTO a dos campos diferentes
+                                break; 
                             } catch (IllegalAccessException e) {
                                 e.printStackTrace();
                             }
@@ -274,6 +337,7 @@ public class JrxHttpApi {
                     }
                 }
                 
+                if (inyectado) break;
                 // ⬆️ Subimos un nivel en la jerarquía
                 clazz = clazz.getSuperclass();
             }
@@ -291,5 +355,42 @@ public class JrxHttpApi {
                Boolean.class.isAssignableFrom(type) || 
                Character.class.isAssignableFrom(type);
     }
+    
+    
+ // =========================================================================
+    // HELPERS STATELESS
+    // =========================================================================
+    
+    private void collectBindingsRecursive(HtmlComponent comp, Map<String, ReactiveVar<?>> all) {
+        collectBindingsRecursive(comp, comp, all);
+    }
+
+    private void collectBindingsRecursive(HtmlComponent rootPage, HtmlComponent current, Map<String, ReactiveVar<?>> all) {
+        // 🔥 FIX 2: Igualar el idioma para el Proxy JS
+        if (current == rootPage) {
+            String rootPrefix = current.getId() + ".";
+            current.getRawBindings().forEach((k, v) -> {
+                all.put(k, v);               // Acceso corto (ej: form.name) para lógica de backend
+                all.put(rootPrefix + k, v);  // Acceso largo (ej: SignupPage2#1.form) para el render de JS
+            });
+        } else {
+            // Hijos mantienen su namespace estricto
+            String prefix = current.getId() + ".";
+            current.getRawBindings().forEach((k, v) -> all.put(prefix + k, v));
+        }
+        
+        for (HtmlComponent child : current._children()) {
+            collectBindingsRecursive(rootPage, child, all);
+        }
+    }
+    
+ // =========================================================================
+    // AUTO-BINDING MAGICO DE DTOs
+    // =========================================================================
+    
+    
+
+    
+    
 }
 

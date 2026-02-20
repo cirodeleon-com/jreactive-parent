@@ -75,7 +75,13 @@ public class JrxProtocolHandler {
                     broadcast(k, val);
                 }
                 
-                if (this.persistenceCallback != null) this.persistenceCallback.run();
+                if (this.persistenceCallback != null) {
+                    try {
+                        this.persistenceCallback.run();
+                    } catch (Exception e) {
+                        log.warn("⚠️ Error no fatal en persistencia de fondo para {}: {}", k, e.getMessage());
+                    }
+                }
             }));
         });
     }
@@ -118,11 +124,23 @@ public class JrxProtocolHandler {
             
             if (rv != null) {
                 rv.set(v);
-                if (this.persistenceCallback != null) this.persistenceCallback.run();
+                if (this.persistenceCallback != null) {
+                    try {
+                        this.persistenceCallback.run();
+                    } catch (Exception e) {
+                        log.warn("⚠️ Error no fatal en persistencia de fondo para {}: {}", k, e.getMessage());
+                    }
+                }
             }
             else if (k.contains(".")) {
                 updateDeep(k, v);
-                if (this.persistenceCallback != null) this.persistenceCallback.run();
+                if (this.persistenceCallback != null) {
+                    try {
+                        this.persistenceCallback.run();
+                    } catch (Exception e) {
+                        log.warn("⚠️ Error no fatal en persistencia de fondo para {}: {}", k, e.getMessage());
+                    }
+                }
             }
         } catch (Exception e) { 
             log.error("Protocol error processing message", e); 
