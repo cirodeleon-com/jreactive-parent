@@ -20,7 +20,7 @@ public class JReactiveAutoConfiguration {
 	
 	@PostConstruct
     public void installEngine() {
-        JsoupComponentEngine.installAsDefault();
+        AstComponentEngine.installAsDefault();
     }
 	
 	@Bean

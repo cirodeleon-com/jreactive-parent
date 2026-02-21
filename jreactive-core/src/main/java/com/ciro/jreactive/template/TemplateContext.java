@@ -150,6 +150,10 @@ public class TemplateContext {
         return str != null && str.matches("-?\\d+(\\.\\d+)?");
     }
     
+    public HtmlComponent getComponent() {
+        return this.component;
+    }
+    
     public static boolean evalSimple(HtmlComponent comp, String expr) {
     	        if (expr == null || expr.isBlank()) return false;
     	
