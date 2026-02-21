@@ -74,17 +74,11 @@ public class JrxPushHub {
             Runnable unsub = rv.onChange(val -> {
                 updateSmartSubscription(k, val);
                 
-                HtmlComponent owner = owners.get(rv);
-                
-                if (owner != null && owner.getClass().isAnnotationPresent(com.ciro.jreactive.annotations.Client.class)) {
-                    // MODO CSR: Solo delta JSON
-                    String localKey = k.contains(".") ? k.substring(k.lastIndexOf('.') + 1) : k;
-                    Map<String, Object> delta = Map.of(localKey, val);
-                    onDelta(owner.getId(), "json", delta);
-                } else {
-                    // MODO SSR: Snapshot completo
-                    onSnapshot(k, val); 
-                }
+                // 🔥 FIX PARETO: Fuera el if/else.
+                // Enviamos el cambio tal cual (k, val).
+                // El frontend ya sabe enrutar esto perfectamente hacia el DOM 
+                // o hacia el Proxy del @Client usando updateDomForKey y applyStateForKey.
+                onSnapshot(k, val); 
             });
 
             disposables.add(unsub);

@@ -420,6 +420,8 @@ private final  Map<String, String> _childRefAlias = new HashMap<>();
                         rx = (raw instanceof ReactiveVar<?> r) ? r :
                              (raw instanceof Type<?> v)        ? v.rx() :
                              new ReactiveVar<>(raw);
+                        
+                        rx.setGenericType(extractRealType(f.getGenericType()));
 
                         String key = bindAnn.value().isBlank() ? f.getName() : bindAnn.value();
                         rx.setActiveGuard(() -> _state() == ComponentState.MOUNTED);
@@ -437,6 +439,9 @@ private final  Map<String, String> _childRefAlias = new HashMap<>();
                         }
 
                         ReactiveVar<Object> srx = new ReactiveVar<>(raw);
+                        
+                        srx.setGenericType(extractRealType(f.getGenericType()));
+                        
                         srx.setActiveGuard(() -> _state() == ComponentState.MOUNTED);
 
                         srx.onChange(newValue -> {
@@ -764,6 +769,17 @@ private final  Map<String, String> _childRefAlias = new HashMap<>();
         } finally {
             lock.unlock();
         }
+    }
+    
+ // 🔥 EL DESENVOLVEDOR: Le quita la cáscara Type<T> para que Jackson vea solo la T
+    private java.lang.reflect.Type extractRealType(java.lang.reflect.Type declaredType) {
+        if (declaredType instanceof java.lang.reflect.ParameterizedType pt) {
+            java.lang.reflect.Type rawType = pt.getRawType();
+            if (rawType == com.ciro.jreactive.Type.class || rawType == com.ciro.jreactive.ReactiveVar.class) {
+                return pt.getActualTypeArguments()[0]; // Devuelve el tipo que está adentro
+            }
+        }
+        return declaredType; // Si es una List<UserData> normal, la deja intacta
     }
     
    

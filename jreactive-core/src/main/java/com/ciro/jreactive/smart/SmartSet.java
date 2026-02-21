@@ -4,26 +4,21 @@ import java.util.Collection;
 import java.util.HashSet;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.concurrent.locks.ReentrantLock; // 👈 Import nuevo
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Consumer;
 
 public class SmartSet<E> extends HashSet<E> {
 
     private final transient List<Consumer<Change>> listeners = new CopyOnWriteArrayList<>();
-    private final transient ReentrantLock lock = new ReentrantLock(); // 🔒
+    private final transient ReentrantLock lock = new ReentrantLock();
 
     public SmartSet() { super(); }
     public SmartSet(Collection<? extends E> c) { super(c); }
 
     public record Change(String op, Object item) {}
 
-    public void subscribe(Consumer<Change> listener) {
-        listeners.add(listener);
-    }
-
-    public void unsubscribe(Consumer<Change> listener) {
-        listeners.remove(listener);
-    }
+    public void subscribe(Consumer<Change> listener) { listeners.add(listener); }
+    public void unsubscribe(Consumer<Change> listener) { listeners.remove(listener); }
 
     private void fire(String op, Object item) {
         if (listeners.isEmpty()) return;
@@ -35,54 +30,62 @@ public class SmartSet<E> extends HashSet<E> {
 
     @Override
     public boolean add(E e) {
+        boolean result;
         lock.lock();
         try {
-            boolean result = super.add(e);
-            if (result) {
-                fire("ADD", e);
-            }
-            return result;
+            result = super.add(e);
         } finally {
             lock.unlock();
         }
+        if (result) {
+            fire("ADD", e);
+        }
+        return result;
     }
 
     @Override
     public boolean remove(Object o) {
+        boolean result;
         lock.lock();
         try {
-            boolean result = super.remove(o);
-            if (result) {
-                fire("REMOVE", o);
-            }
-            return result;
+            result = super.remove(o);
         } finally {
             lock.unlock();
         }
+        if (result) {
+            fire("REMOVE", o);
+        }
+        return result;
     }
 
     @Override
     public void clear() {
+        boolean wasEmpty;
         lock.lock();
         try {
-            if (!this.isEmpty()) {
+            wasEmpty = this.isEmpty();
+            if (!wasEmpty) {
                 super.clear();
-                fire("CLEAR", null);
             }
         } finally {
             lock.unlock();
         }
+        if (!wasEmpty) {
+            fire("CLEAR", null);
+        }
     }
 
     public void update(E element) {
+        boolean exists;
         lock.lock();
         try {
-            if (this.contains(element)) {
-                fire("REMOVE", element);
-                fire("ADD", element);
-            }
+            exists = this.contains(element);
         } finally {
             lock.unlock();
+        }
+        if (exists) {
+            fire("REMOVE", element);
+            fire("ADD", element);
         }
     }
 }

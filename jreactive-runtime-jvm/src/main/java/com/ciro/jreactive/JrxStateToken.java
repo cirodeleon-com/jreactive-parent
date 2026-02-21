@@ -1,6 +1,10 @@
+/* === File: jreactive-runtime-jvm\src\main\java\com\ciro\jreactive\JrxStateToken.java === */
 package com.ciro.jreactive;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import net.jpountz.lz4.LZ4BlockInputStream;
+import net.jpountz.lz4.LZ4BlockOutputStream;
+
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import java.io.ByteArrayInputStream;
@@ -9,8 +13,6 @@ import java.util.Base64;
 import java.util.HashMap;
 import java.util.Map;
 import java.nio.charset.StandardCharsets;
-import java.util.zip.GZIPInputStream;
-import java.util.zip.GZIPOutputStream;
 
 public class JrxStateToken {
     
@@ -24,10 +26,10 @@ public class JrxStateToken {
 
         String json = TOKEN_MAPPER.writeValueAsString(payload);
         
-        // 🗜️ COMPRESIÓN GZIP (Reduce el tamaño del JSON un 80-90%)
+        // 🗜️ COMPRESIÓN LZ4 (5x a 10x más rápido que GZIP, ideal para modo Stateless de alto tráfico)
         ByteArrayOutputStream baos = new ByteArrayOutputStream();
-        try (GZIPOutputStream gzip = new GZIPOutputStream(baos)) {
-            gzip.write(json.getBytes(StandardCharsets.UTF_8));
+        try (LZ4BlockOutputStream lz4Out = new LZ4BlockOutputStream(baos)) {
+            lz4Out.write(json.getBytes(StandardCharsets.UTF_8));
         }
         
         String base64Zipped = Base64.getUrlEncoder().withoutPadding().encodeToString(baos.toByteArray());
@@ -47,12 +49,12 @@ public class JrxStateToken {
             throw new SecurityException("¡Token alterado!");
         }
 
-        // 🗜️ DESCOMPRESIÓN GZIP
+        // 🗜️ DESCOMPRESIÓN LZ4
         byte[] zippedBytes = Base64.getUrlDecoder().decode(payload);
         ByteArrayInputStream bais = new ByteArrayInputStream(zippedBytes);
         String json;
-        try (GZIPInputStream gzip = new GZIPInputStream(bais)) {
-            json = new String(gzip.readAllBytes(), StandardCharsets.UTF_8);
+        try (LZ4BlockInputStream lz4In = new LZ4BlockInputStream(bais)) {
+            json = new String(lz4In.readAllBytes(), StandardCharsets.UTF_8);
         }
 
         Map<String, Object> data = TOKEN_MAPPER.readValue(json, Map.class);

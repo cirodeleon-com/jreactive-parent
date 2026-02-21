@@ -2,6 +2,8 @@ package com.ciro.jreactive;
 
 import org.springframework.stereotype.Component;
 import com.ciro.jreactive.annotations.Call;
+import com.ciro.jreactive.annotations.StatefulRam;
+import com.ciro.jreactive.annotations.Stateless;
 import com.ciro.jreactive.router.Layout;
 import com.ciro.jreactive.router.Route;
 
@@ -12,6 +14,7 @@ import java.util.List;
 
 @Component
 @Route(path = "/delta-test") // Accede en http://localhost:8080/delta-test
+@Stateless
 public class DeltaTestPage extends AppPage {
 
     // El framework detectará @State y convertirá esta ArrayList en una SmartList automáticamente

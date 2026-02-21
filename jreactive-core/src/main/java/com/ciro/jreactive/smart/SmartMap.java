@@ -4,26 +4,21 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.concurrent.locks.ReentrantLock; // 👈 Import nuevo
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Consumer;
 
 public class SmartMap<K, V> extends HashMap<K, V> {
 
     private final transient List<Consumer<Change>> listeners = new CopyOnWriteArrayList<>();
-    private final transient ReentrantLock lock = new ReentrantLock(); // 🔒
+    private final transient ReentrantLock lock = new ReentrantLock();
 
     public SmartMap() { super(); }
     public SmartMap(Map<? extends K, ? extends V> m) { super(m); }
 
     public record Change(String op, Object key, Object value) {}
 
-    public void subscribe(Consumer<Change> listener) {
-        listeners.add(listener);
-    }
-
-    public void unsubscribe(Consumer<Change> listener) {
-        listeners.remove(listener);
-    }
+    public void subscribe(Consumer<Change> listener) { listeners.add(listener); }
+    public void unsubscribe(Consumer<Change> listener) { listeners.remove(listener); }
 
     private void fire(String op, Object key, Object value) {
         if (listeners.isEmpty()) return;
@@ -35,14 +30,15 @@ public class SmartMap<K, V> extends HashMap<K, V> {
 
     @Override
     public V put(K key, V value) {
+        V old;
         lock.lock();
         try {
-            V old = super.put(key, value);
-            fire("PUT", key, value);
-            return old;
+            old = super.put(key, value);
         } finally {
             lock.unlock();
         }
+        fire("PUT", key, value);
+        return old;
     }
 
     @Override
@@ -59,40 +55,56 @@ public class SmartMap<K, V> extends HashMap<K, V> {
 
     @Override
     public V remove(Object key) {
+        boolean removed = false;
+        V value = null;
         lock.lock();
         try {
             if (containsKey(key)) {
-                V value = super.remove(key);
-                fire("REMOVE", key, null);
-                return value;
+                value = super.remove(key);
+                removed = true;
             }
-            return null;
         } finally {
             lock.unlock();
         }
+        if (removed) {
+            fire("REMOVE", key, null);
+        }
+        return value;
     }
 
     @Override
     public void clear() {
+        boolean wasEmpty;
         lock.lock();
         try {
-            if (!isEmpty()) {
+            wasEmpty = this.isEmpty();
+            if (!wasEmpty) {
                 super.clear();
-                fire("CLEAR", null, null);
             }
         } finally {
             lock.unlock();
         }
+        if (!wasEmpty) {
+            fire("CLEAR", null, null);
+        }
     }
 
     public void update(K key) {
+        boolean exists;
+        V value = null;
         lock.lock();
         try {
-            if (this.containsKey(key)) {
-                this.put(key, this.get(key));
+            exists = this.containsKey(key);
+            if (exists) {
+                value = this.get(key);
+                super.put(key, value); 
             }
         } finally {
             lock.unlock();
+        }
+        
+        if (exists) {
+            fire("PUT", key, value);
         }
     }
 }

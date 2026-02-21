@@ -1462,6 +1462,8 @@ function reindexBindings() {
   const v = (el.type === 'checkbox' || el.type === 'radio') ? el.checked : el.value;
   
   state[k] = v;
+  
+  updateDomForKey(k,v);
 
   if (socket && socket.readyState === 1) {
     socket.send(JSON.stringify({ k, v }));
@@ -1813,10 +1815,18 @@ function setupEventBindings() {
 	      } finally {
 	        stopLoading();
 	        // Solo refrescamos el HTML si NO estamos en @Stateless (no hay mochila)
-	        if (!socket || socket.readyState !== 1) {
-	            const metaState = document.querySelector('meta[name="jrx-state"]');
-	            if (!metaState) await syncStateHttp();
-	        }
+			if (!socket || socket.readyState !== 1) {
+			            const metaState = document.querySelector('meta[name="jrx-state"]');
+			            
+			            // Si NO hay mochila, es un componente @Stateful (cuya RAM cambió en el servidor)
+			            // Como no hay WebSockets para avisarnos, pedimos el HTML fresco.
+			            if (!metaState) {
+			                await syncStateHttp();
+			                if (window.__JRX_STATE__) syncInitialState(); // Despierta @Client si venía dormido
+			            }
+			            // Si SÍ hay mochila (@Stateless), no hacemos nada. 
+			            // El 'applyBatch(payload.batch)' que ocurrió arriba ya actualizó el DOM a la velocidad de la luz.
+			        }
 	      }
 	      
 	      if (!ok && rollbackData) {
@@ -2019,7 +2029,7 @@ function updateDomForKey(k, v) {
 }
 
 // =====================================================================================
-// 🔥 FIX FINAL DEFINITIVO: applyStateForKey (Hidratación Explicita Post-Morph)
+// 🔥 FIX FINAL DEFINITIVO: applyStateForKey (Reactividad Inmortal + Foco Protegido)
 // =====================================================================================
 function applyStateForKey(k, v) {
   // 1. Actualizar memoria global
@@ -2037,26 +2047,19 @@ function applyStateForKey(k, v) {
   // --- LÓGICA CSR (@Client) MEJORADA ---
   if (el && el.dataset.jrxClient) {
     
-    // ⚡ PASO 1: INTENTO O(1) (Actualización directa de valores)
-    // Actualizamos los inputs existentes INMEDIATAMENTE para que se sienta instantáneo.
-    // Esto evita que el usuario note lag mientras se procesa el HTML.
+    // ⚡ PASO 1: ACTUALIZACIÓN INSTANTÁNEA (Feedback O(1))
     if (el.children.length > 0) {
         const updateLeafs = (ck, cv) => {
             if (cv !== null && typeof cv === 'object' && !Array.isArray(cv)) {
                 Object.entries(cv).forEach(([sk, sv]) => updateLeafs(ck + '.' + sk, sv));
             } else {
-                updateDomForKey(ck, cv); // O(1) usando el mapa de bindings
+                updateDomForKey(ck, cv); 
             }
         };
         updateLeafs(k, v);
     }
 
-    // ⚡ PASO 2: DECISIÓN INTELIGENTE (¿Necesitamos Morph?)
-    // Si la actualización es SOLO de valores de formulario, el Paso 1 ya lo resolvió.
-    // Pero si hay cambios estructurales (data-if, data-each) o reseteos complejos,
-    // necesitamos el Morph para garantizar que el DOM coincida con el estado.
-    
-    // Ejecutamos el render completo para asegurar estructura correcta (Mensajes de error, listas, etc)
+    // ⚡ PASO 2: RENDER Y MORPH 
     const compName = el.dataset.jrxClient;
     const renderer = window.JRX_RENDERERS[compName];
 
@@ -2080,47 +2083,94 @@ function applyStateForKey(k, v) {
         localState['this'] = { id: rootId };
         localState['id'] = rootId;
 
-        // Generar HTML
+        // Generar HTML puro (Aún con variables {{...}} adentro)
         let rawTpl = (typeof renderer.getTemplate === 'function') ? renderer.getTemplate() : "";
         let processedTpl = await expandComponentsAsync(rawTpl, localState);
         processedTpl = transpileLogic(processedTpl);
-        const newHtml = window.JRX.renderTemplate(processedTpl, localState);
 
-        // 🟢 PRE-HIDRATACIÓN (Tatuaje de valores)
         const tempDiv = document.createElement('div');
-        tempDiv.innerHTML = newHtml;
-        tempDiv.querySelectorAll('input, select, textarea').forEach(input => {
-            const name = input.getAttribute('name');
-            if (name) {
+        tempDiv.innerHTML = processedTpl;
+        
+        // 🟢 LA NUEVA MAGIA: Tatuaje de Textos (Preservar Reactividad O(1) como en Java)
+        const reG = /{{\s*([\w#.-]+)\s*}}/g;
+        const walker = document.createTreeWalker(tempDiv, NodeFilter.SHOW_TEXT);
+        const textNodes = [];
+        let n;
+        while(n = walker.nextNode()) textNodes.push(n);
+        
+        textNodes.forEach(node => {
+            const tpl = node.nodeValue;
+            if (!tpl.includes('{{')) return;
+            if (node.parentNode && (node.parentNode.tagName === 'SCRIPT' || node.parentNode.tagName === 'STYLE')) return;
+            
+            const currentVal = tpl.replace(reG, (m, key) => {
+                const val = resolveDeep(key, localState);
+                return (val !== undefined && val !== null) ? val : '';
+            });
+            
+            // ¡El Santo Grial! Dejamos el comentario oculto para que reindexBindings no se ciegue
+            node.parentNode.insertBefore(document.createComment(`jrx:${tpl}`), node);
+            node.nodeValue = currentVal;
+        });
+
+        // 🟢 Resolución de Atributos y Pre-hidratación de Inputs (Anti-Amnesia)
+        tempDiv.querySelectorAll('*').forEach(childEl => {
+            // A. Resolver variables en atributos (ej: class="{{color}}")
+            Array.from(childEl.attributes).forEach(attr => {
+                if (attr.value.includes('{{')) {
+                    const newVal = attr.value.replace(reG, (m, key) => {
+                        const val = resolveDeep(key, localState);
+                        return (val !== undefined && val !== null) ? val : '';
+                    });
+                    childEl.setAttribute(attr.name, newVal);
+                }
+            });
+
+            // B. Rescatar valores vivos de los inputs
+            const name = childEl.getAttribute('name');
+            if (name && (childEl.tagName === 'INPUT' || childEl.tagName === 'SELECT' || childEl.tagName === 'TEXTAREA')) {
                 const val = resolveDeep(name, localState);
                 if (val !== undefined && val !== null) {
-                    if (input.type === 'checkbox' || input.type === 'radio') {
-                        if (val) input.setAttribute('checked', ''); else input.removeAttribute('checked');
+                    if (childEl.type === 'checkbox' || childEl.type === 'radio') {
+                        if (val) childEl.setAttribute('checked', ''); else childEl.removeAttribute('checked');
                     } else {
-                        input.setAttribute('value', val);
-                        input.value = val;
-                        if (input.tagName === 'TEXTAREA') input.textContent = val;
-                        if (input.tagName === 'SELECT') {
-                             const opt = input.querySelector(`option[value="${val}"]`);
+                        childEl.setAttribute('value', val);
+                        childEl.value = val;
+                        if (childEl.tagName === 'TEXTAREA') childEl.textContent = val;
+                        if (childEl.tagName === 'SELECT') {
+                             const opt = childEl.querySelector(`option[value="${val}"]`);
                              if(opt) opt.setAttribute('selected', '');
+                        }
+                    }
+                } else {
+                    // Fallback: Si no está en el state, copiamos lo que el usuario estaba escribiendo en pantalla
+                    const liveEl = document.querySelector(`[name="${name}"]`);
+                    if (liveEl) {
+                        if (childEl.type === 'checkbox' || childEl.type === 'radio') {
+                            if (liveEl.checked) childEl.setAttribute('checked', '');
+                        } else {
+                            childEl.setAttribute('value', liveEl.value);
+                            childEl.value = liveEl.value;
+                            if (childEl.tagName === 'TEXTAREA') childEl.textContent = liveEl.value;
                         }
                     }
                 }
             }
         });
         
-        // 🟢 MORPHING INTELIGENTE
-        // Idiomorph detectará que los inputs ya fueron actualizados en el PASO 1
-        // y NO los tocará, preservando el foco y selección.
-        // Solo tocará la estructura (el mensaje <p>) si es necesario.
+        // 🟢 MORPHING CON ESCUDO DE FOCO
         if (window.Idiomorph) {
             Idiomorph.morph(el, tempDiv.innerHTML, {
                 morphStyle: 'innerHTML',
                 callbacks: {
                     beforeNodeMorphed: (fromEl, toEl) => {
                         if (fromEl.nodeType !== 1) return;
-                        // Protección extra de foco
-                        if (fromEl === document.activeElement) return false;
+                        if (fromEl === document.activeElement && (fromEl.tagName === 'INPUT' || fromEl.tagName === 'TEXTAREA')) {
+                            if (fromEl.className !== toEl.className) {
+                                fromEl.className = toEl.className;
+                            }
+                            return false; 
+                        }
                     }
                 }
             });
@@ -2128,15 +2178,13 @@ function applyStateForKey(k, v) {
             el.innerHTML = tempDiv.innerHTML;
         }
 
-        // Reconectar eventos y re-indexar bindings para que el PASO 1 funcione la próxima vez
         const allNodes = [el, ...el.querySelectorAll('*')];
         allNodes.forEach(node => delete node._jrxHydratedEvents);
         hydrateEventDirectives(el, rootId + ".");
         reindexBindings(); 
         setupEventBindings();
-		updateIfBlocks();
-		updateEachBlocks();
-		
+        updateIfBlocks();
+        updateEachBlocks();
     };
 
     doRender();

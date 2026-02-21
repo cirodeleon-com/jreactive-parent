@@ -1,6 +1,9 @@
 package com.ciro.jreactive;
 
 import com.ciro.jreactive.annotations.Call;
+import com.ciro.jreactive.annotations.Client;
+import com.ciro.jreactive.annotations.StatefulRam;
+import com.ciro.jreactive.annotations.Stateless;
 import com.ciro.jreactive.router.Route;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Email;
@@ -13,6 +16,8 @@ import org.springframework.stereotype.Component;
 
 @Component
 @Route(path = "/signup")
+@StatefulRam
+@Client
 public class SignupPage extends AppPage {
 
     // 1) DTO con Bean Validation

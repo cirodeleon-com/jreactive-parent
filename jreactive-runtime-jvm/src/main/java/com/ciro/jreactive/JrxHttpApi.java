@@ -9,10 +9,14 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.lang.reflect.Method;
 import java.lang.reflect.Parameter;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 
 public class JrxHttpApi {
 
@@ -165,19 +169,63 @@ public class JrxHttpApi {
             collectBindingsRecursive(page, allBinds);
 
             // A. Hidratar desde la Mochila
+         // A. Hidratar desde la Mochila
             if (isStateless) {
                 String token = (String) body.get("stateToken");
                 if (token != null && !token.isBlank()) {
                     oldState = JrxStateToken.decode(token);
-                    for (Map.Entry<String, Object> entryVar : oldState.entrySet()) {
+                    
+                    // 🔥 FIX 1: Ordenar por longitud de clave. Los padres (tipos fuertes como "users") 
+                    // se procesan ANTES que los hijos (tipos débiles como "page_table_test-JTable-0.data").
+                    List<Map.Entry<String, Object>> sortedEntries = new ArrayList<>(oldState.entrySet());
+                    sortedEntries.sort(Comparator.comparingInt(e -> e.getKey().length()));
+                    
+                    // 🔥 FIX 2: Escudo de Punteros compartidos. Si Padre e Hijo apuntan a la misma memoria, solo lo hidratamos 1 vez.
+                    Set<Object> restoredInstances = java.util.Collections.newSetFromMap(new IdentityHashMap<>());
+
+                    for (Map.Entry<String, Object> entryVar : sortedEntries) {
                         @SuppressWarnings("unchecked")
                         ReactiveVar<Object> rv = (ReactiveVar<Object>) allBinds.get(entryVar.getKey());
                         if (rv != null) {
+                            Object currentVal = rv.get();
+                            
+                            // Si ya restauramos esta lista a través de otra variable (ej: el padre), la saltamos
+                            if (currentVal != null && restoredInstances.contains(currentVal)) {
+                                continue;
+                            }
+                            
                             Object rawValue = entryVar.getValue();
                             if (rawValue != null) {
-                                // Usa el tipo del valor actual o infiere por reflexión (básico)
-                                Class<?> targetType = (rv.get() != null) ? rv.get().getClass() : Object.class;
-                                rv.set(objectMapper.convertValue(rawValue, objectMapper.constructType(targetType)));
+                                java.lang.reflect.Type targetType = rv.getGenericType();
+                                if (targetType == null) {
+                                    targetType = (currentVal != null) ? currentVal.getClass() : Object.class;
+                                }
+                                
+                                Object converted = objectMapper.convertValue(rawValue, objectMapper.constructType(targetType));
+                                
+                                // 🔥 EL FIX DEL COMPA: Mantener vivas las colecciones inteligentes usando clear() y addAll()
+                                if (currentVal instanceof com.ciro.jreactive.smart.SmartList currentList && converted instanceof java.util.List newList) {
+                                    currentList.clear();
+                                    @SuppressWarnings("unchecked")
+                                    java.util.List<Object> safeList = (java.util.List<Object>) newList;
+                                    currentList.addAll(safeList);
+                                    restoredInstances.add(currentList);
+                                } else if (currentVal instanceof com.ciro.jreactive.smart.SmartSet currentSet && converted instanceof java.util.Collection newCol) {
+                                    currentSet.clear();
+                                    @SuppressWarnings("unchecked")
+                                    java.util.Collection<Object> safeCol = (java.util.Collection<Object>) newCol;
+                                    currentSet.addAll(safeCol);
+                                    restoredInstances.add(currentSet);
+                                } else if (currentVal instanceof com.ciro.jreactive.smart.SmartMap currentMap && converted instanceof java.util.Map newMap) {
+                                    currentMap.clear();
+                                    @SuppressWarnings("unchecked")
+                                    java.util.Map<Object, Object> safeMap = (java.util.Map<Object, Object>) newMap;
+                                    currentMap.putAll(safeMap);
+                                    restoredInstances.add(currentMap);
+                                } else {
+                                    rv.set(converted);
+                                    if (converted != null) restoredInstances.add(converted);
+                                }
                             } else {
                                 rv.set(null);
                             }
@@ -231,7 +279,23 @@ public class JrxHttpApi {
 
         } catch (Exception e) {
             e.printStackTrace();
-            return guard.errorJson("INVOKE_ERROR", "Error al invocar " + qualified + ": " + e.getMessage());
+            
+            // 🔥 CAZADOR DE ERRORES: Extraemos el error real, sin importar lo profundo que esté
+            String msg = e.getMessage();
+            if (e instanceof java.lang.reflect.InvocationTargetException ite && ite.getCause() != null) {
+                msg = ite.getCause().getClass().getSimpleName() + ": " + ite.getCause().getMessage();
+                // Si el error interno tampoco tiene mensaje (ej: NullPointerException)
+                if (ite.getCause().getMessage() == null) {
+                    msg = ite.getCause().getClass().getSimpleName() + " en la línea " + ite.getCause().getStackTrace()[0].getLineNumber();
+                }
+            }
+            
+            // Fallback por si la excepción principal es un NPE
+            if (msg == null) {
+                msg = e.getClass().getSimpleName() + " en la línea " + e.getStackTrace()[0].getLineNumber();
+            }
+            
+            return guard.errorJson("INVOKE_ERROR", "Error al invocar " + qualified + ": " + msg);
         }
         
     }

@@ -11,8 +11,6 @@ import java.util.function.Predicate;
 public class SmartList<E> extends ArrayList<E> {
 
     private final transient List<Consumer<Change>> listeners = new CopyOnWriteArrayList<>();
-    
-    // 🔒 Usamos ReentrantLock para evitar el "Pinning" de Virtual Threads
     private final transient ReentrantLock lock = new ReentrantLock();
 
     public SmartList() { super(); }
@@ -20,13 +18,8 @@ public class SmartList<E> extends ArrayList<E> {
 
     public record Change(String op, int index, Object item) {}
 
-    public void subscribe(Consumer<Change> listener) {
-        listeners.add(listener);
-    }
-
-    public void unsubscribe(Consumer<Change> listener) {
-        listeners.remove(listener);
-    }
+    public void subscribe(Consumer<Change> listener) { listeners.add(listener); }
+    public void unsubscribe(Consumer<Change> listener) { listeners.remove(listener); }
 
     private void fire(String op, int index, Object item) {
         if (listeners.isEmpty()) return;
@@ -36,19 +29,19 @@ public class SmartList<E> extends ArrayList<E> {
         }
     }
 
-    // --- Operaciones Unitarias ---
-
     @Override
     public boolean add(E e) {
+        int index;
+        boolean result;
         lock.lock();
         try {
-            int index = this.size();
-            boolean result = super.add(e);
-            if (result) fire("ADD", index, e);
-            return result;
+            index = this.size();
+            result = super.add(e);
         } finally {
             lock.unlock();
         }
+        if (result) fire("ADD", index, e);
+        return result;
     }
 
     @Override
@@ -56,102 +49,102 @@ public class SmartList<E> extends ArrayList<E> {
         lock.lock();
         try {
             super.add(index, element);
-            fire("ADD", index, element);
         } finally {
             lock.unlock();
         }
+        fire("ADD", index, element);
     }
 
     @Override
     public E remove(int index) {
+        E removed;
         lock.lock();
         try {
-            E removed = super.remove(index);
-            fire("REMOVE", index, null); // 🔔 Este es el que avisa al JS
-            return removed;
+            removed = super.remove(index);
         } finally {
             lock.unlock();
         }
+        fire("REMOVE", index, null);
+        return removed;
     }
 
     @Override
     public boolean remove(Object o) {
+        int index = -1;
         lock.lock();
         try {
-            int index = this.indexOf(o);
+            index = this.indexOf(o);
             if (index >= 0) {
-                // Llamamos a remove(int) que ya es thread-safe (ReentrantLock permite reentrada)
-                this.remove(index); 
-                return true;
+                super.remove(index); // Evitamos la recursión del lock
             }
-            return false;
         } finally {
             lock.unlock();
         }
+        if (index >= 0) {
+            fire("REMOVE", index, null);
+            return true;
+        }
+        return false;
     }
 
     @Override
     public E set(int index, E element) {
+        E old;
         lock.lock();
         try {
-            E old = super.set(index, element);
-            fire("SET", index, element);
-            return old;
+            old = super.set(index, element);
         } finally {
             lock.unlock();
         }
+        fire("SET", index, element);
+        return old;
     }
 
     @Override
     public void clear() {
+        boolean wasEmpty;
         lock.lock();
         try {
-            if (!isEmpty()) {
+            wasEmpty = this.isEmpty();
+            if (!wasEmpty) {
                 super.clear();
-                fire("CLEAR", 0, null);
             }
         } finally {
             lock.unlock();
         }
+        if (!wasEmpty) {
+            fire("CLEAR", 0, null);
+        }
     }
 
-    // --- 🔥 LA CIRUGÍA: removeIf Reactivo ---
-
+    // --- Operaciones Masivas (Sin cambios profundos por ahora, llaman a métodos con lock propio) ---
     @Override
     public boolean removeIf(Predicate<? super E> filter) {
         lock.lock();
         try {
             boolean modified = false;
-            // Iteramos hacia atrás para que los índices no se muevan mientras borramos
             for (int i = size() - 1; i >= 0; i--) {
                 if (filter.test(get(i))) {
-                    this.remove(i); // 🔥 Al llamar a this.remove(i), se dispara el fire("REMOVE")
+                    this.remove(i); 
                     modified = true;
                 }
             }
             return modified;
-        } finally {
-            lock.unlock();
-        }
+        } finally { lock.unlock(); }
     }
-
-    // --- Operaciones Masivas ---
 
     @Override
     public boolean removeAll(Collection<?> c) {
         lock.lock();
         try {
             boolean modified = false;
-            // Copia defensiva para iterar sin problemas de concurrencia externa
             for (Object x : new ArrayList<>(this)) { 
                 if (c.contains(x)) {
                     if (this.remove(x)) modified = true;
                 }
             }
             return modified;
-        } finally {
-            lock.unlock();
-        }
+        } finally { lock.unlock(); }
     }
 
     @Override
@@ -165,9 +158,7 @@ public class SmartList<E> extends ArrayList<E> {
                 }
             }
             return modified;
-        } finally {
-            lock.unlock();
-        }
+        } finally { lock.unlock(); }
     }
     
     @Override
@@ -179,9 +170,7 @@ public class SmartList<E> extends ArrayList<E> {
                 if (add(e)) modified = true;
             }
             return modified;
-        } finally {
-            lock.unlock();
-        }
+        } finally { lock.unlock(); }
     }
 
     @Override
@@ -195,8 +184,6 @@ public class SmartList<E> extends ArrayList<E> {
                 modified = true;
             }
             return modified;
-        } finally {
-            lock.unlock();
-        }
+        } finally { lock.unlock(); }
     }
 }

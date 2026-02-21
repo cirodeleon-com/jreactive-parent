@@ -58,22 +58,14 @@ public class JrxProtocolHandler {
         this.bindings = collect(root); 
 
         // 2. Subscribe to changes
+     // 2. Subscribe to changes
         bindings.forEach((k, v) -> {
             updateSmartSubscription(k, v.get());
+            
+            // 🔥 FIX: Flujo unificado SSR y CSR.
             disposables.add(v.onChange(val -> {
                 updateSmartSubscription(k, val);
-                
-                HtmlComponent owner = owners.get(v);
-                
-                if (owner != null && owner.getClass().isAnnotationPresent(com.ciro.jreactive.annotations.Client.class)) {
-                    // CSR Optimization: Send raw JSON delta
-                    String localKey = k.contains(".") ? k.substring(k.lastIndexOf('.') + 1) : k;
-                    Map<String, Object> delta = Map.of(localKey, val);
-                    broadcastDelta(owner.getId(), "json", delta);
-                } else {
-                    // SSR Standard: Send full value or smart delta
-                    broadcast(k, val);
-                }
+                broadcast(k, val); // Snapshot normal
                 
                 if (this.persistenceCallback != null) {
                     try {

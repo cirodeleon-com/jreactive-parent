@@ -618,15 +618,18 @@ public final class TemplateProcessor extends AbstractProcessor {
                     if (k.startsWith("@") || k.equals("data-call")) {
                         String v = attr.getValue();
                         if (v.contains("{{") || v.contains("#")) continue;
-                        // 🔥 FIX: Usar {{id}} plano para mayor compatibilidad JS
+                        
                         String newVal = "{{id}}." + v;
 
                         if (k.startsWith("@")) {
-                            String evt = k.substring(1);
-                            toAdd.add(new Attribute("data-call-" + evt, newVal));
+                            // 🔥 FIX: NO cambiamos el nombre del atributo a data-call-.
+                            // Lo dejamos como @click pero le inyectamos el ID (ej: @click="{{id}}.register(form)")
+                            // Así el runtime de JS extraerá los parámetros correctamente.
+                            toAdd.add(new Attribute(k, newVal));
                             toRemove.add(k);
                         } else {
-                            attr.setValue(newVal);
+                            toAdd.add(new Attribute(k, newVal));
+                            toRemove.add(k);
                         }
                     }
                 }

@@ -1,35 +1,48 @@
 package com.ciro.jreactive;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Consumer;
 import java.util.function.BooleanSupplier;
 import java.util.concurrent.locks.ReentrantLock;
 
-public final class ReactiveVar<T> implements java.io.Serializable{
+public final class ReactiveVar<T> implements java.io.Serializable {
     private T value;
     private final List<Consumer<T>> listeners = new CopyOnWriteArrayList<>();
     
     private final ReentrantLock lock = new ReentrantLock();
     
     private volatile BooleanSupplier activeGuard = () -> true;
+    
+    private transient java.lang.reflect.Type genericType;
+    public java.lang.reflect.Type getGenericType() { return genericType; }
+    public void setGenericType(java.lang.reflect.Type genericType) { this.genericType = genericType; }
 
     public ReactiveVar(T initial) { this.value = initial; }
 
     public T get() { return value; }
 
     public void set(T newValue) {
-    	lock.lock();
-    	try {
-        this.value = newValue;
+        List<Consumer<T>> snapshot = null;
         
-        if (!activeGuard.getAsBoolean()) {
-            return;
+        lock.lock();
+        try {
+            this.value = newValue;
+            
+            if (!activeGuard.getAsBoolean()) {
+                return;
+            }
+            
+            // Tomamos una instantánea rápida de los listeners y soltamos la memoria
+            snapshot = new ArrayList<>(listeners);
+        } finally {
+            lock.unlock(); // 🔓 Siempre liberar inmediatamente
         }
         
-        listeners.forEach(l -> l.accept(newValue));
-    	} finally {
-            lock.unlock(); // 🔓 Siempre liberar en finally
+        // 🚀 Disparamos los eventos libres de bloqueos
+        if (snapshot != null) {
+            snapshot.forEach(l -> l.accept(newValue));
         }
     }
     
@@ -41,11 +54,8 @@ public final class ReactiveVar<T> implements java.io.Serializable{
         listeners.clear();
     }
 
-    //public void onChange(Consumer<T> listener) { listeners.add(listener); }
-    
     public Runnable onChange(Consumer<T> listener) {
         listeners.add(listener);
         return () -> listeners.remove(listener);
     }
-    
 }
