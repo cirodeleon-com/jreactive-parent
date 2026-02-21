@@ -16,6 +16,8 @@ import jakarta.validation.Validator;
 @Configuration
 public class JReactiveAutoConfiguration {
 	
+	@Autowired ObjectMapper mapper;
+	
 	@PostConstruct
     public void installEngine() {
         JsoupComponentEngine.installAsDefault();

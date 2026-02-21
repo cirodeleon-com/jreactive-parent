@@ -75,7 +75,7 @@ public class JrxHttpApi {
             page.render();
         }
         
-        
+        page.render();
 
         // 1) localizar método
         var callables = collectCallables(page);
@@ -158,84 +158,72 @@ public class JrxHttpApi {
 
         // 5) EJECUCIÓN CRONOLÓGICA PERFECTA
         try {
-            boolean isStateless = owner.getClass().isAnnotationPresent(com.ciro.jreactive.annotations.Stateless.class);
+            boolean isStateless = page.getClass().isAnnotationPresent(com.ciro.jreactive.annotations.Stateless.class);
             Map<String, Object> oldState = new HashMap<>();
-
-            // A. Montar página si es necesario
-            if (owner instanceof HtmlComponent comp) {
-                if (comp._state() == ComponentState.UNMOUNTED) {
-                    comp._initIfNeeded();
-                    comp._mountRecursive();
-                }
-            }
 
             Map<String, ReactiveVar<?>> allBinds = new HashMap<>();
             collectBindingsRecursive(page, allBinds);
 
-            // B. EL PASADO: Hidratar desde la Mochila (Token)
+            // A. Hidratar desde la Mochila
             if (isStateless) {
                 String token = (String) body.get("stateToken");
                 if (token != null && !token.isBlank()) {
-                    oldState = JrxStateToken.decode(objectMapper, token);
+                    oldState = JrxStateToken.decode(token);
                     for (Map.Entry<String, Object> entryVar : oldState.entrySet()) {
                         @SuppressWarnings("unchecked")
                         ReactiveVar<Object> rv = (ReactiveVar<Object>) allBinds.get(entryVar.getKey());
-                        if (rv != null && rv.get() != null) {
-                            Object typedV = objectMapper.convertValue(entryVar.getValue(), objectMapper.constructType(rv.get().getClass()));
-                            rv.set(typedV);
+                        if (rv != null) {
+                            Object rawValue = entryVar.getValue();
+                            if (rawValue != null) {
+                                // Usa el tipo del valor actual o infiere por reflexión (básico)
+                                Class<?> targetType = (rv.get() != null) ? rv.get().getClass() : Object.class;
+                                rv.set(objectMapper.convertValue(rawValue, objectMapper.constructType(targetType)));
+                            } else {
+                                rv.set(null);
+                            }
                         }
                     }
                 }
             } else if (owner instanceof HtmlComponent comp) {
-                // Si es Stateful, tomar la foto del "Antes"
                 comp._captureStateSnapshot();
             }
 
-            // C. EL PRESENTE: Inyectar lo que el usuario acaba de enviar en el formulario
+            // B. Actualizar con los inputs que vienen en args
             autoUpdateStateFromArgs(owner, args);
-            if (owner instanceof HtmlComponent comp) {
-                comp._syncState(); // Obligar a los ReactiveVars a enterarse de los nuevos datos
-            }
+            if (owner instanceof HtmlComponent comp) comp._syncState();
 
-            // D. LA ACCIÓN: Ejecutar lógica de negocio (@Call)
+            // C. Ejecutar la acción
             Object result = target.invoke(owner, args);
+            if (owner instanceof HtmlComponent comp) comp._syncState();
 
-            // E. EL FUTURO: Sincronizar consecuencias (ej. lastMessage = "Debes aceptar...")
-            if (owner instanceof HtmlComponent comp) {
-                comp._syncState();
-            }
-
-            // F. PREPARAR RESPUESTA
+            // D. Armar respuesta
             Map<String, Object> envelope = new HashMap<>();
             envelope.put("ok", true);
             if (result != null) envelope.put("result", result);
 
             if (isStateless) {
-                // Recolectar nuevo estado completo
                 Map<String, Object> newState = new HashMap<>();
                 allBinds.forEach((k, v) -> newState.put(k, v.get()));
 
-                // Calcular Deltas manualmente comparando contra oldState
+                // 🔥 Comparación exacta de Deltas usando JsonNode
                 List<Map<String, Object>> batch = new java.util.ArrayList<>();
                 for (Map.Entry<String, Object> entryVar : newState.entrySet()) {
                     String k = entryVar.getKey();
                     Object v = entryVar.getValue();
-                    if (!Objects.equals(v, oldState.get(k))) {
+                    com.fasterxml.jackson.databind.JsonNode newTree = objectMapper.valueToTree(v);
+                    com.fasterxml.jackson.databind.JsonNode oldTree = objectMapper.valueToTree(oldState.get(k));
+
+                    if (!Objects.equals(newTree, oldTree)) {
                         batch.add(Map.of("k", k, "v", v));
                     }
                 }
                 
-                // Guardar la nueva mochila en el HTML
-                envelope.put("newStateToken", JrxStateToken.encode(objectMapper, newState));
+                envelope.put("newStateToken", JrxStateToken.encode(newState));
                 if (!batch.isEmpty()) envelope.put("batch", batch);
-
             } else {
-                // Flujo Stateful Normal
                 Call callAnn = target.getAnnotation(Call.class);
                 if (callAnn != null && callAnn.sync() && owner instanceof HtmlComponent comp) {
-                    if (this.persistenceEnabled) {
-                        pageResolver.persist(sessionId, path, page);
-                    }
+                    if (this.persistenceEnabled) pageResolver.persist(sessionId, path, page);
                 }
             }
 

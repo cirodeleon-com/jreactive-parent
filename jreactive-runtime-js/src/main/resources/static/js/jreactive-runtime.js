@@ -389,6 +389,17 @@ function applyBatch(batch) {
  * 1. CONEXIÓN HÍBRIDA: SOCKJS (Spring) / WEBSOCKET NATIVO (Standalone)
  * ========================================================== */
 function connectTransport(path) {
+	const metaState = document.querySelector('meta[name="jrx-state"]');
+	  if (metaState) {
+	      console.log(`⚡ Modo @Stateless detectado en ${path}. WebSocket desactivado.`);
+	      if (socket) {
+	         try { socket.close(1000, "stateless-mode"); } catch (_) {}
+	         socket = null;
+	      }
+	      return; 
+	  }	
+	
+	
   if (socket) {
      try { socket.close(); } catch (_) {}
      socket = null;
@@ -465,9 +476,9 @@ async function syncStateHttp() {
 }
 
 // Bucle de respaldo pasivo: Trae cambios de otros usuarios cada 5s si el WS está muerto
-setInterval(() => {
-    if (!socket || socket.readyState !== 1) syncStateHttp();
-}, 5000);
+//setInterval(() => {
+//    if (!socket || socket.readyState !== 1) syncStateHttp();
+//}, 5000);
 
 
 
@@ -1305,7 +1316,8 @@ async function sendSet(k, v) {
     socket.send(JSON.stringify({ k, v }));
     return;
   }
-  
+  return;
+  /*
   inFlightUpdates.add(k);
 
   // Fallback a HTTP si el socket está caído (mantenemos tu cola HTTP por seguridad)
@@ -1331,6 +1343,7 @@ async function sendSet(k, v) {
         setTimeout(() => inFlightUpdates.delete(k), 400);
       }
   });
+  */
 }
 
 
@@ -1758,20 +1771,21 @@ function setupEventBindings() {
       args.push(await buildValue(p, el));
     }
 
-    // D) La tarea de red encapsulada
 	// D) La tarea de red encapsulada
 	    const netTask = async () => {
 	      let ok = true, code = null, error = null, payload = null;
 	      try {
-	        // 🔥 1. Recolectar el Token de Estado (Si es Stateless)
 	        const metaState = document.querySelector('meta[name="jrx-state"]');
 	        const stateToken = metaState ? metaState.getAttribute('content') : null;
 
 	        const res = await fetch('/call/' + encodeURIComponent(qualified), {
 	          method: 'POST',
-	          headers: { 'X-Requested-With': 'JReactive', 'Content-Type': 'application/json' },
-	          // 🔥 2. Enviar el Token
-	          body: JSON.stringify({ args, stateToken })
+	          headers: { 
+	              'X-Requested-With': 'JReactive', 
+	              'Content-Type': 'application/json',
+	              'X-Jrx-Path': window.location.pathname // Fix: Ruta real
+	          },
+	          body: JSON.stringify({ args, stateToken }) // Enviamos la mochila y los argumentos
 	        });
 
 	        const text = await res.text();
@@ -1785,30 +1799,27 @@ function setupEventBindings() {
 	          if (!ok && 'error' in payload) error = payload.error;
 	          if ('code' in payload) code = payload.code;
 
-	          // 🔥 3. Actualizar la Mochila (Token)
+	          // Si nos devuelven una mochila nueva, la guardamos
 	          if (payload.newStateToken && metaState) {
 	              metaState.setAttribute('content', payload.newStateToken);
 	          }
-	          
-	          // 🔥 4. Aplicar Deltas directos al DOM sin WebSocket
 	          if (payload.batch && Array.isArray(payload.batch)) {
 	              applyBatch(payload.batch);
 	          }
 	        }
-
 	      } catch (e) {
 	        ok = false;
 	        error = e?.message || String(e);
 	      } finally {
 	        stopLoading();
+	        // Solo refrescamos el HTML si NO estamos en @Stateless (no hay mochila)
 	        if (!socket || socket.readyState !== 1) {
-	           // await syncStateHttp(); (Puedes quitar esto temporalmente si causa ruido con el Stateless)
+	            const metaState = document.querySelector('meta[name="jrx-state"]');
+	            if (!metaState) await syncStateHttp();
 	        }
 	      }
 	      
-	      // Rollback y feedback visual... (el resto queda igual)
 	      if (!ok && rollbackData) {
-	         console.warn("🔄 [JReactive] Petición fallida. Haciendo rollback de la UI Optimista...");
 	         for (const [k, v] of Object.entries(rollbackData)) {
 	            state[k] = v;          
 	            updateDomForKey(k, v); 
@@ -1816,15 +1827,10 @@ function setupEventBindings() {
 	      }
 
 	      const detail = { element: el, qualified, args, ok, code, error, payload };
-	      if (!ok && code === 'VALIDATION' && payload?.violations) {
-	        applyValidationErrors(payload.violations, el);
-	      }
+	      if (!ok && code === 'VALIDATION' && payload?.violations) applyValidationErrors(payload.violations, el);
 	      window.dispatchEvent(new CustomEvent('jrx:call', { detail }));
 	      if (ok) window.dispatchEvent(new CustomEvent('jrx:call:success', { detail }));
-	      else {
-	        window.dispatchEvent(new CustomEvent('jrx:call:error', { detail }));
-	        console.error('[JReactive @Call error]', detail);
-	      }
+	      else window.dispatchEvent(new CustomEvent('jrx:call:error', { detail }));
 	    };
 	
 	
@@ -2676,8 +2682,18 @@ function resolvePropsLogic(html, context) {
 
 function syncInitialState() {
     if (window.__JRX_STATE__) {
-        Object.assign(state, window.__JRX_STATE__);
-        window.__JRX_STATE__ = null; // Lo consumimos para no repetir
+        const initial = window.__JRX_STATE__;
+        const rootId = window.__JRX_ROOT_ID__; 
+        window.__JRX_STATE__ = null; 
+        window.__JRX_ROOT_ID__ = null;
+        
+        Object.assign(state, initial);
+        
+        if (rootId) {
+            applyStateForKey(rootId, {}); // Despierta el @Client
+        } else {
+            for (const [k, v] of Object.entries(initial)) applyStateForKey(k, v);
+        }
     }
 }
 

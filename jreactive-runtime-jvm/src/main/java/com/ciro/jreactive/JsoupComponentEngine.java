@@ -4,6 +4,8 @@ import org.jsoup.Jsoup;
 import org.jsoup.nodes.*;
 import org.jsoup.parser.Parser;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+
 import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -16,6 +18,8 @@ public class JsoupComponentEngine extends AbstractComponentEngine {
 	private static final Pattern HTML5_VOID_FIX = Pattern.compile(
 			"<(area|base|br|col|embed|hr|img|input|link|meta|param|source|track|wbr)([^>]*?)(?<!/)>",
 			Pattern.CASE_INSENSITIVE);
+	
+	private static volatile ObjectMapper globalMapper;
 
 	public static void installAsDefault() {
 		ComponentEngine.setStrategy(new JsoupComponentEngine());
@@ -71,16 +75,19 @@ public class JsoupComponentEngine extends AbstractComponentEngine {
 	            String shellHtml = resources + "<div id=\"" + id + "\" data-jrx-client=\"" + name + "\"></div>";
 
 	            // 🔥 FIX 1: ¡Inyectar la mochila de estado (Token) incluso en el cascarón de Client!
+	         // 🔥 Inyectar mochila, estado inicial e ID del componente
 	            if (ctx.getClass().isAnnotationPresent(com.ciro.jreactive.annotations.Stateless.class)) {
 	                try {
-	                    com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
-	                    mapper.findAndRegisterModules();
-	                    Map<String, Object> initialState = new HashMap<>();
-	                    ctx.getRawBindings().forEach((k, v) -> initialState.put(k, v.get()));
-	                    String token = JrxStateToken.encode(mapper, initialState);
 	                    
-	                    // Prependemos el meta tag al cascarón
-	                    shellHtml = "<meta name=\"jrx-state\" content=\"" + token + "\">\n" + shellHtml;
+	                    Map<String, Object> tokenState = new HashMap<>();
+	                    all.forEach((k, v) -> tokenState.put(k, v.get()));
+	                    
+	                    String token = JrxStateToken.encode(tokenState);
+	                    String rawJson = JrxStateToken.toJson(tokenState);
+	                    
+	                    shellHtml = "<meta name=\"jrx-state\" content=\"" + token + "\">\n" +
+	                                "<script>window.__JRX_STATE__ = " + rawJson + "; window.__JRX_ROOT_ID__ = '" + id + "';</script>\n" +
+	                                shellHtml;
 	                } catch (Exception e) {
 	                    e.printStackTrace();
 	                }
@@ -136,18 +143,15 @@ public class JsoupComponentEngine extends AbstractComponentEngine {
 	
 	if (ctx.getClass().isAnnotationPresent(com.ciro.jreactive.annotations.Stateless.class)) {
         try {
-            com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
-            mapper.findAndRegisterModules();
             
-            Map<String, Object> initialState = new HashMap<>();
-            all.forEach((k, v) -> initialState.put(k, v.get()));
+            Map<String, Object> tokenState = new HashMap<>();
+            all.forEach((k, v) -> tokenState.put(k, v.get()));
             
-            String token = JrxStateToken.encode(mapper, initialState);
-            String rawJson = mapper.writeValueAsString(initialState);
+            String token = JrxStateToken.encode(tokenState);
+            String rawJson = JrxStateToken.toJson(tokenState);
             
-            // Inyectamos la mochila cifrada Y el estado inicial para el JS
             html = "<meta name=\"jrx-state\" content=\"" + token + "\">\n" +
-                   "<script>window.__JRX_STATE__ = " + rawJson + ";</script>\n" + 
+                   "<script>window.__JRX_STATE__ = " + rawJson + "; window.__JRX_ROOT_ID__ = null;</script>\n" + 
                    html;
         } catch (Exception e) {
             e.printStackTrace();
