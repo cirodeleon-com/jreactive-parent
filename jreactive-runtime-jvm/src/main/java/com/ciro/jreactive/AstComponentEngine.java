@@ -143,19 +143,19 @@ public class AstComponentEngine extends AbstractComponentEngine {
     ) {
         if (node == null) return;
 
-        // If/EacH: blueprint 100% (no SSR evaluation)
+        // Component
+        if (node instanceof ComponentNode comp) {
+            renderComponent(comp, out, ctx, ns, s, aliases);
+            return;
+        }
+
+        // ✅ FIX: If/Each deben renderizarse como BLUEPRINT con namespace (igual que Jsoup)
         if (node instanceof IfNode ifNode) {
             renderIfBlueprint(ifNode, out, ctx, ns, s, aliases);
             return;
         }
         if (node instanceof EachNode eachNode) {
             renderEachBlueprint(eachNode, out, ctx, ns, s, aliases);
-            return;
-        }
-
-        // Component: render “servidor” (crea instancia, slot blueprint, CSR/SSR)
-        if (node instanceof com.ciro.jreactive.ast.ComponentNode comp) {
-            renderComponent(comp, out, ctx, ns, s, aliases);
             return;
         }
 
@@ -171,7 +171,7 @@ public class AstComponentEngine extends AbstractComponentEngine {
             return;
         }
 
-        // Fallback: usar su render normal
+        // Fallback
         node.render(out, tplCtx);
     }
 
@@ -196,7 +196,7 @@ public class AstComponentEngine extends AbstractComponentEngine {
 
                 // Render slot nodes con el mismo ctx y ns (igual que Jsoup processNodeTree)
                 for (JrxNode sn : slotNodes) {
-                    renderNode(sn, out, ctx, tplCtx, ns, s, aliases, false);
+                	renderNode(sn, out, ctx, tplCtx, ns, s, aliases, inTemplateBlueprint);
                 }
             }
             return;
@@ -281,8 +281,10 @@ public class AstComponentEngine extends AbstractComponentEngine {
 
         out.append(">");
 
+        boolean childBlueprint = inTemplateBlueprint || "template".equalsIgnoreCase(el.tagName);
+
         for (JrxNode child : el.children) {
-            renderNode(child, out, ctx, tplCtx, ns, s, aliases, inTemplateBlueprint);
+            renderNode(child, out, ctx, tplCtx, ns, s, aliases, childBlueprint);
         }
 
         out.append("</").append(el.tagName).append(">");
@@ -508,58 +510,140 @@ public class AstComponentEngine extends AbstractComponentEngine {
         }
     }
 
-    // ------------------------------------------------------------
-    // Blueprint serializer (preserva ":" y {{...}})
-    // ------------------------------------------------------------
-    private String serializeBlueprintNode(JrxNode node, HtmlComponent ctx, String ns, Set<String> aliases) {
-        if (node == null) return "";
+ // ------------------------------------------------------------
+ // Blueprint serializer (para contenido dentro de <template>)
+ //  - Expande <slot/> aunque esté dentro de if/each
+ //  - Renderiza ComponentNode (JForm/JInput/JButton/...) dentro de template
+//     porque el runtime NO los expande al clonar templates
+ //  - Resuelve {{...}} en attrs cuando sea posible (clave para @click="{{onRowClick}}")
+ // ------------------------------------------------------------
+ private String serializeBlueprintNode(JrxNode node, HtmlComponent ctx, String ns, Set<String> aliases) {
+     if (node == null) return "";
 
-        if (node instanceof IfNode ifNode) {
-            StringBuilder sb = new StringBuilder();
-            renderIfBlueprint(ifNode, sb, ctx, ns, SESSION.get(), aliases);
-            return sb.toString();
-        }
-        if (node instanceof EachNode eachNode) {
-            StringBuilder sb = new StringBuilder();
-            renderEachBlueprint(eachNode, sb, ctx, ns, SESSION.get(), aliases);
-            return sb.toString();
-        }
-        if (node instanceof com.ciro.jreactive.ast.TextNode txt) {
-            String t = txt.text == null ? "" : txt.text;
-            return namespaceString(t, ns, ctx, aliases);
-        }
-        if (node instanceof ElementNode el) {
-            StringBuilder sb = new StringBuilder();
-            sb.append("<").append(el.tagName);
+     // Control blocks dentro de template
+     if (node instanceof IfNode ifNode) {
+         StringBuilder sb = new StringBuilder();
+         renderIfBlueprint(ifNode, sb, ctx, ns, SESSION.get(), aliases);
+         return sb.toString();
+     }
+     if (node instanceof EachNode eachNode) {
+         StringBuilder sb = new StringBuilder();
+         renderEachBlueprint(eachNode, sb, ctx, ns, SESSION.get(), aliases);
+         return sb.toString();
+     }
 
-            for (Map.Entry<String, String> a : el.attributes.entrySet()) {
-                String k = a.getKey();
-                String v = a.getValue() == null ? "" : a.getValue();
-                v = namespaceString(v, ns, ctx, aliases);
+     // 🔥 IMPORTANTE: si hay componentes dentro del template (modal, forms, ui),
+     // hay que renderizarlos en SSR, porque el runtime al clonar <template>
+     // NO ejecuta expandComponentsAsync, solo hidrata eventos.
+     if (node instanceof com.ciro.jreactive.ast.ComponentNode comp) {
+         StringBuilder sb = new StringBuilder();
+         renderComponent(comp, sb, ctx, ns, SESSION.get(), aliases);
+         return sb.toString();
+     }
 
-                // En blueprint: PRESERVAMOS ':' tal cual
-                sb.append(" ").append(k);
-                if (!v.isEmpty()) sb.append("=\"").append(escapeAttr(v)).append("\"");
-            }
+     // Text
+     if (node instanceof com.ciro.jreactive.ast.TextNode txt) {
+         String t = (txt.text == null) ? "" : txt.text;
+         return namespaceString(t, ns, ctx, aliases);
+     }
 
-            if (el.isSelfClosing) {
-                sb.append("/>");
-                return sb.toString();
-            }
+     // Element
+     if (node instanceof ElementNode el) {
 
-            sb.append(">");
-            for (JrxNode c : el.children) {
-                sb.append(serializeBlueprintNode(c, ctx, ns, aliases));
-            }
-            sb.append("</").append(el.tagName).append(">");
-            return sb.toString();
-        }
+         // 🔥 Slot dentro de template (ej: JTable tiene <slot/> dentro de {{#each}})
+         if ("slot".equalsIgnoreCase(el.tagName)) {
+             String slotHtml = ctx._getSlotHtml();
+             if (slotHtml != null && !slotHtml.isBlank()) {
+                 try {
+                     List<JrxNode> slotNodes = JrxParser.parse(slotHtml);
+                     StringBuilder sb = new StringBuilder();
+                     for (JrxNode sn : slotNodes) {
+                         sb.append(serializeBlueprintNode(sn, ctx, ns, aliases));
+                     }
+                     return sb.toString();
+                 } catch (Exception ex) {
+                     // fallback: mete el HTML crudo
+                     return slotHtml;
+                 }
+             }
+             // Si no hay slotHtml, renderiza children del <slot> (por si acaso)
+             StringBuilder sb = new StringBuilder();
+             for (JrxNode c : el.children) {
+                 sb.append(serializeBlueprintNode(c, ctx, ns, aliases));
+             }
+             return sb.toString();
+         }
 
-        // fallback
-        StringBuilder sb = new StringBuilder();
-        node.renderRaw(sb);
-        return sb.toString();
-    }
+         StringBuilder sb = new StringBuilder();
+         sb.append("<").append(el.tagName);
+
+         for (Map.Entry<String, String> a : el.attributes.entrySet()) {
+             String k = a.getKey();
+             String v = (a.getValue() == null) ? "" : a.getValue();
+
+             // name="field" debe namespaciarse aunque NO tenga {{...}}
+             if ("name".equals(k) && !v.contains("{{")) {
+                 String root = v.split("\\.")[0];
+                 if (ctx.getRawBindings().containsKey(root) && ns != null && !ns.isEmpty() && !v.startsWith(ns)) {
+                     v = ns + v;
+                 }
+             }
+
+             // data-if/data-else/data-each manuales (si aparecen dentro del slot/template)
+             if ("data-if".equals(k) || "data-else".equals(k)) {
+                 v = namespaceExpression(v, ns, ctx);
+             } else if ("data-each".equals(k)) {
+                 String[] parts = v.split(":");
+                 if (parts.length > 0) {
+                     String listExpr = namespaceExpression(parts[0], ns, ctx);
+                     v = listExpr + (parts.length > 1 ? ":" + parts[1] : "");
+                 }
+             }
+
+             // Namespace + intento de resolución estática de {{...}} (CLAVE para @click="{{onRowClick}}")
+             if (v.contains("{{")) {
+                 v = namespaceString(v, ns, ctx, aliases);
+
+                 // Intentar resolver TODO si ya está disponible en bindings
+                 String maybe = resolveAllMustachesIfPossible(v, ctx, ns);
+                 if (maybe != null) v = maybe;
+             }
+
+             // Limpieza de props estilo :required, :disabled dentro de template
+             // (en template no queremos attrs raros que “ensucien” el HTML)
+             if (k.startsWith(":")) {
+                 k = k.substring(1);
+             }
+
+             // Reescritura de eventos dentro de template (solo si ya NO tiene {{}})
+             if ((k.startsWith("@") || "data-call".equals(k)) && (v != null && !v.contains("{{"))) {
+                 v = rewriteEvent(v, ns, ctx);
+             }
+
+             sb.append(" ").append(k);
+             if (v != null && !v.isEmpty()) {
+                 sb.append("=\"").append(escapeAttr(v)).append("\"");
+             }
+         }
+
+         if (el.isSelfClosing) {
+             sb.append("/>");
+             return sb.toString();
+         }
+
+         sb.append(">");
+         for (JrxNode c : el.children) {
+             sb.append(serializeBlueprintNode(c, ctx, ns, aliases));
+         }
+         sb.append("</").append(el.tagName).append(">");
+         return sb.toString();
+     }
+
+     // fallback
+     StringBuilder sb = new StringBuilder();
+     node.renderRaw(sb);
+     return sb.toString();
+ }
 
     // ------------------------------------------------------------
     // Namespacing helpers
