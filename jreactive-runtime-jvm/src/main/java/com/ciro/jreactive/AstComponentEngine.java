@@ -80,22 +80,7 @@ public class AstComponentEngine extends AbstractComponentEngine {
         // =============================
         // CSR (@Client)
         // =============================
-        if (ctx.getClass().isAnnotationPresent(Client.class)) {
-            String id = ctx.getId();
-            String name = ctx.getClass().getSimpleName();
-
-            String html = resources + "<div id=\"" + id + "\" data-jrx-client=\"" + name + "\"></div>";
-
-            // Token stateless incluso en shell client
-            if (ctx.getClass().isAnnotationPresent(Stateless.class)) {
-                html = injectStatelessToken(html, s.allBindings, id);
-            }
-
-            collectBindingsRecursive(ctx, s.allBindings);
-            disposeUnused(pool);
-            ctx._mountRecursive();
-            return new ComponentEngine.Rendered(html, s.allBindings);
-        }
+        
 
         // =============================
         // SSR
@@ -116,11 +101,33 @@ public class AstComponentEngine extends AbstractComponentEngine {
         }
 
         String html = out.toString();
+        
+        if (ctx.getClass().isAnnotationPresent(Client.class)) {
+            String id = ctx.getId();
+            String name = ctx.getClass().getSimpleName();
+
+            html = resources + "<div id=\"" + id + "\" data-jrx-client=\"" + name + "\"></div>";
+            /*
+            // Token stateless incluso en shell client
+            if (ctx.getClass().isAnnotationPresent(Stateless.class)) {
+                html = injectStatelessToken(html, s.allBindings, id);
+            }
+
+            collectBindingsRecursive(ctx, s.allBindings);
+            disposeUnused(pool);
+            ctx._mountRecursive();
+            return new ComponentEngine.Rendered(html, s.allBindings);
+            */
+        }
 
         // Token @Stateless en SSR
         if (ctx.getClass().isAnnotationPresent(Stateless.class)) {
             html = injectStatelessToken(html, s.allBindings, null);
         }
+        
+        
+        
+        
 
         disposeUnused(pool);
         ctx._mountRecursive();
@@ -321,6 +328,8 @@ public class AstComponentEngine extends AbstractComponentEngine {
         String currentVal = namespacedTpl;
         Matcher m = VAR_PATTERN.matcher(namespacedTpl);
         boolean fullyResolved = true;
+        
+        RenderSession session = SESSION.get();
 
         while (m.find()) {
             String token = m.group(0);
@@ -364,7 +373,19 @@ public class AstComponentEngine extends AbstractComponentEngine {
         String className = comp.tagName;
 
         // attrs tal cual (incluye :props para binding server-side)
-        Map<String, String> attrs = new LinkedHashMap<>(comp.attributes);
+        Map<String, String> attrs = new LinkedHashMap<>();
+        for (Map.Entry<String, String> entry : comp.attributes.entrySet()) {
+            String k = entry.getKey();
+            String v = entry.getValue() == null ? "" : entry.getValue();
+
+            // Resolver {{var}} en atributos crudos antes de dárselos al componente
+            if (!k.startsWith(":") && !k.startsWith("@") && !k.equals("data-call") && v.contains("{{")) {
+                v = namespaceString(v, ns, parent, aliases);
+                String resolved = resolveAllMustachesIfPossible(v, parent, ns);
+                if (resolved != null) v = resolved;
+            }
+            attrs.put(k, v);
+        }
 
         // 1) Slot blueprint: NO renderizar (para no instanciar componentes del slot “en el padre”)
         //   - aplicar el namespaceAttributesRecursive “guardado” (caso crítico de componentes en slots)
@@ -738,6 +759,8 @@ public class AstComponentEngine extends AbstractComponentEngine {
         String current = templ;
         Matcher m = VAR_PATTERN.matcher(templ);
         boolean changed = false;
+        
+        RenderSession session = SESSION.get();
 
         while (m.find()) {
             String token = m.group(0);

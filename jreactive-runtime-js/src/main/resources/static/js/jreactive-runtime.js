@@ -389,7 +389,9 @@ function applyBatch(batch) {
  * 1. CONEXIÓN HÍBRIDA: SOCKJS (Spring) / WEBSOCKET NATIVO (Standalone)
  * ========================================================== */
 function connectTransport(path) {
+	
 	const metaState = document.querySelector('meta[name="jrx-state"]');
+	
 	  if (metaState) {
 	      console.log(`⚡ Modo @Stateless detectado en ${path}. WebSocket desactivado.`);
 	      if (socket) {
@@ -2034,6 +2036,27 @@ function updateDomForKey(k, v) {
 function applyStateForKey(k, v) {
   // 1. Actualizar memoria global
   state[k] = v;
+  
+  // actualizamos la URL silenciosamente si la variable tiene un equivalente en el Query String.
+    // (Este es un enfoque optimista: si escribes "busqueda", busca si existe ?busqueda= en la URL o lo agrega)
+	// 🔥 MAGIA URL (Controlada por el Diccionario de Java)
+	  if (window.__JRX_URL_PARAMS__) {
+	      const url = new URL(window.location);
+	      const shortKey = k.includes('.') ? k.split('.').at(-1) : k;
+	      
+	      // 🛡️ Solo actualiza la URL si Java marcó explícitamente esta variable con @UrlParam
+	      const urlParamName = window.__JRX_URL_PARAMS__[shortKey];
+	      
+	      if (urlParamName) {
+	          if (v !== undefined && v !== null && v !== '') {
+	              url.searchParams.set(urlParamName, v);
+	          } else {
+	              url.searchParams.delete(urlParamName);
+	          }
+	          window.history.replaceState({}, '', url);
+	      }
+	  }
+	  // 🔥 FIN MAGIA URL
   
   // Propagación de Store
   const parts = k.split('.');

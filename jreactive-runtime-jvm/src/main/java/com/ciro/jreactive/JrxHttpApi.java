@@ -1,7 +1,6 @@
 package com.ciro.jreactive;
 
 import com.ciro.jreactive.annotations.Call;
-import com.ciro.jreactive.annotations.StatefulRam;
 import com.ciro.jreactive.router.Layout;
 import com.ciro.jreactive.router.Param;
 import com.fasterxml.jackson.databind.JavaType;
@@ -35,12 +34,19 @@ public class JrxHttpApi {
     }
 
     /** Render HTML del componente asociado a sessionId + path */
-    public String render(String sessionId, String path, boolean renderLayout) {
-        HtmlComponent page = pageResolver.getPage(sessionId, path);
+    public String render(String sessionId, String path, boolean renderLayout, Map<String, String> queryParams) {
+        HtmlComponent page = pageResolver.getPage(sessionId, path, queryParams);
         
-        // 1. Si es petición parcial (AJAX/SPA), devolvemos solo la página
+        // 🔥 NUEVO: Extraemos el diccionario de @UrlParam del componente actual
+        String urlParamsJson = "{}";
+        try {
+            urlParamsJson = objectMapper.writeValueAsString(page._getUrlBindings());
+        } catch (Exception ignored) {}
+        String script = "<script>window.__JRX_URL_PARAMS__ = " + urlParamsJson + ";</script>";
+
+        // 1. Si es petición parcial (AJAX/SPA), devolvemos el script + la página
         if (!renderLayout) {
-            return page.render();
+            return script + "\n" + page.render();
         }
 
         // 2. Si es carga completa, buscamos si tiene @Layout
@@ -49,30 +55,35 @@ public class JrxHttpApi {
         if (layoutAnn != null) {
             try {
                 // Creamos una instancia fresca del Layout
-                // (Nota: En una versión futura podríamos cachearlo o inyectarlo con Spring)
                 HtmlComponent layout = layoutAnn.value().getDeclaredConstructor().newInstance();
                 
-                // 🔥 Inyección: Renderizamos la página y se la pasamos al layout como slot
+                // Inyección: Renderizamos la página y se la pasamos al layout como slot
                 layout._setSlotHtml(page.render());
                 
-                // Renderizamos el layout (que ahora contiene la página adentro)
-                return layout.render();
+                // Renderizamos el layout
+                String fullHtml = layout.render();
+                
+                // 🔥 Inyección quirúrgica: Lo metemos DENTRO del <head> para no romper el <!DOCTYPE>
+                if (fullHtml.contains("</head>")) {
+                    return fullHtml.replaceFirst("</head>", script + "\n</head>");
+                }
+                return script + "\n" + fullHtml;
                 
             } catch (Exception e) {
                 e.printStackTrace();
                 // Si falla el layout, devolvemos la página "cruda" como fallback
-                return page.render();
+                return script + "\n" + page.render();
             }
         }
 
-        // 3. Si no tiene layout, se devuelve cruda (útil para popups o páginas simples)
-        return page.render();
+        // 3. Si no tiene layout, se devuelve cruda con el script arriba
+        return script + "\n" + page.render();
     }
 
     /** Ejecuta un @Call (qualified = "CompId.metodo" o "metodo" en raíz) */
-    public String call(String sessionId, String path, String qualified, Map<String, Object> body) {
+    public String call(String sessionId, String path, String qualified, Map<String, Object> body, Map<String, String> queryParams) {
 
-        HtmlComponent page = pageResolver.getPage(sessionId, path);
+        HtmlComponent page = pageResolver.getPage(sessionId, path, queryParams);
         
         if (page._state() == ComponentState.UNMOUNTED) {
             System.out.println("♻️ [JrxHttpApi] Página no montada detectada. Hidratando árbol para: " + qualified);

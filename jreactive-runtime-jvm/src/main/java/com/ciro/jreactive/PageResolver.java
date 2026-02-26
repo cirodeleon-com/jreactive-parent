@@ -14,8 +14,12 @@ public class PageResolver {
         this.registry = registry;
         this.store = store;
     }
-
+    
     public HtmlComponent getPage(String sessionId, String path) {
+        return getPage(sessionId, path, null);
+    }
+
+    public HtmlComponent getPage(String sessionId, String path, Map<String, String> queryParams) {
         // 1. Intentar obtener del store (RAM, Redis, etc.)
         HtmlComponent comp = store.get(sessionId, path);
         
@@ -36,6 +40,10 @@ public class PageResolver {
             if (!comp.getClass().isAnnotationPresent(Stateless.class)) {
                 store.put(sessionId, path, comp);
             }
+        }
+        
+        if (queryParams != null && !queryParams.isEmpty()) {
+            comp._injectQueryParams(queryParams);
         }
         return comp;
     }
@@ -62,7 +70,7 @@ public class PageResolver {
     }
 
     public HtmlComponent getHomePageInstance(String sessionId) {
-        return getPage(sessionId, "/");
+        return getPage(sessionId, "/",null);
     }
 
     /**

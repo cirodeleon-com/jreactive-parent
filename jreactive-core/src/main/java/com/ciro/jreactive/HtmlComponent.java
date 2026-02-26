@@ -583,6 +583,55 @@ private final  Map<String, String> _childRefAlias = new HashMap<>();
             }
         }
     }
+    
+ // Añadir en HtmlComponent.java
+    void _injectQueryParams(Map<String, String> queryParams) {
+        if (queryParams == null || queryParams.isEmpty()) return;
+
+        var fields = new java.util.ArrayList<java.lang.reflect.Field>();
+        Class<?> c = getClass();
+        while (c != null && c != Object.class) {
+            for (var f : c.getDeclaredFields()) fields.add(f);
+            c = c.getSuperclass();
+        }
+        
+        for (var f : fields) {
+            var ann = f.getAnnotation(com.ciro.jreactive.router.UrlParam.class);
+            if (ann == null) continue;
+            
+            // Si el valor está vacío, usa el nombre de la variable
+            String name = ann.value().isBlank() ? f.getName() : ann.value();
+            if (!queryParams.containsKey(name)) continue;
+            
+            String raw = queryParams.get(name);
+            try {
+                f.setAccessible(true);
+                Class<?> t = f.getType();
+                Object cur = f.get(this);
+                Object val = convertParam(raw, t, cur);
+                f.set(this, val);
+            } catch (Exception e) {
+                throw new RuntimeException("Error inyectando @UrlParam: " + name, e);
+            }
+        }
+    }
+    
+ // Añadir en HtmlComponent.java
+    public java.util.Map<String, String> _getUrlBindings() {
+        java.util.Map<String, String> map = new java.util.HashMap<>();
+        Class<?> c = getClass();
+        while (c != null && c != Object.class) {
+            for (java.lang.reflect.Field f : c.getDeclaredFields()) {
+                com.ciro.jreactive.router.UrlParam ann = f.getAnnotation(com.ciro.jreactive.router.UrlParam.class);
+                if (ann != null) {
+                    String paramName = ann.value().isBlank() ? f.getName() : ann.value();
+                    map.put(f.getName(), paramName); 
+                }
+            }
+            c = c.getSuperclass();
+        }
+        return map;
+    }
 
     private static Object convertParam(String raw, Class<?> target, Object current) {
         if (target == String.class) return raw;

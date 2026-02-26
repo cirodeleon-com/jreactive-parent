@@ -6,6 +6,7 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.HashMap;
 import java.util.Map;
 
 @RestController
@@ -38,9 +39,14 @@ public class PageController {
 
         // SPA: X-Partial == "1" => renderLayout=false
         boolean renderLayout = !"1".equals(partial);
+        
+        Map<String, String> queryParams = new HashMap<>();
+        req.getParameterMap().forEach((k, v) -> {
+            if (v != null && v.length > 0) queryParams.put(k, v[0]);
+        });
 
         // ✅ serializamos también render por si hay rutas que disparan timers/state a la par de eventos
-        String html = queue.run(sessionId, path, () -> api.render(sessionId, path, renderLayout));
+        String html = queue.run(sessionId, path, () -> api.render(sessionId, path, renderLayout, queryParams));
 
         return ResponseEntity.ok()
                 .header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
@@ -62,9 +68,14 @@ public class PageController {
 
         String sessionId = req.getSession(true).getId();
         String path = extractPath(req); // ✅ helper robusto
+        
+        Map<String, String> queryParams = new HashMap<>();
+        req.getParameterMap().forEach((k, v) -> {
+            if (v != null && v.length > 0) queryParams.put(k, v[0]);
+        });
 
         // ✅ Cola por (sessionId+path): orden garantizado entre set/call/call
-        return queue.run(sessionId, path, () -> api.call(sessionId, path, qualified, body));
+        return queue.run(sessionId, path, () -> api.call(sessionId, path, qualified, body, queryParams));
     }
 
     private String extractPath(HttpServletRequest req) {

@@ -75,8 +75,13 @@ public final class CallEndpoint implements HttpHandler {
 
                 // Mantén lastPath actualizado
                 sessions.setLastPath(sid, path);
+                
+                Map<String, String> queryParams = new java.util.HashMap<>();
+                ex.getQueryParameters().forEach((k, v) -> {
+                    if (v != null && !v.isEmpty()) queryParams.put(k, v.getFirst());
+                });
 
-                String json = api.call(sid, path, callName, body);
+                String json = api.call(sid, path, callName, body, queryParams);
 
                 ex.setStatusCode(200);
                 ex.getResponseHeaders().put(Headers.CONTENT_TYPE, "application/json; charset=utf-8");

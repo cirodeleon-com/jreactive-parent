@@ -85,6 +85,8 @@ public class JsoupComponentEngine extends AbstractComponentEngine {
 	                    String token = JrxStateToken.encode(tokenState);
 	                    String rawJson = JrxStateToken.toJson(tokenState);
 	                    
+	                    
+	                    
 	                    shellHtml = "<meta name=\"jrx-state\" content=\"" + token + "\">\n" +
 	                                "<script>window.__JRX_STATE__ = " + rawJson + "; window.__JRX_ROOT_ID__ = '" + id + "';</script>\n" +
 	                                shellHtml;
@@ -149,6 +151,8 @@ public class JsoupComponentEngine extends AbstractComponentEngine {
             
             String token = JrxStateToken.encode(tokenState);
             String rawJson = JrxStateToken.toJson(tokenState);
+            
+            
             
             html = "<meta name=\"jrx-state\" content=\"" + token + "\">\n" +
                    "<script>window.__JRX_STATE__ = " + rawJson + "; window.__JRX_ROOT_ID__ = null;</script>\n" + 
