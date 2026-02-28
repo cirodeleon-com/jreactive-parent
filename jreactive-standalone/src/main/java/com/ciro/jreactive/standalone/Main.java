@@ -1,7 +1,7 @@
 package com.ciro.jreactive.standalone;
 
 import com.ciro.jreactive.HtmlComponent;
-import com.ciro.jreactive.JsoupComponentEngine;
+import com.ciro.jreactive.AstComponentEngine;
 import com.ciro.jreactive.State;
 import com.ciro.jreactive.annotations.Call;
 import com.ciro.jreactive.annotations.Client;
@@ -11,7 +11,7 @@ public class Main {
 
     public static void main(String[] args) {
     	
-    	JsoupComponentEngine.installAsDefault();
+    	AstComponentEngine.installAsDefault();
 
         System.out.println("🚀 Iniciando servidor JReactive Standalone...");
     	

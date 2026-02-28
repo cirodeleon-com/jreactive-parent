@@ -18,11 +18,11 @@ final class ComponentEngine {
     static Rendered render(HtmlComponent ctx) {
         Strategy s = strategy;
         if (s == null) {
-            throw new IllegalStateException(
-                "ComponentEngine strategy not set. " +
-                "You must call ComponentEngine.setStrategy(new JsoupComponentEngine()) " +
-                "from jreactive-runtime-jvm (or your bootstrap) before rendering."
-            );
+        	throw new IllegalStateException(
+                    "ComponentEngine strategy not set. " +
+                    "You must call ComponentEngine.setStrategy(new AstComponentEngine()) " + // <-- MENSAJE ACTUALIZADO
+                    "from jreactive-runtime-jvm (or your bootstrap) before rendering."
+                );
         }
         return s.render(ctx);
     }

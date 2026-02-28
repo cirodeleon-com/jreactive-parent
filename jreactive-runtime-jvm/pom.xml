@@ -55,12 +55,14 @@
       <version>8.10.1</version>
     </dependency>
 
-    <!-- HTML engine (JVM) -->
+    <!-- HTML engine (JVM) 
     <dependency>
       <groupId>org.jsoup</groupId>
       <artifactId>jsoup</artifactId>
       <version>1.17.2</version>
     </dependency>
+    
+    -->
 
     <!-- Logging API -->
     <dependency>

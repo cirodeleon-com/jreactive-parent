@@ -19,7 +19,6 @@ import java.util.Map;
 public class JReactiveApplication {
 
     public static void main(String[] args) {
-    	//JsoupComponentEngine.installAsDefault();
     	
         SpringApplication.run(JReactiveApplication.class, args);
     }
