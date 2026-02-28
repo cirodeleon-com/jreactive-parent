@@ -23,6 +23,8 @@ public class AstComponentEngine extends AbstractComponentEngine {
     // Igual que Jsoup engine
     private static final Pattern VAR_PATTERN   = Pattern.compile("\\{\\{\\s*([\\w#.-]+)\\s*}}");
     private static final Pattern EVENT_PATTERN = Pattern.compile("^([\\w#.-]+)(?:\\((.*)\\))?$");
+    
+    private static final Map<Class<?>, List<JrxNode>> AST_CACHE = new java.util.concurrent.ConcurrentHashMap<>();
 
     private static final ThreadLocal<RenderSession> SESSION = new ThreadLocal<>();
 
@@ -86,7 +88,9 @@ public class AstComponentEngine extends AbstractComponentEngine {
         // SSR
         // =============================
         String ns = isRoot ? "" : prefix;
-        List<JrxNode> ast = JrxParser.parse(ctx.template());
+        
+        List<JrxNode> ast = AST_CACHE.computeIfAbsent(ctx.getClass(), k -> JrxParser.parse(ctx.template()));
+        //List<JrxNode> ast = JrxParser.parse(ctx.template());
 
         // scoping: SOLO a los root elements (equivalente a Jsoup)
         addScopeToRootElements(ast, ctx._getScopeId());

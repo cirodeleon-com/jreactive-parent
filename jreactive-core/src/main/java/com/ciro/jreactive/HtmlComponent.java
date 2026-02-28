@@ -356,29 +356,13 @@ private final  Map<String, String> _childRefAlias = new HashMap<>();
             // 🔥 AOT FIX: arrancamos ciclo de render (pool + rebuild children)
             _beginRenderCycle();
             try {
-                // 2. Fast Path AOT
-                @SuppressWarnings("unchecked")
-                Class<HtmlComponent> myClass = (Class<HtmlComponent>) this.getClass();
-
-                ComponentAccessor<HtmlComponent> acc = null;//AccessorRegistry.get(myClass);
-
-                if (acc != null) {
-                    System.out.println("⚡ [AOT-FAST] Renderizando " + this.getClass().getSimpleName());
-                    String html = acc.renderStatic(this);
-                    if (html != null) {
-                        this.cached = new ComponentEngine.Rendered(html, getRawBindings());
-                        return html;
-                    }
-                } else {
-                    System.out.println("🐢 [REFLECTION-SLOW] Renderizando " + this.getClass().getSimpleName());
-                }
-
-                // 3. Slow Path
+                // 🔥 Eliminamos todo el bloque de "Fast Path AOT"
+                // Y dejamos que el ComponentEngine haga el trabajo (ahora cacheado y ultra rápido)
+                
                 this.cached = ComponentEngine.render(this);
                 return cached.html();
 
             } finally {
-                // 🔥 AOT FIX: desmonta lo que no se usó en este render
                 _endRenderCycle();
             }
         }
