@@ -15,36 +15,13 @@ public abstract class AbstractComponentEngine implements ComponentEngine.Strateg
 
     private static volatile ComponentFactory componentFactory = new DefaultComponentFactory();
     
-    private final TemplateStrategy primary = new StackStrategy();
-    private final TemplateStrategy fallback = new RegexStrategy();
+    
 
     public static void setComponentFactory(ComponentFactory factory) {
         componentFactory = Objects.requireNonNull(factory, "componentFactory must not be null");
     }
     
-    protected String processControlBlocks(String html, HtmlComponent ctx) {
-        try {
-            return primary.process(html, ctx);
-        } catch (Exception e) {
-            System.err.println("⚠️ [JReactive] Parser Robusto falló en " + ctx.getClass().getSimpleName() + 
-                               ". Razón: " + e.getMessage());
-            System.err.println("   🛡️ Usando Fallback Legacy (Regex)...");
-            
-            try {
-                return fallback.process(html, ctx);
-            } catch (Exception fatal) {
-                // Si ambos fallan, devolvemos el HTML original para que se vea el error en el navegador o explote
-                throw new RuntimeException("🔥 Error Fatal de Template: " + fatal.getMessage(), fatal);
-            }
-        }
-    }
-
-    protected String processControlBlocks(String html) {
-        // Sin contexto no podemos usar el StackStrategy correctamente para resolver variables,
-        // así que usamos el fallback directo o lanzamos error.
-        // Asumiremos que siempre se llamará la versión con 'ctx'.
-        return new RegexStrategy().process(html, null); 
-    }
+    
 
     private static String qualifyEventPropIfNeeded(HtmlComponent parent, String prop, String raw) {
         if (raw == null) return null;
