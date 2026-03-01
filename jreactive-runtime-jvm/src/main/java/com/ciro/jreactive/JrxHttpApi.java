@@ -3,6 +3,8 @@ package com.ciro.jreactive;
 import com.ciro.jreactive.annotations.Call;
 import com.ciro.jreactive.router.Layout;
 import com.ciro.jreactive.router.Param;
+import com.ciro.jreactive.spi.AccessorRegistry;
+import com.ciro.jreactive.spi.ComponentAccessor;
 import com.fasterxml.jackson.databind.JavaType;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
@@ -252,7 +254,20 @@ public class JrxHttpApi {
             if (owner instanceof HtmlComponent comp) comp._syncState();
 
             // C. Ejecutar la acción
-            Object result = target.invoke(owner, args);
+            Object result = null;
+            if (owner instanceof HtmlComponent comp) {
+                ComponentAccessor acc = AccessorRegistry.get(comp.getClass());
+                if (acc != null) {
+                    result = acc.call(comp, target.getName(), args);
+                } else {
+                    // Fallback seguro por si no hay Accessor
+                    result = target.invoke(owner, args);
+                }
+            } else {
+                result = target.invoke(owner, args);
+            }
+            
+            
             if (owner instanceof HtmlComponent comp) comp._syncState();
 
             // D. Armar respuesta

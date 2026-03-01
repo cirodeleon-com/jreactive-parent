@@ -347,8 +347,6 @@ public class JrxPushHub {
         return null;
     }
     
- // ... inside JrxPushHub class ...
-
     @SuppressWarnings("unchecked")
     public void set(String k, Object v) {
         ReactiveVar<Object> rv = (ReactiveVar<Object>) bindings.get(k);
@@ -356,33 +354,37 @@ public class JrxPushHub {
         if (rv == null && k.contains(".")) {
             String rootKey = k.split("\\.")[0];
             rv = (ReactiveVar<Object>) bindings.get(rootKey);
-       }
-        
-        if (rv != null) {
-            if (Objects.equals(rv.get(), v)) return;
-            rv.set(v);
-            // 🔥 4. NOTIFICAR PERSISTENCIA (Para que la RAM se entere)
-            if (this.persistenceCallback != null) this.persistenceCallback.run();
-            return;
         }
         
-        if (k.contains(".")) {
-            String[] parts = k.split("\\.");
-            String rootKey = parts[0]; 
-            rv = (ReactiveVar<Object>) bindings.get(rootKey);
-            
-            if (rv != null && rv.get() != null) {
-                try {
-                    if (applyPath(rv.get(), parts, 1, v)) {
-                        // 📢 5. Confirmación granular al cliente (Evita bloqueos en JS)
-                        onSnapshot(k, v); 
+        if (rv != null) {
+            // Actualización de variable raíz (Ej: count = 5)
+            if (!k.contains(".")) {
+                if (Objects.equals(rv.get(), v)) return;
+                rv.set(v);
+                if (this.persistenceCallback != null) this.persistenceCallback.run();
+                return;
+            } 
+            // 🔥 MAGIA AOT: Actualización profunda (Ej: store.ui.theme = "dark")
+            else {
+                HtmlComponent owner = owners.get(rv);
+                if (owner != null) {
+                    com.ciro.jreactive.spi.ComponentAccessor acc = com.ciro.jreactive.spi.AccessorRegistry.get(owner.getClass());
+                    if (acc != null) {
+                        // Limpiamos el namespace si viene prefijado (Ej: "StorePage-1.store.ui.theme" -> "store.ui.theme")
+                        String localKey = k;
+                        if (localKey.startsWith(owner.getId() + ".")) {
+                            localKey = localKey.substring(owner.getId().length() + 1);
+                        }
+
+                        // ⚡ ESCRITURA O(1) SIN REFLEXIÓN ⚡
+                        acc.write(owner, localKey, v);
                         
-                        // 🔥 6. PERSISTENCIA CRÍTICA (Esto quita el F5)
+                        onSnapshot(k, v); 
                         if (this.persistenceCallback != null) {
                             this.persistenceCallback.run();
                         }
                     }
-                } catch (Exception e) { e.printStackTrace(); }
+                }
             }
         }
     }

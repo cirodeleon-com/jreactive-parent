@@ -46,7 +46,7 @@ public class AccessorRegistry {
             acc = cache.get(clazz);
             
             if (acc != null) {
-                // System.out.println("⚡ [AOT] Accessor cargado y activado: " + accessorClassName);
+                System.out.println("⚡ [AOT] Accessor cargado y activado: " + accessorClassName);
                 return (ComponentAccessor<T>) acc;
             }
         } catch (ClassNotFoundException e) {

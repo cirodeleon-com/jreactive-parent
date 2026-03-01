@@ -14,6 +14,7 @@ import javax.lang.model.SourceVersion;
 import javax.lang.model.element.*;
 import javax.lang.model.type.TypeKind;
 import javax.lang.model.type.TypeMirror;
+import javax.lang.model.type.DeclaredType;
 import javax.tools.Diagnostic;
 import javax.tools.FileObject;
 import javax.tools.JavaFileObject;
@@ -65,44 +66,27 @@ public final class TemplateProcessor extends AbstractProcessor {
             ExecutableElement tplMethod = findTemplateMethod(clazz);
 
             if (tplMethod != null) {
-                // 1. Extraer HTML del AST
                 String rawHtml = extractTemplateString(clazz, tplMethod);
 
                 if (rawHtml != null) {
                     rawHtml = rawHtml.stripIndent().trim();
-
-                    // 2. Copiloto: Validar plantilla vs Java (Falla el build si hay errores)
                     validateTemplateConnections(rawHtml, clazz);
-
-                    // 3. Generar archivo físico .html (¡Restaurado y sin Jsoup!)
                     generateHtmlResource(clazz, rawHtml);
-
-                    // 4. Generar JS para cliente (@Client)
-                    //if (clazz.getAnnotation(Client.class) != null) {
-                        generateClientJs(clazz, rawHtml);
-                    //}
-
-                    // 5. Generar Accessor Java (O(1) Reflection Bypass)
+                    generateClientJs(clazz, rawHtml);
                     generateJavaAccessor(clazz);
                 }
             } else if (shouldGenerateAccessor(clazz)) {
-                // Componente sin template pero con estado
                 generateJavaAccessor(clazz);
             }
         }
         return false;
     }
 
- // --- 1. Copiloto: Validación Estricta (El Deber Ser) ---
     private void validateTemplateConnections(String html, TypeElement clazz) {
-        // Solo las palabras verdaderamente reservadas del sistema
-        Set<String> validVariables = new HashSet<>(Arrays.asList(
-            "this", "id", "true", "false", "null"
-        ));
+        Set<String> validVariables = new HashSet<>(Arrays.asList("this", "id", "true", "false", "null"));
         Set<String> validMethods = new HashSet<>();
         Set<String> validRefs = new HashSet<>();
 
-        // 1. Recolectar estado y métodos reales de la clase Java
         for (Element e : getAllMembers(clazz)) {
             if (isValidField(e)) validVariables.add(getBindKey(e));
             if (e.getKind() == ElementKind.METHOD && e.getAnnotation(Call.class) != null) {
@@ -110,79 +94,54 @@ public final class TemplateProcessor extends AbstractProcessor {
             }
         }
 
-        // 2. Aprender alias dinámicos locales (Ej: {{#each lista as alias}})
         Matcher mEach = Pattern.compile("\\{\\{\\s*#each\\s+[^\\s}]+\\s+as\\s+([\\w]+)\\s*}}").matcher(html);
-        while (mEach.find()) {
-            validVariables.add(mEach.group(1)); 
-        }
+        while (mEach.find()) validVariables.add(mEach.group(1)); 
 
-        // 3. Aprender variables expuestas por componentes hijos (Ej: expose="row")
         Matcher mExpose = Pattern.compile("expose=[\"']([\\w]+)[\"']").matcher(html);
-        while (mExpose.find()) {
-            validVariables.add(mExpose.group(1)); // El compilador ahora sabe que 'row' es válido aquí
-        }
+        while (mExpose.find()) validVariables.add(mExpose.group(1));
 
-        // 4. Aprender referencias a componentes (Ej: ref="miModal")
         Matcher mRef = Pattern.compile("ref=[\"']([\\w]+)[\"']").matcher(html);
         while (mRef.find()) {
             validRefs.add(mRef.group(1));
-            validVariables.add(mRef.group(1)); // Un ref también puede ser leído como variable (Ej: miModal.visible)
+            validVariables.add(mRef.group(1));
         }
 
-        // 5. Validar todas las variables impresas {{ variable.prop }}
         Matcher mVar = Pattern.compile("\\{\\{\\s*(?!#|/)(?!else\\b)([\\w.-]+)\\s*}}").matcher(html);
         while (mVar.find()) {
-            String fullPath = mVar.group(1);
-            String rootVar = fullPath.split("\\.")[0];
-            
-            if (rootVar.matches("-?\\d+")) continue; // Ignorar números hardcodeados
-            if (rootVar.isEmpty()) continue;
-
+            String rootVar = mVar.group(1).split("\\.")[0];
+            if (rootVar.matches("-?\\d+") || rootVar.isEmpty()) continue;
             if (!validVariables.contains(rootVar)) {
                 messager.printMessage(Diagnostic.Kind.ERROR, 
-                    "❌ [JReactive AST] La variable '" + rootVar + "' no existe en " + clazz.getSimpleName() + ". Declárala con @State/@Bind o expónla en el HTML (expose=\""+rootVar+"\").", clazz);
+                    "❌ [JReactive] La variable '" + rootVar + "' no existe en " + clazz.getSimpleName() + ". Declárala con @State o expose.", clazz);
             }
         }
 
-        // 6. Validar métodos en eventos (@click="metodo()")
         Matcher mEvt = Pattern.compile("@\\w+=\"([\\w.-]+)\\s*\\(?").matcher(html);
         while (mEvt.find()) {
             String fullCall = mEvt.group(1); 
-            
             if (fullCall.contains(".")) {
-                // Es una llamada a un hijo (Ej: miModal.open)
                 String refName = fullCall.split("\\.")[0];
                 if (!validRefs.contains(refName)) {
                     messager.printMessage(Diagnostic.Kind.ERROR, 
-                        "❌ [JReactive AST] La referencia '" + refName + "' usada en el método '" + fullCall + "' no existe. Añade ref=\"" + refName + "\" al componente HTML.", clazz);
+                        "❌ [JReactive] La referencia '" + refName + "' en el método '" + fullCall + "' no existe. Añade ref=\"" + refName + "\".", clazz);
                 }
-            } else {
-                // Es un método local
-                if (!validMethods.contains(fullCall)) {
-                    messager.printMessage(Diagnostic.Kind.ERROR, 
-                        "❌ [JReactive AST] El método '" + fullCall + "' no existe en " + clazz.getSimpleName() + ". Faltó @Call.", clazz);
-                }
+            } else if (!validMethods.contains(fullCall)) {
+                messager.printMessage(Diagnostic.Kind.ERROR, 
+                    "❌ [JReactive] El método '" + fullCall + "' no existe en " + clazz.getSimpleName() + ". Falta @Call.", clazz);
             }
         }
     }
 
-    // --- Extracción AST ---
     private String extractTemplateString(TypeElement clazz, ExecutableElement method) {
         if (trees == null) return null;
         TreePath path = trees.getPath(method);
         if (path == null) return null;
-
-        MethodTree mt = (MethodTree) path.getLeaf();
-        BlockTree body = mt.getBody();
+        BlockTree body = ((MethodTree) path.getLeaf()).getBody();
         if (body == null) return null;
 
         for (StatementTree st : body.getStatements()) {
-            if (st instanceof ReturnTree rt) {
-                ExpressionTree expr = rt.getExpression();
-                if (expr instanceof LiteralTree lt && lt.getValue() instanceof String) {
-                    return (String) lt.getValue();
-                }
-                break;
+            if (st instanceof ReturnTree rt && rt.getExpression() instanceof LiteralTree lt && lt.getValue() instanceof String) {
+                return (String) lt.getValue();
             }
         }
         return null;
@@ -199,24 +158,18 @@ public final class TemplateProcessor extends AbstractProcessor {
                 .filter(e -> e.getKind() == ElementKind.METHOD)
                 .map(e -> (ExecutableElement) e)
                 .filter(m -> m.getSimpleName().contentEquals("template") && m.getParameters().isEmpty())
-                .findFirst()
-                .orElse(null);
+                .findFirst().orElse(null);
     }
 
     private boolean shouldGenerateAccessor(TypeElement clazz) {
         return isJReactiveComponent(clazz);
     }
 
-    // --- Generadores ---
-
     private void generateHtmlResource(TypeElement clazz, String htmlContent) {
         String className = clazz.getSimpleName().toString();
-        String resourcePath = "static/jrx/templates/" + className + ".html";
         try {
-            FileObject fileObject = filer.createResource(StandardLocation.CLASS_OUTPUT, "", resourcePath);
-            try (Writer writer = fileObject.openWriter()) {
-                writer.write(htmlContent);
-            }
+            FileObject fileObject = filer.createResource(StandardLocation.CLASS_OUTPUT, "", "static/jrx/templates/" + className + ".html");
+            try (Writer writer = fileObject.openWriter()) { writer.write(htmlContent); }
         } catch (IOException e) { 
             messager.printMessage(Diagnostic.Kind.ERROR, "Error generando HTML para " + className + ": " + e);
         }
@@ -231,20 +184,11 @@ public final class TemplateProcessor extends AbstractProcessor {
             FileObject resource = filer.createResource(StandardLocation.CLASS_OUTPUT, "", fileName);
             try (Writer writer = resource.openWriter()) {
                 writer.write("if(!window.JRX_RENDERERS) window.JRX_RENDERERS = {};\n");
-                writer.write("window.JRX_RENDERERS['" + className + "'] = {\n");
-                String escapedHtml = html
-                        .replace("\\", "\\\\")
-                        .replace("`", "\\`")
-                        .replace("${", "\\${")
-                        .replace("\r", "");
-                writer.write("  getTemplate: function() {\n");
-                writer.write("    return `" + escapedHtml + "`;\n");
-                writer.write("  }\n");
-                writer.write("};\n");
+                writer.write("window.JRX_RENDERERS['" + className + "'] = {\n  getTemplate: function() {\n");
+                writer.write("    return `" + html.replace("\\", "\\\\").replace("`", "\\`").replace("${", "\\${").replace("\r", "") + "`;\n");
+                writer.write("  }\n};\n");
             }
-        } catch (IOException e) { 
-            messager.printMessage(Diagnostic.Kind.ERROR, "Error generando JS: " + e);
-        }
+        } catch (IOException e) { }
     }
 
     private void generateJavaAccessor(TypeElement clazz) {
@@ -262,13 +206,9 @@ public final class TemplateProcessor extends AbstractProcessor {
                 w.write("import com.ciro.jreactive.spi.ComponentAccessor;\n");
                 w.write("import com.ciro.jreactive.spi.AccessorRegistry;\n");
                 w.write("import javax.annotation.processing.Generated;\n\n");
-
                 w.write("@Generated(\"JReactiveAPT\")\n");
                 w.write("public class " + accessorName + " implements ComponentAccessor<" + className + "> {\n\n");
-
-                w.write("    static {\n");
-                w.write("        AccessorRegistry.register(" + className + ".class, new " + accessorName + "());\n");
-                w.write("    }\n\n");
+                w.write("    static {\n        AccessorRegistry.register(" + className + ".class, new " + accessorName + "());\n    }\n\n");
 
                 generateWriteMethod(w, clazz, className);
                 generateReadMethod(w, clazz, className);
@@ -279,38 +219,135 @@ public final class TemplateProcessor extends AbstractProcessor {
         } catch (IOException e) { e.printStackTrace(); }
     }
 
-    // --- Métodos de Desreflexión (O(1)) ---
+    // =========================================================================
+    // 🔥 EL MOTOR AOT PROFUNDO (Cero Reflexión)
+    // =========================================================================
+
     private void generateWriteMethod(Writer w, TypeElement clazz, String className) throws IOException {
         w.write("    @Override\n");
         w.write("    public void write(" + className + " t, String p, Object v) {\n");
-        w.write("        switch (p) {\n");
-        for (Element e : getAllMembers(clazz)) {
-            if (isValidField(e)) {
-                String name = e.getSimpleName().toString();
-                String key = getBindKey(e);
-                w.write("            case \"" + key + "\": t." + name + " = " + castLogic(e.asType(), "v") + "; break;\n");
-            }
+        w.write("        try {\n");
+        w.write("            switch (p) {\n");
+
+        Map<String, String> writes = new LinkedHashMap<>();
+        exploreTypesForAccessors(clazz, writes, true);
+
+        for (Map.Entry<String, String> e : writes.entrySet()) {
+            w.write("                case \"" + e.getKey() + "\": " + e.getValue() + "; return;\n");
         }
-        w.write("        }\n    }\n\n");
+
+        w.write("            }\n");
+        w.write("        } catch (Exception e) {} // Fallback silencioso si un padre es nulo\n");
+        w.write("    }\n\n");
     }
 
     private void generateReadMethod(Writer w, TypeElement clazz, String className) throws IOException {
         w.write("    @Override\n");
         w.write("    public Object read(" + className + " t, String p) {\n");
-        w.write("        switch (p) {\n");
-        for (Element e : getAllMembers(clazz)) {
-            if (isValidField(e)) {
-                String name = e.getSimpleName().toString();
-                String key = getBindKey(e);
-                w.write("            case \"" + key + "\": return unwrap(t." + name + ");\n");
-            }
+        w.write("        try {\n");
+        w.write("            switch (p) {\n");
+
+        Map<String, String> reads = new LinkedHashMap<>();
+        exploreTypesForAccessors(clazz, reads, false);
+
+        for (Map.Entry<String, String> e : reads.entrySet()) {
+            w.write("                case \"" + e.getKey() + "\": return " + e.getValue() + ";\n");
         }
-        w.write("            default: return null;\n        }\n    }\n");
+
+        w.write("            }\n");
+        w.write("        } catch (NullPointerException e) { return null; } // Optional Chaining ultrarrápido\n");
+        w.write("        return null;\n    }\n");
         w.write("    private Object unwrap(Object v) {\n");
         w.write("        if (v instanceof com.ciro.jreactive.ReactiveVar) return ((com.ciro.jreactive.ReactiveVar)v).get();\n");
         w.write("        if (v instanceof com.ciro.jreactive.Type) return ((com.ciro.jreactive.Type)v).get();\n");
         w.write("        return v;\n    }\n\n");
     }
+
+    // 🕸️ Recorredor de Árbol de Tipos (AST)
+    private void exploreTypesForAccessors(TypeElement rootClass, Map<String, String> map, boolean isWrite) {
+        for (Element e : getAllMembers(rootClass)) {
+            if (isValidField(e)) {
+                String rootKey = getBindKey(e);
+                String rootAccess = "t." + e.getSimpleName().toString();
+
+                if (isWrite) {
+                    map.put(rootKey, rootAccess + " = " + castLogic(e.asType(), "v"));
+                } else {
+                    map.put(rootKey, "unwrap(" + rootAccess + ")");
+                }
+
+                TypeMirror innerType = getInnerType(e.asType());
+                if (innerType != null && innerType.getKind() == TypeKind.DECLARED) {
+                    String castType = getErasure(innerType);
+                    TypeElement typeEl = (TypeElement) processingEnv.getTypeUtils().asElement(innerType);
+                    exploreDeep(typeEl, rootKey, "((" + castType + ")unwrap(" + rootAccess + "))", map, isWrite, 1, new HashSet<>());
+                }
+            }
+        }
+    }
+
+    private void exploreDeep(TypeElement typeEl, String currentPath, String currentAccess, Map<String, String> map, boolean isWrite, int depth, Set<String> visited) {
+        if (depth > 3 || typeEl == null) return; // Límite de seguridad
+        
+        String fqcn = typeEl.getQualifiedName().toString();
+        if (fqcn.startsWith("java.")) return; // Ignoramos clases core
+        if (!visited.add(fqcn)) return; // Evita bucles infinitos en tipos recursivos
+
+        for (Element e : getAllMembers(typeEl)) {
+            if (e.getKind() == ElementKind.FIELD && !e.getModifiers().contains(Modifier.PRIVATE) && !e.getModifiers().contains(Modifier.STATIC)) {
+                String fieldName = e.getSimpleName().toString();
+                String nextPath = currentPath + "." + fieldName;
+                String nextAccess = currentAccess + "." + fieldName;
+
+                if (isWrite) {
+                    map.put(nextPath, nextAccess + " = " + castLogic(e.asType(), "v"));
+                } else {
+                    map.put(nextPath, nextAccess);
+                }
+
+                TypeMirror innerType = getInnerType(e.asType());
+                if (innerType != null && innerType.getKind() == TypeKind.DECLARED) {
+                    String castType = getErasure(innerType);
+                    TypeElement nextTypeEl = (TypeElement) processingEnv.getTypeUtils().asElement(innerType);
+                    exploreDeep(nextTypeEl, nextPath, "((" + castType + ")" + nextAccess + ")", map, isWrite, depth + 1, new HashSet<>(visited));
+                }
+            }
+        }
+    }
+
+    private TypeMirror getInnerType(TypeMirror type) {
+        String tStr = type.toString();
+        if (tStr.contains("ReactiveVar") || tStr.contains("Type")) {
+            if (type instanceof DeclaredType dt) {
+                List<? extends TypeMirror> args = dt.getTypeArguments();
+                if (!args.isEmpty()) return args.get(0);
+            }
+        }
+        return type;
+    }
+
+    // 🔥 LA SOLUCIÓN: Usar la API del compilador para obtener la ruta absoluta, ignorando anotaciones.
+    private String getErasure(TypeMirror type) {
+        TypeMirror erased = processingEnv.getTypeUtils().erasure(type);
+        
+        // Si es un objeto complejo (clase o interfaz) obtenemos su ruta absoluta limpia
+        if (erased.getKind() == TypeKind.DECLARED) {
+            TypeElement te = (TypeElement) processingEnv.getTypeUtils().asElement(erased);
+            if (te != null) {
+                return te.getQualifiedName().toString(); // ej: com.ciro.jreactive.SignupPage2.SignupForm
+            }
+        }
+        
+        // Fallback seguro para primitivos (int, boolean) y arreglos (byte[])
+        String tStr = erased.toString();
+        int lastSpace = tStr.lastIndexOf(' ');
+        if (lastSpace >= 0) {
+            tStr = tStr.substring(lastSpace + 1);
+        }
+        return tStr;
+    }
+
+    // =========================================================================
 
     private void generateCallMethod(Writer w, TypeElement clazz, String className) throws IOException {
         w.write("    @Override\n");
@@ -336,17 +373,15 @@ public final class TemplateProcessor extends AbstractProcessor {
     }
 
     private String castLogic(TypeMirror type, String varName) {
-        String t = type.toString();
-        if (t.contains("<")) t = t.substring(0, t.indexOf("<")); // Type Erasure
-        
+        String t = getErasure(type); // Usamos getErasure que ahora es infalible
         if (type.getKind().isPrimitive()) {
-            switch(type.getKind()) {
-                case INT: return "((Number)" + varName + ").intValue()";
-                case LONG: return "((Number)" + varName + ").longValue()";
-                case BOOLEAN: return "(Boolean)" + varName;
-                case DOUBLE: return "((Number)" + varName + ").doubleValue()";
-                default: return "(" + t + ")" + varName;
-            }
+            return switch(type.getKind()) {
+                case INT -> "((Number)" + varName + ").intValue()";
+                case LONG -> "((Number)" + varName + ").longValue()";
+                case BOOLEAN -> "(Boolean)" + varName;
+                case DOUBLE -> "((Number)" + varName + ").doubleValue()";
+                default -> "(" + t + ")" + varName;
+            };
         }
         return "(" + t + ")" + varName;
     }

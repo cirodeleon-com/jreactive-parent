@@ -39,31 +39,50 @@ public class TemplateContext {
 
         String[] parts = path.split("\\.");
         String root = parts[0];
-        Object value = null;
 
-        // 1. Buscar Raíz (Contexto Local -> Componente -> Padre)
+        // 1. Buscar en Variables Locales (Para alias de {{#each user in users}})
         if (localVars.containsKey(root)) {
-            value = localVars.get(root);
-        } else if (component.getRawBindings().containsKey(root)) {
-            ReactiveVar<?> rx = component.getRawBindings().get(root);
-            value = (rx != null) ? rx.get() : null;
-        } else if (parent != null) {
+            Object value = localVars.get(root);
+            if (parts.length > 1) {
+                // Aquí sí usamos getProperty clásico porque el #each es dinámico
+                for (int i = 1; i < parts.length; i++) {
+                    value = getProperty(value, parts[i]);
+                    if (value == null) break;
+                }
+            }
+            return checkSize(value, path);
+        }
+
+        // 2. 🔥 MAGIA AOT: Lectura directa del estado del componente O(1)
+        @SuppressWarnings({"rawtypes", "unchecked"})
+        com.ciro.jreactive.spi.ComponentAccessor acc = com.ciro.jreactive.spi.AccessorRegistry.get(component.getClass());
+        if (acc != null) {
+        	System.out.println("🚀 Leyendo [" + path + "] via AOT en " + component.getClass().getSimpleName());
+            Object val = acc.read(component, path);
+            if (val != null) return checkSize(val, path);
+            
+            // Soporte para .size en arrays directos del state (Ej: items.size)
+            if (path.endsWith(".size") || path.endsWith(".length")) {
+                String base = path.substring(0, path.lastIndexOf('.'));
+                Object baseVal = acc.read(component, base);
+                return checkSize(baseVal, path);
+            }
+            return val; // Null si no existe o es nulo
+        }
+
+        // 3. Fallback a padres (Por si usas variables heredadas en Slots)
+        if (parent != null) {
             return parent.resolve(path);
         }
 
-        // 2. Navegación Profunda (ord -> address -> street)
-        if (value != null && parts.length > 1) {
-            for (int i = 1; i < parts.length; i++) {
-                value = getProperty(value, parts[i]);
-                if (value == null) break;
-            }
-        }
-        
-        // Helpers de tamaño
-        if (parts.length > 1 && (parts[parts.length-1].equals("size") || parts[parts.length-1].equals("length"))) {
-             if (value == null) return getSize(resolve(path.substring(0, path.lastIndexOf('.'))));
-        }
+        return null;
+    }
 
+    // Pequeño helper para no repetir el código del size
+    private Object checkSize(Object value, String path) {
+        if (path.endsWith(".size") || path.endsWith(".length")) {
+            return getSize(value);
+        }
         return value;
     }
 
