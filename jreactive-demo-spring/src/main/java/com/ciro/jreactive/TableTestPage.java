@@ -61,7 +61,7 @@ public class TableTestPage extends AppPage {
                     ➕ Agregar Usuario
                 </button>
 
-                <JTable :columns="headers" :data="users">
+                <JTable :columns="headers" :data="users" expose="row">
                     <td>{{row.id}}</td>
                     <td><strong>{{row.name}}</strong></td>
                     <td>{{row.email}}</td>

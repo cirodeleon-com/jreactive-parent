@@ -95,7 +95,7 @@ public class PowerTestPage extends AppPage {
                         Peticiones procesadas por WS: <strong style="color: #007bff; font-size: 1.2em;">{{totalOps}}</strong>
                     </p>
 
-                    <JTable :columns="tableHeaders" :data="servers">
+                    <JTable :columns="tableHeaders" :data="servers" expose="row">
                         <td style="font-family: monospace;">{{row.id}}</td>
                         <td><strong>{{row.name}}</strong></td>
                         <td style="width: 200px;">

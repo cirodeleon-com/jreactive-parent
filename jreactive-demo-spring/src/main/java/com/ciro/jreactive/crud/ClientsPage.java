@@ -123,7 +123,7 @@ public class ClientsPage extends AppPage {
                     <JButton label="Nuevo Cliente" type="primary" onClick="openCreate()" />
                 </div>
 
-                <JTable :columns="headers" :data="clients">
+                <JTable :columns="headers" :data="clients" expose="row">
                     <td>{{row.name}}</td>
                     <td>{{row.email}}</td>
                     <td>

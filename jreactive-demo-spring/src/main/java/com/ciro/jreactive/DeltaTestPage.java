@@ -14,7 +14,7 @@ import java.util.List;
 
 @Component
 @Route(path = "/delta-test") // Accede en http://localhost:8080/delta-test
-@Stateless
+@StatefulRam
 public class DeltaTestPage extends AppPage {
 
     // El framework detectará @State y convertirá esta ArrayList en una SmartList automáticamente

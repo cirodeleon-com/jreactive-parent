@@ -125,7 +125,7 @@ public class ReliabilityTestPage extends AppPage {
                 </div>
 
                 <JCard title="Directorio de Usuarios">
-                    <JTable :columns="cabeceras" :data="tablaVisible">
+                    <JTable :columns="cabeceras" :data="tablaVisible" expose="row">
                         
                         <td style="font-family: monospace; color: #555;">{{row.id}}</td>
                         

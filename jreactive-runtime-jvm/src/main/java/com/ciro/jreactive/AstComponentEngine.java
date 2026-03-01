@@ -380,6 +380,9 @@ public class AstComponentEngine extends AbstractComponentEngine {
         Map<String, String> attrs = new LinkedHashMap<>();
         for (Map.Entry<String, String> entry : comp.attributes.entrySet()) {
             String k = entry.getKey();
+            
+            if ("expose".equals(k)) continue;
+            
             String v = entry.getValue() == null ? "" : entry.getValue();
 
             // Resolver {{var}} en atributos crudos antes de dárselos al componente

@@ -8,15 +8,10 @@ import com.google.auto.service.AutoService;
 import com.sun.source.util.TreePath;
 import com.sun.source.util.Trees;
 import com.sun.source.tree.*;
-import org.jsoup.Jsoup;
-import org.jsoup.nodes.Attribute;
-import org.jsoup.nodes.Document;
-import org.jsoup.parser.Parser;
 
 import javax.annotation.processing.*;
 import javax.lang.model.SourceVersion;
 import javax.lang.model.element.*;
-import javax.lang.model.type.DeclaredType;
 import javax.lang.model.type.TypeKind;
 import javax.lang.model.type.TypeMirror;
 import javax.tools.Diagnostic;
@@ -35,32 +30,20 @@ public final class TemplateProcessor extends AbstractProcessor {
 
     private Trees trees;
     private Filer filer;
+    private Messager messager;
     private final Set<String> _generatedAccessors = new HashSet<>();
     private final Set<String> _generatedClientJs = new HashSet<>();
-    private int __nodeSeq = 0;
-
-    // 🔥 REGEX TOKENIZADOR (Solo identifica tokens, la estructura la arma el Stack)
-    private static final Pattern TOKEN_PATTERN = Pattern.compile(
-            "\\{\\{\\s*(#if|#each|/if|/each|else)\\s*([^}]*)\\s*}}|" + // Grupo 1, 2: Bloques
-            "\\{\\{\\s*([\\w#.!-]+(?:\\.[\\w-]+)*)\\s*}}|" +           // Grupo 3: Variables
-            "<([A-Z][\\w]*|slot)(\\s+[^>]*)?(/?)>|" +                   // Grupo 4, 5, 6: Apertura Componente
-            "</([A-Z][\\w]*|slot)>",                                    // Grupo 7: Cierre Componente
-            Pattern.DOTALL
-    );
-
-    private static final Pattern HTML5_VOID_FIX = Pattern.compile(
-            "<(area|base|br|col|embed|hr|img|input|link|meta|param|source|track|wbr)([^>]*?)(?<!/)>",
-            Pattern.CASE_INSENSITIVE);
 
     @Override
     public synchronized void init(ProcessingEnvironment env) {
         super.init(env);
+        this.filer = env.getFiler();
+        this.messager = env.getMessager();
         try {
             this.trees = Trees.instance(env);
         } catch (Throwable t) {
             // Ignorar en entornos limitados
         }
-        this.filer = env.getFiler();
     }
 
     @Override
@@ -86,31 +69,101 @@ public final class TemplateProcessor extends AbstractProcessor {
                 String rawHtml = extractTemplateString(clazz, tplMethod);
 
                 if (rawHtml != null) {
-                    // Limpieza de indentación (Java 15+)
                     rawHtml = rawHtml.stripIndent().trim();
 
-                    // 2. Pre-procesar eventos (@click -> data-call-click)
-                    String processedHtml = qualifyEventsAtCompileTime(rawHtml);
+                    // 2. Copiloto: Validar plantilla vs Java (Falla el build si hay errores)
+                    validateTemplateConnections(rawHtml, clazz);
 
-                    // 3. Generar archivo físico .html
-                    generateHtmlResource(clazz, processedHtml);
+                    // 3. Generar archivo físico .html (¡Restaurado y sin Jsoup!)
+                    generateHtmlResource(clazz, rawHtml);
 
                     // 4. Generar JS para cliente (@Client)
                     //if (clazz.getAnnotation(Client.class) != null) {
-                        generateClientJs(clazz, processedHtml);
+                        generateClientJs(clazz, rawHtml);
                     //}
 
-                    // 5. Generar Accessor Java
-                    if (shouldGenerateAccessor(clazz)) {
-                        generateJavaAccessor(clazz, processedHtml);
-                    }
+                    // 5. Generar Accessor Java (O(1) Reflection Bypass)
+                    generateJavaAccessor(clazz);
                 }
             } else if (shouldGenerateAccessor(clazz)) {
                 // Componente sin template pero con estado
-                generateJavaAccessor(clazz, null);
+                generateJavaAccessor(clazz);
             }
         }
         return false;
+    }
+
+ // --- 1. Copiloto: Validación Estricta (El Deber Ser) ---
+    private void validateTemplateConnections(String html, TypeElement clazz) {
+        // Solo las palabras verdaderamente reservadas del sistema
+        Set<String> validVariables = new HashSet<>(Arrays.asList(
+            "this", "id", "true", "false", "null"
+        ));
+        Set<String> validMethods = new HashSet<>();
+        Set<String> validRefs = new HashSet<>();
+
+        // 1. Recolectar estado y métodos reales de la clase Java
+        for (Element e : getAllMembers(clazz)) {
+            if (isValidField(e)) validVariables.add(getBindKey(e));
+            if (e.getKind() == ElementKind.METHOD && e.getAnnotation(Call.class) != null) {
+                validMethods.add(e.getSimpleName().toString());
+            }
+        }
+
+        // 2. Aprender alias dinámicos locales (Ej: {{#each lista as alias}})
+        Matcher mEach = Pattern.compile("\\{\\{\\s*#each\\s+[^\\s}]+\\s+as\\s+([\\w]+)\\s*}}").matcher(html);
+        while (mEach.find()) {
+            validVariables.add(mEach.group(1)); 
+        }
+
+        // 3. Aprender variables expuestas por componentes hijos (Ej: expose="row")
+        Matcher mExpose = Pattern.compile("expose=[\"']([\\w]+)[\"']").matcher(html);
+        while (mExpose.find()) {
+            validVariables.add(mExpose.group(1)); // El compilador ahora sabe que 'row' es válido aquí
+        }
+
+        // 4. Aprender referencias a componentes (Ej: ref="miModal")
+        Matcher mRef = Pattern.compile("ref=[\"']([\\w]+)[\"']").matcher(html);
+        while (mRef.find()) {
+            validRefs.add(mRef.group(1));
+            validVariables.add(mRef.group(1)); // Un ref también puede ser leído como variable (Ej: miModal.visible)
+        }
+
+        // 5. Validar todas las variables impresas {{ variable.prop }}
+        Matcher mVar = Pattern.compile("\\{\\{\\s*(?!#|/)(?!else\\b)([\\w.-]+)\\s*}}").matcher(html);
+        while (mVar.find()) {
+            String fullPath = mVar.group(1);
+            String rootVar = fullPath.split("\\.")[0];
+            
+            if (rootVar.matches("-?\\d+")) continue; // Ignorar números hardcodeados
+            if (rootVar.isEmpty()) continue;
+
+            if (!validVariables.contains(rootVar)) {
+                messager.printMessage(Diagnostic.Kind.ERROR, 
+                    "❌ [JReactive AST] La variable '" + rootVar + "' no existe en " + clazz.getSimpleName() + ". Declárala con @State/@Bind o expónla en el HTML (expose=\""+rootVar+"\").", clazz);
+            }
+        }
+
+        // 6. Validar métodos en eventos (@click="metodo()")
+        Matcher mEvt = Pattern.compile("@\\w+=\"([\\w.-]+)\\s*\\(?").matcher(html);
+        while (mEvt.find()) {
+            String fullCall = mEvt.group(1); 
+            
+            if (fullCall.contains(".")) {
+                // Es una llamada a un hijo (Ej: miModal.open)
+                String refName = fullCall.split("\\.")[0];
+                if (!validRefs.contains(refName)) {
+                    messager.printMessage(Diagnostic.Kind.ERROR, 
+                        "❌ [JReactive AST] La referencia '" + refName + "' usada en el método '" + fullCall + "' no existe. Añade ref=\"" + refName + "\" al componente HTML.", clazz);
+                }
+            } else {
+                // Es un método local
+                if (!validMethods.contains(fullCall)) {
+                    messager.printMessage(Diagnostic.Kind.ERROR, 
+                        "❌ [JReactive AST] El método '" + fullCall + "' no existe en " + clazz.getSimpleName() + ". Faltó @Call.", clazz);
+                }
+            }
+        }
     }
 
     // --- Extracción AST ---
@@ -164,7 +217,9 @@ public final class TemplateProcessor extends AbstractProcessor {
             try (Writer writer = fileObject.openWriter()) {
                 writer.write(htmlContent);
             }
-        } catch (IOException e) { }
+        } catch (IOException e) { 
+            messager.printMessage(Diagnostic.Kind.ERROR, "Error generando HTML para " + className + ": " + e);
+        }
     }
 
     private void generateClientJs(TypeElement cls, String html) {
@@ -177,24 +232,22 @@ public final class TemplateProcessor extends AbstractProcessor {
             try (Writer writer = resource.openWriter()) {
                 writer.write("if(!window.JRX_RENDERERS) window.JRX_RENDERERS = {};\n");
                 writer.write("window.JRX_RENDERERS['" + className + "'] = {\n");
-                writer.write("  getTemplate: function() {\n");
                 String escapedHtml = html
                         .replace("\\", "\\\\")
                         .replace("`", "\\`")
                         .replace("${", "\\${")
                         .replace("\r", "");
+                writer.write("  getTemplate: function() {\n");
                 writer.write("    return `" + escapedHtml + "`;\n");
                 writer.write("  }\n");
-
                 writer.write("};\n");
-                
             }
         } catch (IOException e) { 
-            processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR, "Error generando JS: " + e);
+            messager.printMessage(Diagnostic.Kind.ERROR, "Error generando JS: " + e);
         }
     }
 
-    private void generateJavaAccessor(TypeElement clazz, String processedHtml) {
+    private void generateJavaAccessor(TypeElement clazz) {
         String pkg = processingEnv.getElementUtils().getPackageOf(clazz).getQualifiedName().toString();
         String className = clazz.getSimpleName().toString();
         String accessorName = className + "__Accessor";
@@ -221,19 +274,12 @@ public final class TemplateProcessor extends AbstractProcessor {
                 generateReadMethod(w, clazz, className);
                 generateCallMethod(w, clazz, className);
 
-                if (processedHtml != null) {
-                    generateRenderStatic(w, clazz, className, processedHtml);
-                } else {
-                    w.write("    @Override public String renderStatic(" + className + " t) { return null; }\n");
-                }
-
                 w.write("}\n");
             }
         } catch (IOException e) { e.printStackTrace(); }
     }
 
-    // --- Métodos Reflection Optimizado ---
-
+    // --- Métodos de Desreflexión (O(1)) ---
     private void generateWriteMethod(Writer w, TypeElement clazz, String className) throws IOException {
         w.write("    @Override\n");
         w.write("    public void write(" + className + " t, String p, Object v) {\n");
@@ -305,287 +351,6 @@ public final class TemplateProcessor extends AbstractProcessor {
         return "(" + t + ")" + varName;
     }
 
-    // --- Render AOT (Stack Parser) ---
-
-    private void generateRenderStatic(Writer w, TypeElement clazz, String className, String rawHtml) throws IOException {
-        w.write("    @Override\n");
-        w.write("    public String renderStatic(" + className + " t) {\n");
-
-        if (clazz.getAnnotation(Client.class) != null) {
-            w.write("        return t._getBundledResources() + \"<div id=\\\"\" + t.getId() + \"\\\" data-jrx-client=\\\"" + className + "\\\"></div>\";\n");
-            w.write("    }\n");
-            return;
-        }
-
-        w.write("        try {\n");
-        w.write("            StringBuilder sb = new StringBuilder(" + (int)(rawHtml.length() * 1.5) + ");\n");
-        w.write("            sb.append(\"<div id=\\\"\").append(t.getId()).append(\"\\\">\");\n");
-        w.write("            sb.append(t._getBundledResources());\n");
-
-        this.__nodeSeq = 0;
-        List<Node> nodes = parseToNodes(rawHtml);
-        Set<String> aliases = new HashSet<>();
-        
-        for (Node node : nodes) {
-            node.generate(w, aliases, "sb");
-        }
-
-        w.write("            sb.append(\"</div>\");\n");
-        w.write("            return sb.toString();\n");
-        w.write("        } catch (Exception e) { return \"Render Error: \" + e.getMessage(); }\n");
-        w.write("    }\n\n");
-
-        // Helper optimizado
-        w.write("    private Object resolvePath(Object obj, String path) {\n");
-        w.write("        if (obj == null || path.isEmpty()) return obj;\n");
-        w.write("        try {\n");
-        w.write("            for (String p : path.split(\"\\\\.\")) {\n");
-        w.write("                if (obj == null) return null;\n");
-        w.write("                if (obj instanceof com.ciro.jreactive.ReactiveVar) obj = ((com.ciro.jreactive.ReactiveVar)obj).get();\n");
-        w.write("                java.lang.reflect.Field f = findField(obj.getClass(), p);\n");
-        w.write("                if (f != null) {\n");
-        w.write("                    f.setAccessible(true);\n");
-        w.write("                    obj = f.get(obj);\n");
-        w.write("                } else return null;\n");
-        w.write("            }\n");
-        w.write("            if (obj instanceof com.ciro.jreactive.ReactiveVar) return ((com.ciro.jreactive.ReactiveVar)obj).get();\n");
-        w.write("            return obj;\n");
-        w.write("        } catch (Exception e) { return null; }\n");
-        w.write("    }\n");
-        w.write("    private java.lang.reflect.Field findField(Class<?> c, String n) {\n");
-        w.write("        try { return c.getDeclaredField(n); } catch (Exception e) {\n");
-        w.write("            return (c.getSuperclass() != null) ? findField(c.getSuperclass(), n) : null;\n");
-        w.write("        }\n");
-        w.write("    }\n");
-    }
-
-    // --- Parser Stack ---
-    private List<Node> parseToNodes(String html) {
-        List<Node> rootNodes = new ArrayList<>();
-        if (html == null || html.isEmpty()) return rootNodes;
-
-        Stack<ContainerNode> stack = new Stack<>();
-        ContainerNode root = new ContainerNode(rootNodes);
-        stack.push(root);
-
-        Matcher m = TOKEN_PATTERN.matcher(html);
-        int lastIdx = 0;
-
-        while (m.find()) {
-            String text = html.substring(lastIdx, m.start());
-            if (!text.isEmpty()) stack.peek().add(new TextNode_(text));
-
-            String blockTag = m.group(1); 
-            String varTag = m.group(3);
-            String openTag = m.group(4);
-            String closeTag = m.group(7);
-
-            if (blockTag != null) {
-                handleBlock(blockTag, m.group(2), stack);
-            } 
-            else if (varTag != null) {
-                stack.peek().add(new VarNode(varTag));
-            }
-            else if (openTag != null) {
-                String attrs = m.group(5);
-                boolean selfClosing = "/".equals(m.group(6));
-                
-                ComponentNode comp = new ComponentNode(openTag, attrs, new ArrayList<>(), __nodeSeq++);
-                stack.peek().add(comp);
-                
-                // Si NO es autocierre y NO es slot, entramos al nivel
-                if (!selfClosing && !openTag.equals("slot")) {
-                    stack.push(comp);
-                }
-            }
-            else if (closeTag != null) {
-                if (!stack.isEmpty() && stack.peek() instanceof ComponentNode cNode && cNode.name.equals(closeTag)) {
-                    stack.pop();
-                }
-            }
-            lastIdx = m.end();
-        }
-        String tail = html.substring(lastIdx);
-        if (!tail.isEmpty()) stack.peek().add(new TextNode_(tail));
-
-        return rootNodes;
-    }
-
-    private void handleBlock(String tag, String args, Stack<ContainerNode> stack) {
-        if (tag.startsWith("#if")) {
-            IfNode node = new IfNode(args.trim(), new ArrayList<>(), new ArrayList<>());
-            stack.peek().add(node);
-            stack.push(node);
-        } else if (tag.startsWith("#each")) {
-            String[] parts = args.split(" as ");
-            // 🔥 ID único para variables del loop
-            EachNode node = new EachNode(parts[0].trim(), parts.length > 1 ? parts[1].trim() : "it", new ArrayList<>(), __nodeSeq++);
-            stack.peek().add(node);
-            stack.push(node);
-        } else if (tag.equals("else")) {
-            if (!stack.isEmpty() && stack.peek() instanceof IfNode ifNode) {
-                ifNode.switchToElse();
-            }
-        } else if (tag.startsWith("/")) {
-            if (stack.size() > 1) stack.pop();
-        }
-    }
-
-    // --- Node Structures ---
-
-    interface Node { 
-        void generate(Writer w, Set<String> aliases, String sb) throws IOException;
-        String generateRaw(); 
-    }
-
-    static class ContainerNode implements Node {
-        List<Node> children;
-        public ContainerNode(List<Node> c) { this.children = c; }
-        public void add(Node n) { children.add(n); }
-        public void generate(Writer w, Set<String> a, String sb) throws IOException {
-            for(Node n : children) n.generate(w, a, sb);
-        }
-        public String generateRaw() {
-            StringBuilder sb = new StringBuilder();
-            for(Node n : children) sb.append(n.generateRaw());
-            return sb.toString();
-        }
-    }
-
-    record TextNode_(String text) implements Node {
-        public void generate(Writer w, Set<String> a, String sb) throws IOException {
-            w.write("            " + sb + ".append(\"" + escapeJava(text) + "\");\n");
-        }
-        public String generateRaw() { return text; }
-    }
-
-    record VarNode(String path) implements Node {
-        public void generate(Writer w, Set<String> a, String sb) throws IOException {
-            if (path.equals("this.id") || path.equals("id")) {
-                w.write("            " + sb + ".append(t.getId());\n");
-                return;
-            }
-            String root = path.split("\\.")[0];
-            if (a.contains(root)) {
-                String sub = path.contains(".") ? path.substring(root.length() + 1) : "";
-                w.write("            " + sb + ".append(com.ciro.jreactive.HtmlEscaper.escape(java.util.Objects.toString(resolvePath(" + root + ", \"" + sub + "\"), \"\")));\n");
-            } else {
-                w.write("            " + sb + ".append(\"{{\" + t.getId() + \"." + path + "}}\");\n");
-            }
-        }
-        public String generateRaw() { return "{{" + path + "}}"; }
-    }
-
-    static class ComponentNode extends ContainerNode {
-        String name; String attrs; int uid;
-        private static final Pattern ATTR_REGEX = Pattern.compile("([:a-zA-Z0-9_@-]+)\\s*=\\s*(?:\"([^\"]*)\"|'([^']*)'|([^\"'\\s>]+))");
-        public ComponentNode(String n, String a, List<Node> c, int u) { super(c); name=n; attrs=a; uid=u; }
-
-        public void generate(Writer w, Set<String> a, String sb) throws IOException {
-            if (name.equals("slot")) { 
-                w.write("            " + sb + ".append(t._getSlotHtml());\n");
-                return;
-            }
-            String mapVar = "_attrs_" + uid;
-            String slotVar = "_slot_" + uid;
-            String slotSb = "_sbSlot_" + uid;
-            
-            w.write("            {\n");
-            w.write("                java.util.Map<String, String> " + mapVar + " = new java.util.HashMap<>();\n");
-            if (attrs != null) {
-                Matcher m = ATTR_REGEX.matcher(attrs);
-                while(m.find()) {
-                    String k = m.group(1);
-                    String v = m.group(2)!=null?m.group(2):m.group(3)!=null?m.group(3):m.group(4);
-                    if(v==null) v="";
-                    if (k.startsWith(":") || v.contains("{{")) {
-                        String key = k.startsWith(":") ? k.substring(1) : k;
-                        String root = v.replaceAll("[^\\w.]", "").split("\\.")[0];
-                        if (!a.contains(root) && !isLiteral(v)) {
-                            w.write("                " + mapVar + ".put(\"" + key + "\", t.getId() + \"." + escapeJava(v) + "\");\n");
-                        } else {
-                            w.write("                " + mapVar + ".put(\"" + key + "\", \"" + escapeJava(v) + "\");\n");
-                        }
-                    } else {
-                        w.write("                " + mapVar + ".put(\"" + k + "\", \"" + escapeJava(v) + "\");\n");
-                    }
-                }
-            }
-
-            w.write("                String " + slotVar + " = \"\";\n");
-            if (!children.isEmpty()) {
-                w.write("                StringBuilder " + slotSb + " = new StringBuilder();\n");
-                super.generate(w, a, slotSb);
-                w.write("                " + slotVar + " = " + slotSb + ".toString();\n");
-            }
-            w.write("                " + sb + ".append(t.renderChild(\"" + name + "\", " + mapVar + ", " + slotVar + "));\n");
-            w.write("            }\n");
-        }
-        public String generateRaw() { return ""; } // Componentes anidados no generan raw en el padre
-        private boolean isLiteral(String s) { return s.matches("true|false|-?\\d+(\\.\\d+)?|'.*'"); }
-    }
-
-    static class IfNode extends ContainerNode {
-        String cond; List<Node> elseChildren; boolean inElse = false;
-        public IfNode(String c, List<Node> ch, List<Node> ech) { super(ch); cond=c; elseChildren=ech; }
-        public void switchToElse() { inElse = true; }
-        public void add(Node n) { if(inElse) elseChildren.add(n); else super.add(n); }
-
-        public void generate(Writer w, Set<String> a, String sb) throws IOException {
-            // 🔥 DUAL GENERATION: Template Oculto + HTML Visible
-            w.write("            " + sb + ".append(\"<template data-if=\\\"" + escapeJava(cond) + "\\\">\");\n");
-            w.write("            " + sb + ".append(\"" + escapeJava(super.generateRaw()) + "\");\n");
-            w.write("            " + sb + ".append(\"</template>\");\n");
-            
-            w.write("            if (com.ciro.jreactive.template.TemplateContext.evalSimple(t, \"" + escapeJava(cond) + "\")) {\n");
-            super.generate(w, a, sb);
-            w.write("            }\n");
-
-            if (!elseChildren.isEmpty()) {
-                StringBuilder rawElse = new StringBuilder();
-                for(Node n : elseChildren) rawElse.append(n.generateRaw());
-
-                w.write("            " + sb + ".append(\"<template data-else=\\\"" + escapeJava(cond) + "\\\">\");\n");
-                w.write("            " + sb + ".append(\"" + escapeJava(rawElse.toString()) + "\");\n");
-                w.write("            " + sb + ".append(\"</template>\");\n");
-                
-                w.write("            if (!com.ciro.jreactive.template.TemplateContext.evalSimple(t, \"" + escapeJava(cond) + "\")) {\n");
-                for(Node n : elseChildren) n.generate(w, a, sb);
-                w.write("            }\n");
-            }
-        }
-        public String generateRaw() { return ""; }
-    }
-
-    static class EachNode extends ContainerNode {
-        String list, alias; int uid;
-        public EachNode(String l, String a, List<Node> c, int u) { super(c); list=l; alias=a; uid=u; }
-        
-        public void generate(Writer w, Set<String> a, String sb) throws IOException {
-            // 🔥 DUAL GENERATION: Template Oculto + HTML Visible
-            w.write("            " + sb + ".append(\"<template data-each=\\\"" + escapeJava(list) + ":" + alias + "\\\">\");\n");
-            w.write("            " + sb + ".append(\"" + escapeJava(generateRaw()) + "\");\n");
-            w.write("            " + sb + ".append(\"</template>\");\n");
-
-            // 🔥 FIX: SCOPE para variables únicas (_l_123)
-            w.write("            {\n"); 
-            String listVar = "_l_" + uid;
-            w.write("                Object " + listVar + " = resolvePath(t, \"" + list + "\");\n");
-            w.write("                if (" + listVar + " instanceof java.lang.Iterable) {\n");
-            w.write("                    for (Object " + alias + " : (java.lang.Iterable) " + listVar + ") {\n");
-            Set<String> sub = new HashSet<>(a); sub.add(alias);
-            for(Node n : children) n.generate(w, sub, sb);
-            w.write("                    }\n                }\n");
-            w.write("            }\n");
-        }
-        
-        public String generateRaw() {
-            StringBuilder sb = new StringBuilder();
-            for(Node n : children) sb.append(n.generateRaw());
-            return sb.toString();
-        }
-    }
-
     private boolean isValidField(Element e) {
         return e.getKind() == ElementKind.FIELD && 
                !e.getModifiers().contains(Modifier.PRIVATE) && 
@@ -600,51 +365,6 @@ public final class TemplateProcessor extends AbstractProcessor {
         if (s != null && !s.value().isBlank()) return s.value();
         if (b != null && !b.value().isBlank()) return b.value();
         return name;
-    }
-
-    private String qualifyEventsAtCompileTime(String html) {
-        if (html == null) return "";
-        try {
-            String clean = HTML5_VOID_FIX.matcher(html).replaceAll("<$1$2/>");
-            Document doc = Jsoup.parse(clean, "", Parser.xmlParser());
-            doc.outputSettings().prettyPrint(false).syntax(Document.OutputSettings.Syntax.html);
-
-            for (org.jsoup.nodes.Element el : doc.getAllElements()) {
-                List<Attribute> toAdd = new ArrayList<>();
-                List<String> toRemove = new ArrayList<>();
-
-                for (Attribute attr : el.attributes()) {
-                    String k = attr.getKey();
-                    if (k.startsWith("@") || k.equals("data-call")) {
-                        String v = attr.getValue();
-                        if (v.contains("{{") || v.contains("#")) continue;
-                        
-                        String newVal = "{{id}}." + v;
-
-                        if (k.startsWith("@")) {
-                            // 🔥 FIX: NO cambiamos el nombre del atributo a data-call-.
-                            // Lo dejamos como @click pero le inyectamos el ID (ej: @click="{{id}}.register(form)")
-                            // Así el runtime de JS extraerá los parámetros correctamente.
-                            toAdd.add(new Attribute(k, newVal));
-                            toRemove.add(k);
-                        } else {
-                            toAdd.add(new Attribute(k, newVal));
-                            toRemove.add(k);
-                        }
-                    }
-                }
-                toRemove.forEach(el::removeAttr);
-                toAdd.forEach(a -> el.attr(a.getKey(), a.getValue()));
-            }
-            return doc.html();
-        } catch (Exception e) {
-            return html;
-        }
-    }
-
-    private static String escapeJava(String s) {
-        if (s == null) return "";
-        return s.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n").replace("\r", "");
     }
 
     private List<Element> getAllMembers(TypeElement te) {
