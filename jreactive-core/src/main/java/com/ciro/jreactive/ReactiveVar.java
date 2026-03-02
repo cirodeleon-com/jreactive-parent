@@ -1,17 +1,16 @@
 package com.ciro.jreactive;
 
-import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Consumer;
 import java.util.function.BooleanSupplier;
-import java.util.concurrent.locks.ReentrantLock;
 
 public final class ReactiveVar<T> implements java.io.Serializable {
     private T value;
-    private final List<Consumer<T>> listeners = new CopyOnWriteArrayList<>();
     
-    private final ReentrantLock lock = new ReentrantLock();
+    // CopyOnWriteArrayList es Thread-Safe por naturaleza para iteraciones, 
+    // ideal aquí porque los listeners cambian poco pero se leen mucho.
+    private final List<Consumer<T>> listeners = new CopyOnWriteArrayList<>();
     
     private volatile BooleanSupplier activeGuard = () -> true;
     
@@ -24,25 +23,15 @@ public final class ReactiveVar<T> implements java.io.Serializable {
     public T get() { return value; }
 
     public void set(T newValue) {
-        List<Consumer<T>> snapshot = null;
+        this.value = newValue;
         
-        lock.lock();
-        try {
-            this.value = newValue;
-            
-            if (!activeGuard.getAsBoolean()) {
-                return;
-            }
-            
-            // Tomamos una instantánea rápida de los listeners y soltamos la memoria
-            snapshot = new ArrayList<>(listeners);
-        } finally {
-            lock.unlock(); // 🔓 Siempre liberar inmediatamente
+        if (!activeGuard.getAsBoolean()) {
+            return;
         }
         
-        // 🚀 Disparamos los eventos libres de bloqueos
-        if (snapshot != null) {
-            snapshot.forEach(l -> l.accept(newValue));
+        // 🚀 Disparamos los eventos libres de bloqueos (Protegidos por la cola JRX)
+        for (Consumer<T> listener : listeners) {
+            listener.accept(newValue);
         }
     }
     
