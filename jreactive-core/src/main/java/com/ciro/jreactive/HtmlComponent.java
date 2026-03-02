@@ -42,6 +42,8 @@ public abstract class HtmlComponent extends ViewLeaf implements java.io.Serializ
 private final  Map<String, String> _childRefAlias = new HashMap<>();
 
 
+
+
     
     private final Set<String> stateKeys = new HashSet<>(); 
     
@@ -55,6 +57,10 @@ private final  Map<String, String> _childRefAlias = new HashMap<>();
     private final Map<String, Object> _simpleSnapshots = new HashMap<>();
     private final Map<String, Integer> _identitySnapshots = new HashMap<>();
     private static final Map<Class<?>, String> RESOURCE_CACHE = new ConcurrentHashMap<>();
+    
+  //🔥 Cachés Estáticos de Reflexión (Se ejecutan 1 sola vez en la vida del Servidor)
+    private static final Map<Class<?>, List<Field>> FIELDS_CACHE = new ConcurrentHashMap<>();
+    private static final Map<Class<?>, Map<String, Method>> CALLABLES_CACHE = new ConcurrentHashMap<>();
 
     private String slotHtml = "";
     
@@ -381,73 +387,80 @@ private final  Map<String, String> _childRefAlias = new HashMap<>();
         }
     }
 
-    // Método privado, asumimos que quien lo llama ya tiene el lock
     private void buildBindings() {
         if (map != null) return;
         map = new HashMap<>();
         stateKeys.clear();
 
-        Class<?> c = getClass();
-        while (c != null && c != Object.class) {
-            for (Field f : c.getDeclaredFields()) {
-                Bind bindAnn    = f.getAnnotation(Bind.class);
-                State stateAnn = f.getAnnotation(State.class);
-
-                if (bindAnn == null && stateAnn == null) continue;
-
-                f.setAccessible(true);
-                try {
-                    Object raw = f.get(this);
-
-                    ReactiveVar<?> rx;
-                    if (bindAnn != null) {
-                        rx = (raw instanceof ReactiveVar<?> r) ? r :
-                             (raw instanceof Type<?> v)        ? v.rx() :
-                             new ReactiveVar<>(raw);
-                        
-                        rx.setGenericType(extractRealType(f.getGenericType()));
-
-                        String key = bindAnn.value().isBlank() ? f.getName() : bindAnn.value();
-                        rx.setActiveGuard(() -> _state() == ComponentState.MOUNTED);
-                        map.put(key, rx);
-                        
-                        
+        // 1. Obtener campos (Desde el Caché O(1) o escaneando la primera vez)
+        List<Field> fields = FIELDS_CACHE.computeIfAbsent(this.getClass(), clazz -> {
+            List<Field> list = new ArrayList<>();
+            Class<?> c = clazz;
+            while (c != null && c != Object.class) {
+                for (Field f : c.getDeclaredFields()) {
+                    if (f.isAnnotationPresent(Bind.class) || f.isAnnotationPresent(State.class)) {
+                        f.setAccessible(true);
+                        list.add(f);
                     }
-
-                    if (stateAnn != null) {
-                        Object smartValue = wrapInSmartType(raw);
-
-                        if (smartValue != raw) {
-                            f.set(this, smartValue);
-                            raw = smartValue; 
-                        }
-
-                        ReactiveVar<Object> srx = new ReactiveVar<>(raw);
-                        
-                        srx.setGenericType(extractRealType(f.getGenericType()));
-                        
-                        srx.setActiveGuard(() -> _state() == ComponentState.MOUNTED);
-
-                        srx.onChange(newValue -> {
-                            try {
-                                f.setAccessible(true);
-                                Object smartNew = wrapInSmartType(newValue);
-                                f.set(this, smartNew);
-                            } catch (Exception e) {
-                                System.err.println("Error reflexion writing field " + f.getName() + ": " + e.getMessage());
-                            }
-                        });
-
-                        String key = stateAnn.value().isBlank() ? f.getName() : stateAnn.value();
-                        map.put(key, srx);
-                        stateKeys.add(key);
-                    }
-
-                } catch (IllegalAccessException e) {
-                    throw new RuntimeException(e);
                 }
+                c = c.getSuperclass();
             }
-            c = c.getSuperclass();
+            return list;
+        });
+
+        // 2. Procesar los campos (Ya filtrados y cacheados)
+        for (Field f : fields) {
+            Bind bindAnn = f.getAnnotation(Bind.class);
+            State stateAnn = f.getAnnotation(State.class);
+
+            try {
+                Object raw = f.get(this);
+
+                ReactiveVar<?> rx;
+                if (bindAnn != null) {
+                    rx = (raw instanceof ReactiveVar<?> r) ? r :
+                         (raw instanceof Type<?> v)        ? v.rx() :
+                         new ReactiveVar<>(raw);
+                    
+                    rx.setGenericType(extractRealType(f.getGenericType()));
+
+                    String key = bindAnn.value().isBlank() ? f.getName() : bindAnn.value();
+                    rx.setActiveGuard(() -> _state() == ComponentState.MOUNTED);
+                    map.put(key, rx);
+                }
+
+                if (stateAnn != null) {
+                    Object smartValue = wrapInSmartType(raw);
+
+                    if (smartValue != raw) {
+                        f.set(this, smartValue);
+                        raw = smartValue; 
+                    }
+
+                    ReactiveVar<Object> srx = new ReactiveVar<>(raw);
+                    
+                    srx.setGenericType(extractRealType(f.getGenericType()));
+                    
+                    srx.setActiveGuard(() -> _state() == ComponentState.MOUNTED);
+
+                    srx.onChange(newValue -> {
+                        try {
+                            f.setAccessible(true); // En caso de que se haya perdido el flag
+                            Object smartNew = wrapInSmartType(newValue);
+                            f.set(this, smartNew);
+                        } catch (Exception e) {
+                            System.err.println("Error reflexion writing field " + f.getName() + ": " + e.getMessage());
+                        }
+                    });
+
+                    String key = stateAnn.value().isBlank() ? f.getName() : stateAnn.value();
+                    map.put(key, srx);
+                    stateKeys.add(key);
+                }
+
+            } catch (IllegalAccessException e) {
+                throw new RuntimeException(e);
+            }
         }
     }
 
@@ -524,23 +537,22 @@ private final  Map<String, String> _childRefAlias = new HashMap<>();
     }
     
     public Map<String, Method> getCallableMethods() {
-        Map<String, Method> callables = new HashMap<>();
-        Class<?> current = this.getClass();
-
-        // Subimos por la jerarquía para descubrir métodos @Call heredados
-        while (current != null && current != HtmlComponent.class) {
-            for (Method m : current.getDeclaredMethods()) {
-                if (m.isAnnotationPresent(com.ciro.jreactive.annotations.Call.class)) {
-                    // putIfAbsent respeta el Polimorfismo: si el hijo sobreescribe, gana el hijo
-                    if (!callables.containsKey(m.getName())) {
-                        m.setAccessible(true);
-                        callables.put(m.getName(), m);
+        return CALLABLES_CACHE.computeIfAbsent(this.getClass(), clazz -> {
+            Map<String, Method> callables = new HashMap<>();
+            Class<?> current = clazz;
+            while (current != null && current != HtmlComponent.class) {
+                for (Method m : current.getDeclaredMethods()) {
+                    if (m.isAnnotationPresent(com.ciro.jreactive.annotations.Call.class)) {
+                        if (!callables.containsKey(m.getName())) {
+                            m.setAccessible(true);
+                            callables.put(m.getName(), m);
+                        }
                     }
                 }
+                current = current.getSuperclass();
             }
-            current = current.getSuperclass();
-        }
-        return callables;
+            return callables;
+        });
     }
     
     void _injectParams(Map<String,String> params) {
