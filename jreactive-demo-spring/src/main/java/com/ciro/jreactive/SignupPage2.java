@@ -60,7 +60,7 @@ public class SignupPage2 extends AppPage {
         return """
             <section style="max-width: 420px; padding: 16px; font-family: system-ui;">
               <h1>Registro con Bean Validation</h1>
-
+              
               <JCard title="hola">
 
                 <JForm onSubmit="register(form)">

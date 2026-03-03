@@ -97,18 +97,68 @@ const Store = {
 
   let currentPath = '/';
   let firstMiss   = true;
+  let isReconnecting = false;
+  let hmrSavedState = null;
   
-  
-  /* ──────────────────────────────────────────────────────────────
- * 9. REACTIVITY ENGINE (Proxy O(1))
- * ────────────────────────────────────────────────────────────── */
+  /* ------------------------------------------------------------------
+     * 🛠️ JREACTIVE DEVTOOLS (Logger Visual)
+     * ------------------------------------------------------------------ */
+    window.JRX = window.JRX || {};
+    window.JRX.config = { debug: true }; // Puedes ponerlo en false en Producción
 
-/**
- * Crea un Proxy que intercepta asignaciones y actualiza solo el nodo DOM afectado.
- */
-/* ──────────────────────────────────────────────────────────────
- * 9. REACTIVITY ENGINE (Proxy O(1)) - Versión Mejorada
- * ────────────────────────────────────────────────────────────── */
+    const JrxDevTools = {
+        logCall: (qualified, args) => {
+            if (!window.JRX.config.debug) return;
+            console.groupCollapsed(`%c JRX %c 🚀 CALL %c ${qualified}`, 
+                'background:#1e1e1e;color:#00d8ff;border-radius:3px;padding:2px 5px;font-weight:bold;', 
+                'color:#ff9800;font-weight:bold;', 
+                'color:#888;font-weight:normal;'
+            );
+            if (args && args.length > 0) console.log("Argumentos:", args);
+            console.groupEnd();
+        },
+        logIncoming: (payload, byteSize) => {
+            if (!window.JRX.config.debug) return;
+            const isHeartbeat = payload === "h";
+            if (isHeartbeat) return; // Ignoramos los heartbeats para no ensuciar
+
+            let title = "Mensaje WS";
+            let parsed = payload;
+            try {
+                if (typeof payload === 'string') parsed = JSON.parse(payload);
+                if (parsed.seq) title = `Batch Seq #${parsed.seq}`;
+            } catch(e) {}
+
+            console.groupCollapsed(`%c JRX %c ⚡ IN %c ${title} %c (${byteSize} bytes)`, 
+                'background:#1e1e1e;color:#00d8ff;border-radius:3px;padding:2px 5px;font-weight:bold;', 
+                'color:#4caf50;font-weight:bold;', 
+                'color:#888;font-weight:normal;',
+                'color:#00bcd4;font-size:0.9em;'
+            );
+            console.dir(parsed);
+            console.groupEnd();
+        },
+        logDelta: (key, type, changes) => {
+            if (!window.JRX.config.debug) return;
+            console.log(`%c   ∆ DELTA %c ${key} %c[${type}]`, 
+                'color:#e91e63;font-weight:bold;', 
+                'color:#333;font-weight:bold;', 
+                'color:#888;', 
+                changes
+            );
+        },
+        logState: (key, val) => {
+            if (!window.JRX.config.debug) return;
+            console.log(`%c   ⟳ STATE %c ${key}`, 
+                'color:#2196f3;font-weight:bold;', 
+                'color:#333;font-weight:bold;', 
+                val
+            );
+        }
+    };
+
+
+
 
 function createReactiveProxy(rootEl, initialState) {
     const bindingsMap = new Map();
@@ -371,8 +421,10 @@ function applyBatch(batch) {
     if (msg.delta) {
       const type    = msg.type ?? msg.t;
       const changes = msg.changes ?? msg.c ?? [];
+	  JrxDevTools.logDelta(k, type, changes);
       applyDelta(k, type, changes);
     } else {
+	  JrxDevTools.logState(k, v);	
       applyStateForKey(k, v);
     }
   });
@@ -428,9 +480,21 @@ function connectTransport(path) {
   socket.onopen = function() {
       const transportName = isSockJSAvailable ? socket.transport : 'nativo';
       console.log(`🟢 Conectado usando transporte: ${transportName}`);
+	  
+	  if (isReconnecting) {
+	     console.log("♻️ [JReactive HMR] Servidor detectado de nuevo. Recargando UI...");
+	     isReconnecting = false;
+		 loadRoute(currentPath, hmrSavedState); 
+		 hmrSavedState = null;
+	  }
+	  
   };
 
   socket.onmessage = function(e) {
+	  const byteSize = new Blob([e.data]).size;
+	  if (window.JRX && window.JRX.config && window.JRX.config.debug) {
+	     JrxDevTools.logIncoming(e.data, byteSize);
+	  }
       const pkt = JSON.parse(e.data);
       const batch = normalizeIncoming(pkt);
       applyBatch(batch);
@@ -439,6 +503,8 @@ function connectTransport(path) {
   socket.onclose = function(e) {
       if (e.code === 1000 && e.reason === "route-change") return;
       console.warn(`🔴 Desconectado (${e.code}). Reconectando en 1s...`);
+	  isReconnecting = true;
+	  hmrSavedState = deepClone(state);
       reconnectTimer = setTimeout(() => connectTransport(path), 1000); 
   };
   
@@ -1013,7 +1079,15 @@ function resolveTarget(key) {
   
 function applyDelta(key, type, changes) {
   const target = resolveTarget(key);
-  if (!target && type !== 'json') return;
+  
+  if (window.JRX && window.JRX.config && window.JRX.config.debug) {
+        JrxDevTools.logDelta(key, type, changes);
+  }
+  
+  if (!target && type !== 'json') {
+	console.warn(`⚠️ [JrxDevTools] Ignorando Delta: No se encontró '${key}' en memoria.`);
+	return;
+  }
   
   if (type === 'json') {
       // 🟢 FIX: Normalizamos a array y procesamos TODOS los elementos, no solo el [0]
@@ -1203,7 +1277,7 @@ document.addEventListener('DOMContentLoaded', () => {
 /* ------------------------------------------------------------------
  * 7. SPA Router (Adaptado a SockJS)
  * ------------------------------------------------------------------ */
-async function loadRoute(path = location.pathname) {
+async function loadRoute(path = location.pathname, preservedState = null) {
   startLoading(); 
   try {
     // ---------------------------------------------------------
@@ -1280,6 +1354,25 @@ async function loadRoute(path = location.pathname) {
 
     // 5. Conectar transporte (Usa la nueva función con SockJS)
     connectTransport(path);
+	
+	if (preservedState) {
+	          // Un bucle que espera a que el nuevo WebSocket esté abierto
+	          const pushInterval = setInterval(() => {
+	              if (socket && socket.readyState === 1) {
+	                  clearInterval(pushInterval);
+	                  
+	                  // Enviar cada variable guardada al nuevo servidor
+	                  for (const [k, v] of Object.entries(preservedState)) {
+	                      state[k] = v; // Lo ponemos en JS
+	                      updateDomForKey(k, v); // Lo pintamos en pantalla
+	                      
+	                      // ¡Le disparamos el dato al servidor Java recién nacido!
+	                      socket.send(JSON.stringify({ k, v }));
+	                  }
+	                  console.log("♻️ [HMR] Memoria restaurada e inyectada al nuevo servidor.");
+	              }
+	          }, 50);
+	      }
 
     app.style.visibility = '';
     currentPath = path; 
@@ -1767,6 +1860,7 @@ function setupEventBindings() {
 	        }
 	    }
 	
+		
 	startLoading();
 
     const paramList = (rawParams || '').split(',').map(p => p.trim()).filter(Boolean);
@@ -1774,6 +1868,10 @@ function setupEventBindings() {
     for (const p of paramList) {
       args.push(await buildValue(p, el));
     }
+	
+	if (window.JRX && window.JRX.config && window.JRX.config.debug) {
+	  JrxDevTools.logCall(qualified, args);
+	}
 
 	// D) La tarea de red encapsulada
 	    const netTask = async () => {
