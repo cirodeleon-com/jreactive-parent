@@ -78,7 +78,7 @@ public class DeltaTestPage extends AppPage {
                     <strong style="display:block; margin-bottom:10px;">Controles de Mutación:</strong>
                     
                     <div style="display: flex; gap: 10px; flex-wrap: wrap;">
-                        <button @click="addOne()" 
+                        <button @click.throttle.2000ms="addOne()" 
                                 style="cursor:pointer; padding: 8px 12px; background: #28a745; color: white; border: none; border-radius: 4px; font-weight: bold;">
                             ➕ ADD (Agregar)
                         </button>

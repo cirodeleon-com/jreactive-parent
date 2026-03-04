@@ -116,7 +116,7 @@ public class ReliabilityTestPage extends AppPage {
                     <input type="text" 
                            name="busqueda" 
                            placeholder="Escribe un nombre o ID..." 
-                           @input="filtrar(busqueda)"
+                           @input.debounce.800ms="filtrar(busqueda)"
                            style="padding: 10px; width: 300px; border: 1px solid #aaa; border-radius: 4px;">
                     
                     <span style="background: #e9ecef; padding: 5px 10px; border-radius: 4px;">

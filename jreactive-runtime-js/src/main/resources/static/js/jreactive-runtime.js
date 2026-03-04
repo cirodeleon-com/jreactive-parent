@@ -1559,6 +1559,30 @@ function reindexBindings() {
   state[k] = v;
   
   updateDomForKey(k,v);
+  
+  
+  const customDebounce = el.dataset.jrxDebounce;
+          let isFastTransport = false;
+          if (socket) {
+              isFastTransport = (typeof SockJS !== 'undefined') ? (socket.transport === 'websocket') : true;
+          }
+          
+          const shouldDebounce = customDebounce || (evt === 'input' && !isFastTransport);
+
+          if (shouldDebounce) {
+              const dMs = customDebounce ? parseInt(customDebounce) : 300;
+              if (el._jrxStateSyncTimer) clearTimeout(el._jrxStateSyncTimer);
+              
+              await new Promise(resolve => {
+                  el._jrxStateSyncTimer = setTimeout(resolve, dMs);
+              });
+              
+              // Si el elemento desapareció o el usuario siguió escribiendo, cancelamos este envío viejo
+              if (!document.body.contains(el)) return;
+              const currentV = (el.type === 'checkbox' || el.type === 'radio') ? el.checked : el.value;
+              if (currentV !== v) return; 
+          } 
+  
 
   if (socket && socket.readyState === 1) {
     socket.send(JSON.stringify({ k, v }));
@@ -1808,21 +1832,54 @@ function setupEventBindings() {
     }
 
     
-	// B) DEBOUNCE: Evalúa correctamente si es WS rápido o Polling lento
+	
+	// B) DEBOUNCE Y THROTTLE INTELIGENTES
+	    const customDebounce = el.dataset.jrxDebounce;
+	    const customThrottle = el.dataset.jrxThrottle;
+
 	    let isFastTransport = false;
 	    if (socket) {
 	        isFastTransport = (typeof SockJS !== 'undefined') ? (socket.transport === 'websocket') : true;
 	    }
 	    
-	    if (evtName === 'input' && !isFastTransport) { 
-	      if (el._jrxDebounce) clearTimeout(el._jrxDebounce);
-	      await new Promise(resolve => {
-	        el._jrxDebounce = setTimeout(resolve, 300);
-	      });
+	    // 1. PRIMERO: Debounce (Agrupa eventos y espera a que el usuario termine)
+	    const shouldDebounce = customDebounce || (evtName === 'input' && !isFastTransport);
+	    if (shouldDebounce) { 
+	        const dMs = customDebounce ? parseInt(customDebounce) : 300;
+	        if (el._jrxDebounceTimer) clearTimeout(el._jrxDebounceTimer);
+	        
+	        await new Promise(resolve => {
+	            el._jrxDebounceTimer = setTimeout(resolve, dMs);
+	        });
+	        
+	        // Abortar si el usuario navegó a otra página mientras el timer corría
+	        if (!document.body.contains(el)) return;
+	    }
+
+	    // 2. SEGUNDO: Throttle (Evita saturar el servidor con doble-clicks rápidos)
+	    if (customThrottle) {
+	        const tMs = parseInt(customThrottle) || 1000;
+	        const now = Date.now();
+	        if (el._jrxLastThrottle && (now - el._jrxLastThrottle) < tMs) {
+	            return; // Cortar ejecución silenciosamente
+	        }
+	        el._jrxLastThrottle = now;
 	    }
 
     // C) Preparación
     clearValidationErrors();
+	
+	const optClass = el.getAttribute('jrx-optimistic-class');
+	    if (optClass) el.classList.toggle(optClass);
+
+	    const optHide = el.getAttribute('jrx-optimistic-hide');
+	    if (optHide) {
+	        const target = optHide === 'this' ? el : el.closest(optHide);
+	        if (target) {
+	            target._jrxOldDisplay = target.style.display; 
+	            target.style.display = 'none'; 
+	        }
+	    }
 	
 	let rollbackData = null;
 	    const optCode = el.getAttribute('data-optimistic');
@@ -1929,11 +1986,22 @@ function setupEventBindings() {
 			        }
 	      }
 	      
-	      if (!ok && rollbackData) {
-	         for (const [k, v] of Object.entries(rollbackData)) {
-	            state[k] = v;          
-	            updateDomForKey(k, v); 
-	         }
+	      if (!ok) {
+		   	 if(rollbackData){
+	            for (const [k, v] of Object.entries(rollbackData)) {
+	               state[k] = v;          
+	               updateDomForKey(k, v); 
+	            }
+			 }
+			 
+			 if (optClass) el.classList.toggle(optClass);
+			 if (optHide) {
+			    const target = optHide === 'this' ? el : el.closest(optHide);
+			    if (target && target._jrxOldDisplay !== undefined) {
+			       target.style.display = target._jrxOldDisplay;
+			    }
+			 }
+			 
 	      }
 
 	      const detail = { element: el, qualified, args, ok, code, error, payload };
@@ -2000,19 +2068,31 @@ function hydrateEventDirectives(root = document, forceNs = "") {
   all.forEach(el => {
     const hydratedSet = el._jrxHydratedEvents || (el._jrxHydratedEvents = new Set());
 
-    EVENT_DIRECTIVES.forEach(evtName => {
-      const attr = '@' + evtName;
+	EVENT_DIRECTIVES.forEach(evtName => {
+	      // 1. Buscamos cualquier atributo que empiece por el evento (ej: @click o @input.debounce.500ms)
+	      const attrMatch = Array.from(el.attributes).find(a => a.name.startsWith('@' + evtName));
+	      if (!attrMatch || hydratedSet.has(evtName)) return;
 
-      if (!el.hasAttribute(attr) || hydratedSet.has(evtName)) return;
+	      const attrName = attrMatch.name;
+	      let value = (attrMatch.value || '').trim();
 
-      let value = (el.getAttribute(attr) || '').trim();
-
-      // Limpieza de basura {{...}}
-      if (!value || value.includes('{{')) {
-        el.removeAttribute(attr);
-        hydratedSet.add(evtName);
-        return;
-      }
+	      // 2. Limpieza de basura {{...}}
+	      if (!value || value.includes('{{')) {
+	        el.removeAttribute(attrName);
+	        hydratedSet.add(evtName);
+	        return;
+	      }
+	      
+	      // 3. Extraer modificadores (.debounce.500ms, .throttle.1000ms)
+	      const modifiers = attrName.split('.').slice(1);
+	      modifiers.forEach(mod => {
+	          if (mod.startsWith('debounce')) {
+	              el.dataset.jrxDebounce = mod.replace('debounce', '').replace('ms', '') || '300';
+	          }
+	          if (mod.startsWith('throttle')) {
+	              el.dataset.jrxThrottle = mod.replace('throttle', '').replace('ms', '') || '1000';
+	          }
+	      });
       
       if (forceNs && !value.includes('.') && !value.includes('#')) {
           value = forceNs + value;
@@ -2026,7 +2106,7 @@ function hydrateEventDirectives(root = document, forceNs = "") {
         value.match(/^([\w]+)$/);                         
 
       if (!m) {
-        el.removeAttribute(attr);
+        el.removeAttribute(attrName);
         hydratedSet.add(evtName);
         return;
       }
@@ -2055,7 +2135,7 @@ function hydrateEventDirectives(root = document, forceNs = "") {
       }
 
       hydratedSet.add(evtName);
-      el.removeAttribute(attr); // Borramos el @click para que no ensucie
+      el.removeAttribute(attrName); // Borramos el @click para que no ensucie
     });
   });
 }

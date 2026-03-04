@@ -1,0 +1,23 @@
+/* Se aplicará mágicamente solo a este componente gracias al CssScoper */
+.showcase-container {
+    max-width: 600px; margin: 0 auto; padding: 20px; font-family: sans-serif;
+}
+.card {
+    border: 1px solid #ddd; border-radius: 8px; padding: 15px; margin-bottom: 20px;
+}
+/* Estilos para el botón de Like */
+.btn-heart {
+    background: none; border: 1px solid #ccc; padding: 10px 20px; border-radius: 20px;
+    cursor: pointer; font-size: 16px; color: gray; transition: transform 0.2s;
+}
+.btn-heart.is-liked {
+    color: #e25555; border-color: #e25555; background: #ffebeb; transform: scale(1.05);
+}
+/* Tareas */
+.task-row {
+    display: flex; justify-content: space-between; padding: 10px;
+    border-bottom: 1px solid #eee; background: white;
+}
+.btn-delete { color: white; background: #dc3545; border: none; padding: 5px 10px; cursor: pointer; border-radius: 4px; }
+/* Efecto de cargando (optimista) */
+.is-loading { opacity: 0.5; pointer-events: none; filter: grayscale(100%); }
