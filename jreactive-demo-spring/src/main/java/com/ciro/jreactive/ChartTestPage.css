@@ -1,0 +1,37 @@
+.chart-container {
+    padding: 30px;
+    max-width: 700px;
+    margin: 0 auto;
+    font-family: system-ui, -apple-system, sans-serif;
+}
+
+.btn-random {
+    padding: 12px 24px;
+    background-color: #007bff;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 16px;
+    font-weight: bold;
+    margin-bottom: 25px;
+    transition: background-color 0.2s, transform 0.1s;
+}
+
+.btn-random:hover {
+    background-color: #0056b3;
+}
+
+.btn-random:active {
+    transform: scale(0.98);
+}
+
+.canvas-wrapper {
+    border: 1px solid #e0e0e0;
+    padding: 20px;
+    border-radius: 12px;
+    background: #ffffff;
+    box-shadow: 0 8px 16px rgba(0,0,0,0.05);
+    height: 350px; /* Chart.js requiere que el contenedor padre tenga una altura definida */
+    position: relative;
+}

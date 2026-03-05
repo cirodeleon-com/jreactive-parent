@@ -109,8 +109,10 @@ public class AstComponentEngine extends AbstractComponentEngine {
         if (ctx.getClass().isAnnotationPresent(Client.class)) {
             String id = ctx.getId();
             String name = ctx.getClass().getSimpleName();
+            String scopeId = ctx._getScopeId();
 
-            html = resources + "<div id=\"" + id + "\" data-jrx-client=\"" + name + "\"></div>";
+            //html = resources + "<div id=\"" + id + "\"  data-jrx-client=\"" + name + "\"></div>";
+            html = resources + "<div id=\"" + id + "\" class=\"" + scopeId + "\" data-jrx-client=\"" + name + "\"></div>";
             /*
             // Token stateless incluso en shell client
             if (ctx.getClass().isAnnotationPresent(Stateless.class)) {
@@ -412,11 +414,17 @@ public class AstComponentEngine extends AbstractComponentEngine {
         child.getRawBindings().forEach((k, v) -> s.allBindings.put(childPrefix + k, v));
 
         // 4) CSR hijo => shell + resources once + copiar class/style
+     // 4) CSR hijo => shell + resources once + copiar class/style
         if (child.getClass().isAnnotationPresent(Client.class)) {
             String css = getResourcesOnce(child, s.emittedResources);
+            String scopeId = child._getScopeId(); // 🔥 Extraemos el ID
 
             String shell = "<div id=\"" + child.getId() + "\" data-jrx-client=\"" + child.getClass().getSimpleName() + "\"";
-            if (attrs.containsKey("class")) shell += " class=\"" + escapeAttr(attrs.get("class")) + "\"";
+            
+            // 🔥 Fusionamos las clases pasadas por el usuario con la clase del Scope
+            String finalClass = attrs.containsKey("class") ? escapeAttr(attrs.get("class")) + " " + scopeId : scopeId;
+            shell += " class=\"" + finalClass + "\"";
+            
             if (attrs.containsKey("style")) shell += " style=\"" + escapeAttr(attrs.get("style")) + "\"";
             shell += "></div>";
 

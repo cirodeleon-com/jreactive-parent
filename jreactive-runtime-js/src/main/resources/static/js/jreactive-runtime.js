@@ -21,7 +21,11 @@ window.JRX.renderTemplate = function(html, state) {
   return html.replace(/{{\s*([\w.-]+)\s*}}/g, (m, key) => {
     // 1. Intentar acceso directo primero (Optimización para {{id}})
     if (state.hasOwnProperty(key)) {
-        return (state[key] !== undefined && state[key] !== null) ? state[key] : '';
+        //return (state[key] !== undefined && state[key] !== null) ? state[key] : '';
+		
+		const val = state[key];
+		if (val === undefined || val === null) return '';
+		return typeof val === 'object' ? JSON.stringify(val) : val;
     }
     
     // 2. Resolver ruta profunda (ej: "user.name")
@@ -29,8 +33,11 @@ window.JRX.renderTemplate = function(html, state) {
 
     // Debug si falla la resolución de un ID (opcional)
      if ((val === undefined || val === null) && key === 'id') console.warn("⚠️ Falló resolución de {{id}}", state);
+	 
+	 if (val === undefined || val === null) return '';
 
-    return (val !== undefined && val !== null) ? val : '';
+    //return (val !== undefined && val !== null) ? val : '';
+	return typeof val === 'object' ? JSON.stringify(val) : val;
   });
 };
   
@@ -530,7 +537,11 @@ async function syncStateHttp() {
         }).then(r => r.text());
 
         if (window.Idiomorph) {
-            Idiomorph.morph(document.getElementById('app'), html, { morphStyle: 'innerHTML' });
+            //Idiomorph.morph(document.getElementById('app'), html, { morphStyle: 'innerHTML' });
+			Idiomorph.morph(document.getElementById('app'), html, { 
+			               morphStyle: 'innerHTML',
+			               callbacks: { beforeNodeMorphed: jrxMorphCallback } // 🔥 Usamos el callback global
+			            });
         } else {
             document.getElementById('app').innerHTML = html;
         }
@@ -1119,10 +1130,13 @@ function applyDelta(key, type, changes) {
     else if (type === 'map') applyMapChange(target, ch);
     else if (type === 'set') applySetChange(target, ch);
   });
-
-  updateDomForKey(key, target);
-  updateIfBlocks();
-  updateEachBlocks();
+  
+  
+  //updateDomForKey(key, target);
+  //updateIfBlocks();
+  //updateEachBlocks();
+  
+  applyStateForKey(key, target);
 }
 
 function applyListChange(arr, ch) {
@@ -1192,12 +1206,49 @@ function applySetChange(arr, ch) {
 
 
 
+
 /* ------------------------------------------------------------------
- * 8. CLIENT HOOKS (Nuevo: Vigilante del DOM)
+ * 8. CLIENT HOOKS (Vigilante del DOM + Escudo Idiomorph)
  * ------------------------------------------------------------------ */
+
+// 🔥 NUEVO: Callback maestro para Idiomorph (El Escudo)
+function jrxMorphCallback(fromEl, toEl) {
+    if (fromEl.nodeType !== 1) return true;
+
+    // 🛡️ EL ESCUDO: Interoperabilidad JS (Ignora hijos, pero copia atributos)
+    if (fromEl.hasAttribute('jrx-ignore')) {
+        // 1. Copiar atributos nuevos (ej: actualiza data-sales="{{salesData}}")
+        Array.from(toEl.attributes).forEach(attr => {
+            if (fromEl.getAttribute(attr.name) !== attr.value) {
+                fromEl.setAttribute(attr.name, attr.value);
+            }
+        });
+        // 2. Remover atributos viejos
+		const protectedAttrs = ['style', 'width', 'height', 'class'];
+		        Array.from(fromEl.attributes).forEach(attr => {
+		            if (!toEl.hasAttribute(attr.name) && !protectedAttrs.includes(attr.name)) {
+		                fromEl.removeAttribute(attr.name);
+		            }
+		        });
+        // 🛑 Detiene la mutación de los hijos (Idiomorph ignora el innerHTML)
+        return false; 
+    }
+
+    // 🛡️ PROTECCIÓN DE FOCO: No interrumpir al usuario mientras escribe
+    if (fromEl === document.activeElement && (fromEl.tagName === 'INPUT' || fromEl.tagName === 'TEXTAREA' || fromEl.tagName === 'SELECT')) {
+        if (fromEl.className !== toEl.className) {
+            fromEl.className = toEl.className;
+        }
+        return false; 
+    }
+
+    return true;
+}
 
 // 1. El Vigilante (Detecta cambios en el HTML)
 const domObserver = new MutationObserver((mutations) => {
+    const updatedNodes = new Set(); // 🔥 FIX: Definimos el Set aquí adentro
+
     mutations.forEach((mutation) => {
         // A) Elementos NUEVOS (Mount)
         mutation.addedNodes.forEach((node) => {
@@ -1217,7 +1268,20 @@ const domObserver = new MutationObserver((mutations) => {
                 }
             }
         });
+        // C) Cambios en Atributos (Update)
+        if (mutation.type === 'attributes') {
+           const node = mutation.target;
+           if (node.nodeType === 1 && node.hasAttribute('client:update')) {
+              // Evitamos loops infinitos si el framework modifica atributos internos
+              if (!mutation.attributeName.startsWith('jrx-')) {
+                 updatedNodes.add(node);
+              }
+           }
+        }	
     });
+	
+    // Disparamos el hook de update una sola vez por nodo mutado
+    updatedNodes.forEach(node => executeHook(node, 'client:update'));
 });
 
 // 2. Ejecutar código JS de forma segura
@@ -1225,7 +1289,6 @@ function executeHook(el, attrName) {
     const code = el.getAttribute(attrName);
     if (!code) return;
     try {
-        // Creamos la función donde 'this' es el elemento HTML
         const fn = new Function(code);
         fn.call(el); 
     } catch (e) {
@@ -1233,7 +1296,6 @@ function executeHook(el, attrName) {
     }
 }
 
-// 3. Chequeo individual (Evita repeticiones)
 function checkMount(el) {
     if (el.hasAttribute && el.hasAttribute('client:mount')) {
         if (!el._jrxMounted) {
@@ -1252,6 +1314,8 @@ function checkUnmount(el) {
     }
 }
 
+
+
   /* ------------------------------------------------------------------
    * 6. Primera pasada cuando el DOM está listo
    * ------------------------------------------------------------------ */
@@ -1265,8 +1329,8 @@ document.addEventListener('DOMContentLoaded', () => {
   setupEventBindings();
   setupGlobalErrorFeedback();
   //connectWs(window.location.pathname);
-  
-  domObserver.observe(document.body, { childList: true, subtree: true });
+  domObserver.observe(document.body, { childList: true, subtree: true, attributes: true });
+  //domObserver.observe(document.body, { childList: true, subtree: true });
   document.querySelectorAll('[client\\:mount]').forEach(checkMount);
   
   connectTransport(window.location.pathname);
@@ -2321,7 +2385,10 @@ function applyStateForKey(k, v) {
                 if (attr.value.includes('{{')) {
                     const newVal = attr.value.replace(reG, (m, key) => {
                         const val = resolveDeep(key, localState);
-                        return (val !== undefined && val !== null) ? val : '';
+						if (val === undefined || val === null) return '';
+						return typeof val === 'object' ? JSON.stringify(val) : val;
+						
+                        //return (val !== undefined && val !== null) ? val : '';
                     });
                     childEl.setAttribute(attr.name, newVal);
                 }
@@ -2360,24 +2427,16 @@ function applyStateForKey(k, v) {
         });
         
         // 🟢 MORPHING CON ESCUDO DE FOCO
-        if (window.Idiomorph) {
-            Idiomorph.morph(el, tempDiv.innerHTML, {
-                morphStyle: 'innerHTML',
-                callbacks: {
-                    beforeNodeMorphed: (fromEl, toEl) => {
-                        if (fromEl.nodeType !== 1) return;
-                        if (fromEl === document.activeElement && (fromEl.tagName === 'INPUT' || fromEl.tagName === 'TEXTAREA')) {
-                            if (fromEl.className !== toEl.className) {
-                                fromEl.className = toEl.className;
-                            }
-                            return false; 
-                        }
-                    }
-                }
-            });
-        } else {
-            el.innerHTML = tempDiv.innerHTML;
-        }
+		if (window.Idiomorph) {
+		   Idiomorph.morph(el, tempDiv.innerHTML, {
+		      morphStyle: 'innerHTML',
+		      callbacks: { 
+		         beforeNodeMorphed: jrxMorphCallback 
+		      }
+		   });
+		 } else {
+		            el.innerHTML = tempDiv.innerHTML;
+		 }
 
         const allNodes = [el, ...el.querySelectorAll('*')];
         allNodes.forEach(node => delete node._jrxHydratedEvents);
