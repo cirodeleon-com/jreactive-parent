@@ -179,13 +179,16 @@ public final class TemplateProcessor extends AbstractProcessor {
         String className = cls.getSimpleName().toString();
         String fileName = "static/js/jrx/" + className + ".jrx.js";
         if (!_generatedClientJs.add(fileName)) return;
+        
+        String compiledHtml = compileToDomStatic(html);
 
         try {
             FileObject resource = filer.createResource(StandardLocation.CLASS_OUTPUT, "", fileName);
             try (Writer writer = resource.openWriter()) {
                 writer.write("if(!window.JRX_RENDERERS) window.JRX_RENDERERS = {};\n");
                 writer.write("window.JRX_RENDERERS['" + className + "'] = {\n  getTemplate: function() {\n");
-                writer.write("    return `" + html.replace("\\", "\\\\").replace("`", "\\`").replace("${", "\\${").replace("\r", "") + "`;\n");
+                //writer.write("    return `" + html.replace("\\", "\\\\").replace("`", "\\`").replace("${", "\\${").replace("\r", "") + "`;\n");
+                writer.write("    return `" + compiledHtml.replace("\\", "\\\\").replace("`", "\\`").replace("${", "\\${").replace("\r", "") + "`;\n");
                 writer.write("  }\n};\n");
             }
         } catch (IOException e) { }
@@ -312,6 +315,23 @@ public final class TemplateProcessor extends AbstractProcessor {
                     exploreDeep(nextTypeEl, nextPath, "((" + castType + ")" + nextAccess + ")", map, isWrite, depth + 1, new HashSet<>(visited));
                 }
             }
+        }
+    }
+    
+ // 🔥 NUEVO: Compila el HTML de Mustache a DOM nativo usando tu propio AST
+    private String compileToDomStatic(String rawHtml) {
+        try {
+            // Reutilizamos tu parseador O(N) que ya hace el trabajo pesado
+            List<com.ciro.jreactive.ast.JrxNode> nodes = com.ciro.jreactive.ast.JrxParser.parse(rawHtml);
+            StringBuilder sb = new StringBuilder();
+            for (com.ciro.jreactive.ast.JrxNode n : nodes) {
+                // renderRaw ya convierte los IfNode y EachNode en <template data-if="...">!
+                n.renderRaw(sb);
+            }
+            return sb.toString();
+        } catch (Exception e) {
+            // Fallback seguro en tiempo de compilación
+            return rawHtml;
         }
     }
 

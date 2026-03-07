@@ -2351,7 +2351,7 @@ function applyStateForKey(k, v) {
         // Generar HTML puro (Aún con variables {{...}} adentro)
         let rawTpl = (typeof renderer.getTemplate === 'function') ? renderer.getTemplate() : "";
         let processedTpl = await expandComponentsAsync(rawTpl, localState);
-        processedTpl = transpileLogic(processedTpl);
+        //processedTpl = transpileLogic(processedTpl);
 
         const tempDiv = document.createElement('div');
         tempDiv.innerHTML = processedTpl;
@@ -2904,17 +2904,37 @@ async function expandComponentsAsync(html, parentState) {
         const childContext = { ...parentState, ...props };
 
         // 3. Resolver lógica interna (#if locales)
-        let bakedTpl = resolvePropsLogic(childTpl, childContext);
+        let bakedTpl = childTpl; //resolvePropsLogic(childTpl, childContext);
 
-        // 🔥🔥🔥 4. FIX DEFINITIVO: Reemplazo MANUAL de props 🔥🔥🔥
-        // Iteramos las propiedades que pasamos (label, type, onSubmit) y las estampamos a la fuerza.
-        Object.keys(props).forEach(propName => {
-            const propVal = props[propName];
-            // Regex global para reemplazar {{propName}}
-            const re = new RegExp(`{{\\s*${propName}\\s*}}`, 'g');
-            // Usamos una función de reemplazo para evitar problemas con símbolos especiales como $ en el valor
-            bakedTpl = bakedTpl.replace(re, () => propVal);
-        });
+		// 🔥🔥🔥 4. FIX DEFINITIVO: Reemplazo MANUAL de props (AOT Compatible) 🔥🔥🔥
+		        Object.keys(props).forEach(propName => {
+		            const propVal = props[propName];
+		            
+		            // A. Reemplazo normal de variables: {{prop}} -> valor
+		            const re = new RegExp(`{{\\s*${propName}\\s*}}`, 'g');
+		            bakedTpl = bakedTpl.replace(re, () => propVal);
+
+		            // B. Evaluar <template data-if="prop"> (El APT de Java lo convirtió así)
+		            const ifRe = new RegExp(`<template\\s+data-if="${propName}">([\\s\\S]*?)<\\/template>`, 'gi');
+		            bakedTpl = bakedTpl.replace(ifRe, (match, content) => {
+		                // Si la prop existe y no es falsa, desenvolvemos el HTML
+		                if (propVal && propVal !== 'false' && propVal !== '0') return content;
+		                return ""; // Si es falsa, lo borramos
+		            });
+
+		            // C. Evaluar <template data-else="prop">
+		            const elseRe = new RegExp(`<template\\s+data-else="${propName}">([\\s\\S]*?)<\\/template>`, 'gi');
+		            bakedTpl = bakedTpl.replace(elseRe, (match, content) => {
+		                if (!propVal || propVal === 'false' || propVal === '0') return content;
+		                return "";
+		            });
+
+		            // D. Mapear alias en ciclos: data-each="prop:alias"
+		            // Si pasas :options="countries", propVal es "{{countries}}". Le quitamos las llaves.
+		            const cleanVal = propVal.replace(/^{{\s*|\s*}}$/g, '').trim();
+		            const eachRe = new RegExp(`data-each="${propName}:`, 'g');
+		            bakedTpl = bakedTpl.replace(eachRe, `data-each="${cleanVal}:`);
+		        });
 
         // 5. Renderizar resto de variables (estado global que el hijo use)
         bakedTpl = window.JRX.renderTemplate(bakedTpl, childContext);
@@ -2937,56 +2957,7 @@ async function expandComponentsAsync(html, parentState) {
     return result;
 }
 
-// (Asegúrate de mantener transpileLogic y resolvePropsLogic que te pasé antes)
-// Convierte sintaxis Mustache ({{#if}}) a sintaxis DOM (<template data-if>)
-function transpileLogic(html) {
-    if (!html) return "";
-    let res = html;
 
-    // 1. Transformar {{#if cond}} -> <template data-if="cond">
-    res = res.replace(/{{\s*#if\s+([^}]+)\s*}}/g, '<template data-if="$1">');
-    
-    // 2. Transformar {{else}} -> <template data-else> (Ojo: requiere estructura específica, simplificado aquí)
-    // Para simplificar, asumimos que tu Runtime actual maneja bloques separados. 
-    // Si usas {{else}}, tu lógica actual de updateIfBlocks podría necesitar ajustes, 
-    // pero para arreglar lo que se ve en pantalla (los cierres), esto basta:
-    
-    // 3. Transformar {{#each list as item}} -> <template data-each="list:item">
-    res = res.replace(/{{\s*#each\s+([^\s]+)\s+as\s+([^\s}]+)\s*}}/g, '<template data-each="$1:$2">');
-
-    // 4. Cerrar bloques {{/if}} y {{/each}} -> </template>
-    res = res.replace(/{{\s*\/(if|each)\s*}}/g, '</template>');
-
-    return res;
-}
-
-// 🔥 NUEVO: Resuelve lógica estática (#if) usando las PROPS locales del componente
-// Esto es vital para que componentes como JForm o JCard funcionen con sus atributos.
-function resolvePropsLogic(html, context) {
-    if (!html) return "";
-    let res = html;
-
-    // Busca bloques {{#if var}} ... {{/if}}
-    // Nota: Usamos un bucle para soportar anidamiento simple si fuera necesario
-    const regex = /{{\s*#if\s+([\w.-]+)\s*}}([\s\S]*?){{\s*\/if\s*}}/g;
-    
-    // Ejecutamos reemplazos hasta que no queden bloques (para manejo básico de anidados)
-    // Ojo: Para recursividad real se requiere un parser, pero esto cubre el 99% de casos UI planos.
-    while (regex.test(res)) {
-        res = res.replace(regex, (match, key, content) => {
-            // Buscamos el valor en el contexto (props + state)
-            const val = resolveDeep(key, context);
-            
-            // Evaluamos Truthy (string no vacío, true, numero != 0)
-            if (val && val !== 'false' && val !== false && val !== 0) {
-                return content; // Dejamos el contenido
-            } else {
-                return ""; // Ocultamos el bloque
-            }
-        });
-    }
-    return res;
-}
 
 function syncInitialState() {
     if (window.__JRX_STATE__) {
