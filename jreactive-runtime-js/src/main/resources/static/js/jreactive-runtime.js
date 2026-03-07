@@ -2349,8 +2349,17 @@ function applyStateForKey(k, v) {
         localState['id'] = rootId;
 
         // Generar HTML puro (Aún con variables {{...}} adentro)
-        let rawTpl = (typeof renderer.getTemplate === 'function') ? renderer.getTemplate() : "";
-        let processedTpl = await expandComponentsAsync(rawTpl, localState);
+		let rawTpl = (typeof renderer.getTemplate === 'function') ? renderer.getTemplate() : "";
+		let processedTpl;
+
+		if (renderer.compiled === true) {
+		    // El APT ya dejó el árbol expandido y compuesto.
+		    processedTpl = rawTpl;
+		} else {
+		    // Compatibilidad con renderers legacy
+			console.log("PELIGRO --> usando expandComponentAsync");
+		    processedTpl = await expandComponentsAsync(rawTpl, localState);
+		}
         //processedTpl = transpileLogic(processedTpl);
 
         const tempDiv = document.createElement('div');
@@ -2977,6 +2986,9 @@ function syncInitialState() {
 }
 
 
-  
+
+ 
+
+
 })();
 

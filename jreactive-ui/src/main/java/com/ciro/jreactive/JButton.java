@@ -17,7 +17,6 @@ public class JButton extends HtmlComponent {
               type="button"
               class="jr-btn {{type}}"
               @click="{{onClick}}"
-              :disabled="disabled || loading"
             >
               {{#if loading}}
                 <span class="jr-spinner"></span>

@@ -8,6 +8,10 @@ import com.google.auto.service.AutoService;
 import com.sun.source.util.TreePath;
 import com.sun.source.util.Trees;
 import com.sun.source.tree.*;
+import com.ciro.jreactive.ast.ComponentBlueprintCompiler;
+import javax.tools.StandardLocation;
+import java.io.Reader;
+import javax.lang.model.util.Elements;
 
 import javax.annotation.processing.*;
 import javax.lang.model.SourceVersion;
@@ -179,19 +183,38 @@ public final class TemplateProcessor extends AbstractProcessor {
         String className = cls.getSimpleName().toString();
         String fileName = "static/js/jrx/" + className + ".jrx.js";
         if (!_generatedClientJs.add(fileName)) return;
-        
-        String compiledHtml = compileToDomStatic(html);
+
+        String ownerPackage = processingEnv.getElementUtils()
+                .getPackageOf(cls)
+                .getQualifiedName()
+                .toString();
+
+        String compiledHtml = ComponentBlueprintCompiler.compile(
+                html,
+                new AptComponentResolver(),
+                ownerPackage
+        );
 
         try {
             FileObject resource = filer.createResource(StandardLocation.CLASS_OUTPUT, "", fileName);
             try (Writer writer = resource.openWriter()) {
                 writer.write("if(!window.JRX_RENDERERS) window.JRX_RENDERERS = {};\n");
-                writer.write("window.JRX_RENDERERS['" + className + "'] = {\n  getTemplate: function() {\n");
-                //writer.write("    return `" + html.replace("\\", "\\\\").replace("`", "\\`").replace("${", "\\${").replace("\r", "") + "`;\n");
-                writer.write("    return `" + compiledHtml.replace("\\", "\\\\").replace("`", "\\`").replace("${", "\\${").replace("\r", "") + "`;\n");
-                writer.write("  }\n};\n");
+                writer.write("window.JRX_RENDERERS['" + className + "'] = {\n");
+                writer.write("  compiled: true,\n");
+                writer.write("  getTemplate: function() {\n");
+                writer.write("    return `" + compiledHtml
+                        .replace("\\", "\\\\")
+                        .replace("`", "\\`")
+                        .replace("${", "\\${")
+                        .replace("\r", "") + "`;\n");
+                writer.write("  }\n");
+                writer.write("};\n");
             }
-        } catch (IOException e) { }
+        } catch (IOException e) {
+            messager.printMessage(Diagnostic.Kind.ERROR,
+                    "Error generando client JS para " + className + ": " + e.getMessage(),
+                    cls);
+        }
     }
 
     private void generateJavaAccessor(TypeElement clazz) {
@@ -432,5 +455,99 @@ public final class TemplateProcessor extends AbstractProcessor {
             current = (TypeElement) processingEnv.getTypeUtils().asElement(superclass);
         }
         return elements;
+    }
+    
+    
+    private final class AptComponentResolver implements ComponentBlueprintCompiler.ComponentResolver {
+
+        @Override
+        public ComponentBlueprintCompiler.ResolvedComponent resolve(String tagName, String ownerPackage) {
+            String simpleName = simpleName(tagName);
+            TypeElement type = locateType(tagName, ownerPackage);
+
+            String packageName = ownerPackage;
+            if (type != null) {
+                packageName = processingEnv.getElementUtils()
+                        .getPackageOf(type)
+                        .getQualifiedName()
+                        .toString();
+            }
+
+            String template = null;
+
+            // 1. Intentar por fuente actual (sirve para componentes del módulo que se está compilando)
+            if (type != null) {
+                ExecutableElement tplMethod = findTemplateMethod(type);
+                if (tplMethod != null) {
+                    template = extractTemplateString(type, tplMethod);
+                    if (template != null) {
+                        template = template.stripIndent().trim();
+                    }
+                }
+            }
+
+            // 2. Fallback por recurso generado (sirve para componentes en dependencias ya compiladas)
+            if (template == null || template.isBlank()) {
+                template = tryLoadGeneratedTemplate(simpleName);
+            }
+
+            if (template == null || template.isBlank()) {
+                return null;
+            }
+
+            return new ComponentBlueprintCompiler.ResolvedComponent(tagName, packageName, template);
+        }
+    }
+    
+    private TypeElement locateType(String tagName, String ownerPackage) {
+        String simpleName = simpleName(tagName);
+        Elements elements = processingEnv.getElementUtils();
+
+        // 1. Si ya viene calificado
+        if (tagName.contains(".")) {
+            TypeElement exact = elements.getTypeElement(tagName);
+            if (exact != null) return exact;
+        }
+
+        // 2. Mismo paquete que el componente padre
+        TypeElement local = elements.getTypeElement(ownerPackage + "." + simpleName);
+        if (local != null) return local;
+
+        // 3. Paquete base UI (igual que tu runtime)
+        TypeElement ui = elements.getTypeElement("com.ciro.jreactive." + simpleName);
+        if (ui != null) return ui;
+
+        return null;
+    }
+
+    private String simpleName(String tagName) {
+        int idx = tagName.lastIndexOf('.');
+        return idx >= 0 ? tagName.substring(idx + 1) : tagName;
+    }
+
+    private String tryLoadGeneratedTemplate(String simpleName) {
+        String path = "static/jrx/templates/" + simpleName + ".html";
+
+        String fromOutput = tryReadResource(StandardLocation.CLASS_OUTPUT, path);
+        if (fromOutput != null && !fromOutput.isBlank()) {
+            return fromOutput.strip();
+        }
+
+        String fromClasspath = tryReadResource(StandardLocation.CLASS_PATH, path);
+        if (fromClasspath != null && !fromClasspath.isBlank()) {
+            return fromClasspath.strip();
+        }
+
+        return null;
+    }
+
+    private String tryReadResource(StandardLocation location, String path) {
+        try {
+            FileObject resource = filer.getResource(location, "", path);
+            CharSequence cs = resource.getCharContent(true);
+            return cs == null ? null : cs.toString();
+        } catch (Exception e) {
+            return null;
+        }
     }
 }

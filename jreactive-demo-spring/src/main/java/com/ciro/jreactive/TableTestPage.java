@@ -14,6 +14,7 @@ import com.ciro.jreactive.router.Route;
 
 @Component
 @Route(path = "/table-test")
+@Client
 public class TableTestPage extends AppPage {
 	
 	public static class UserData implements Serializable {

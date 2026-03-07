@@ -37,6 +37,7 @@ public class SignupPage2 extends AppPage {
     PageState state = new PageState();
 
     // Estado reactivo para el checkbox (si lo quieres controlar desde el back)
+    
     @State
     Boolean acceptTerms = false;
     
@@ -94,7 +95,7 @@ public class SignupPage2 extends AppPage {
 
                   <JCheckBox
                     :field="form.acceptTerms"
-                    :checked="acceptTerms"
+                    :checked="acceptTerms" 
                     required="true"
                     label="Acepto los términos y condiciones"
                   />
