@@ -1892,11 +1892,15 @@ function setupEventBindings(root = document) {
 	
 	const qualified = qualifiedRaw ? qualifiedRaw.split('(')[0] : qualifiedRaw;
 	
-    // A) Evitar recargas nativas (menos en file inputs)
-    const isFileClick = evtName === 'click' && el instanceof HTMLInputElement && el.type === 'file';
-    if (!isFileClick && ev && typeof ev.preventDefault === 'function') {
-      ev.preventDefault();
-    }
+	// A) Evitar recargas nativas (menos en file inputs) y MATAR el Bubbling
+	    const isFileClick = evtName === 'click' && el instanceof HTMLInputElement && el.type === 'file';
+	    if (!isFileClick && ev) {
+	      if (typeof ev.preventDefault === 'function') ev.preventDefault();
+	      if (typeof ev.stopPropagation === 'function') ev.stopPropagation(); // 🔥 El escudo anti-burbujeo
+	    }
+
+	    // 🔥 Cortafuegos: Ignorar llamadas vacías o mal formadas por si acaso
+	    if (!qualified || qualified === 'undefined') return;
 	
 	// B) DEBOUNCE Y THROTTLE INTELIGENTES
 	    const customDebounce = el.dataset.jrxDebounce;
