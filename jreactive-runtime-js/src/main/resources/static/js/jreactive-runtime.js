@@ -1884,7 +1884,7 @@ async function fileInputToJrx(el) {
 
 
 // 🔥 3. FUNCIÓN BLINDADA (Debounce + Cola Unificada)
-function setupEventBindings() {
+function setupEventBindings(root = document) {
   const EVENT_DIRECTIVES = ['click', 'change', 'input', 'submit'];
 
   // Lógica central para ejecutar cualquier llamada @Call
@@ -1892,15 +1892,11 @@ function setupEventBindings() {
 	
 	const qualified = qualifiedRaw ? qualifiedRaw.split('(')[0] : qualifiedRaw;
 	
-	
-	
     // A) Evitar recargas nativas (menos en file inputs)
     const isFileClick = evtName === 'click' && el instanceof HTMLInputElement && el.type === 'file';
     if (!isFileClick && ev && typeof ev.preventDefault === 'function') {
       ev.preventDefault();
     }
-
-    
 	
 	// B) DEBOUNCE Y THROTTLE INTELIGENTES
 	    const customDebounce = el.dataset.jrxDebounce;
@@ -2090,12 +2086,22 @@ function setupEventBindings() {
     }
   };
 
+  // 🔥 FIX QUIRÚRGICO: Determinamos el nodo raíz para la búsqueda de eventos
+  const searchNode = root === document ? document.body : root;
+
   // --- Bindeo de eventos Nuevos (data-call-click) ---
   EVENT_DIRECTIVES.forEach(evtName => {
     const capEvt = evtName.charAt(0).toUpperCase() + evtName.slice(1);
     const selector = `[data-call-${evtName}]`;
 
-    $$(selector).forEach(el => {
+    // 1. Buscar en hijos
+    const elements = Array.from(searchNode.querySelectorAll(selector));
+    // 2. Revisar si el propio contenedor también tiene el evento
+    if (searchNode.matches && searchNode.matches(selector)) {
+        elements.push(searchNode);
+    }
+
+    elements.forEach(el => {
       const flag = `_jrxCallBound_${evtName}`;
       if (el[flag]) return;
       el[flag] = true;
@@ -2106,7 +2112,12 @@ function setupEventBindings() {
   });
 
   // --- Bindeo de eventos Legacy (data-call) ---
-  $$('[data-call]').forEach(el => {
+  const legacyElements = Array.from(searchNode.querySelectorAll('[data-call]'));
+  if (searchNode.matches && searchNode.matches('[data-call]')) {
+      legacyElements.push(searchNode);
+  }
+
+  legacyElements.forEach(el => {
     if (el._jrxCallBoundLegacy) return;
     el._jrxCallBoundLegacy = true;
     const evtName = el.dataset.event || 'click';
@@ -2115,7 +2126,6 @@ function setupEventBindings() {
     el.addEventListener(evtName, (ev) => executeCall(el, evtName, qualified, rawParams, ev));
   });
 }
-
 
 
 /* ─────────────────────────────────────────────────────────
