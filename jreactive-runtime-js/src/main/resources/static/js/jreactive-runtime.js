@@ -788,6 +788,10 @@ function updateIfBlocks() {
     document.querySelectorAll('template[data-if]').forEach(tpl => {
       const cond = tpl.dataset.if;
       const show = evalCond(cond);
+	  
+	  if (tpl._nodes && tpl._nodes.length > 0 && !tpl._nodes[0].parentNode) {
+	      tpl._nodes = null;
+	  }
 
       if (show && !tpl._nodes) { 
           mount(tpl); 
@@ -948,11 +952,12 @@ function updateEachBlocks() {
     const data = Array.isArray(raw) ? raw : [];
 
     /* 2. Inicialización de centinelas */
-    if (!tpl._start) {
+    if (!tpl._start || !tpl._start.parentNode) {
       tpl._start = document.createComment('each-start');
       tpl._end   = document.createComment('each-end');
       tpl.after(tpl._end);
       tpl.after(tpl._start);
+	  tpl._keyMap = new Map();
     }
     const prev = tpl._keyMap || new Map();
     const next = new Map();
