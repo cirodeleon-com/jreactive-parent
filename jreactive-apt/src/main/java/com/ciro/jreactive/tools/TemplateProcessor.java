@@ -87,6 +87,16 @@ public final class TemplateProcessor extends AbstractProcessor {
     }
 
     private void validateTemplateConnections(String html, TypeElement clazz) {
+    	
+    	try {
+            com.ciro.jreactive.ast.JrxParser.parse(html);
+        } catch (IllegalStateException ex) {
+            messager.printMessage(Diagnostic.Kind.ERROR, 
+                "❌ [JReactive] Error de sintaxis en " + clazz.getSimpleName() + ": " + ex.getMessage(), clazz);
+            return; // Detenemos la validación si el HTML ya está roto
+        }
+    	
+    	
         Set<String> validVariables = new HashSet<>(Arrays.asList("this", "id", "true", "false", "null"));
         Set<String> validMethods = new HashSet<>();
         Set<String> validRefs = new HashSet<>();

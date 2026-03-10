@@ -12,7 +12,6 @@ import java.util.regex.Pattern;
  */
 public class JrxParser {
 
-    // Regex ultra-rápida solo para separar los atributos pre-limpiados por el Lexer
     private static final Pattern ATTR_PATTERN = Pattern.compile("([:\\w@.-]+)(?:\\s*=\\s*(?:\"([^\"]*)\"|'([^']*)'|([^\\s>]+)))?");
 
     public static List<JrxNode> parse(String html) {
@@ -24,7 +23,6 @@ public class JrxParser {
         List<JrxNode> rootNodes = new ArrayList<>();
         Stack<JrxNode> stack = new Stack<>();
 
-        // Helper: Decide a quién pertenece el nuevo nodo (al Root, a un Div, a un If, etc.)
         Consumer<JrxNode> addNode = (node) -> {
             if (stack.isEmpty()) {
                 rootNodes.add(node);
@@ -49,7 +47,7 @@ public class JrxParser {
                 case TEXT -> addNode.accept(new TextNode(t.content()));
                 
                 case BLOCK_OPEN -> {
-                    String cmd = t.name(); // ej: "if cond" o "each list as item"
+                    String cmd = t.name();
                     if (cmd.startsWith("if ")) {
                         IfNode ifNode = new IfNode(cmd.substring(3).trim());
                         addNode.accept(ifNode);
@@ -68,64 +66,84 @@ public class JrxParser {
                 
                 case BLOCK_ELSE -> {
                     if (!stack.isEmpty() && stack.peek() instanceof IfNode ifNode) {
-                        ifNode.inElse = true; // Cambiamos la ruta de inserción
+                        ifNode.inElse = true;
                     }
                 }
                 
                 case BLOCK_CLOSE -> {
-                    // Cerrar un if o un each
+                    // 🔥 FIX: Validación estricta. Si cerramos plantilla, el bloque superior NO puede ser HTML.
                     if (!stack.isEmpty()) {
                         JrxNode top = stack.peek();
-                        if (top instanceof IfNode || top instanceof EachNode) {
+                        if (top instanceof ElementNode el) {
+                            throw new IllegalStateException("Etiqueta HTML sin cerrar: <" + el.tagName + "> antes del cierre {{/ ... }}");
+                        } else if (top instanceof IfNode || top instanceof EachNode) {
                             stack.pop();
                         }
+                    } else {
+                        throw new IllegalStateException("Cierre {{/ ... }} inesperado. No hay ningún bloque abierto.");
                     }
                 }
                 
                 case TAG_OPEN -> {
                     ElementNode el;
-                    // Detectamos si es un Componente (Empieza con mayúscula)
                     if (Character.isUpperCase(t.name().charAt(0))) {
                         el = new ComponentNode(t.name(), t.selfClosing());
                     } else {
                         el = new ElementNode(t.name(), t.selfClosing());
                     }
 
-                    // Extraer los atributos
                     if (!t.content().isEmpty()) {
                         Matcher m = ATTR_PATTERN.matcher(t.content());
                         while (m.find()) {
                             String key = m.group(1);
-                            // Tomamos el valor de comillas dobles, simples, o sin comillas
                             String val = m.group(2) != null ? m.group(2) : (m.group(3) != null ? m.group(3) : m.group(4));
-                            if (val == null) val = ""; // Para casos booleanos como "disabled"
+                            if (val == null) val = "";
                             el.attributes.put(key, val);
                         }
                     }
 
                     addNode.accept(el);
-                    // Si NO es de auto-cierre (<input/>), lo metemos a la pila para recibir hijos
                     if (!t.selfClosing()) {
                         stack.push(el);
                     }
                 }
                 
                 case TAG_CLOSE -> {
-                    // Buscar la etiqueta de apertura correspondiente en la pila
                     int popCount = 0;
+                    boolean found = false;
                     for (int i = stack.size() - 1; i >= 0; i--) {
                         JrxNode node = stack.get(i);
                         if (node instanceof ElementNode el && el.tagName.equals(t.name())) {
                             popCount = stack.size() - i;
+                            found = true;
                             break;
                         }
+                        // 🔥 FIX: No permitimos que un cierre HTML pase por encima de un bloque de plantilla
+                        if (node instanceof IfNode || node instanceof EachNode) {
+                            String blockName = (node instanceof IfNode) ? "{{#if}}" : "{{#each}}";
+                            throw new IllegalStateException("Cierre </" + t.name() + "> incorrecto. El bloque " + blockName + " no ha sido cerrado con {{/...}}");
+                        }
                     }
-                    // Sacar todo hasta cerrar la etiqueta (Tolerancia a HTML mal formado)
-                    for (int i = 0; i < popCount; i++) {
-                        stack.pop();
+                    
+                    if (found) {
+                        for (int i = 0; i < popCount; i++) {
+                            stack.pop();
+                        }
                     }
                 }
             }
+        }
+        
+        // Validación final de cosas que quedaron abiertas
+        if (!stack.isEmpty()) {
+            JrxNode unclosed = stack.peek();
+            String errorMsg = "Etiqueta desconocida";
+            
+            if (unclosed instanceof IfNode) errorMsg = "{{#if ...}}";
+            else if (unclosed instanceof EachNode) errorMsg = "{{#each ...}}";
+            else if (unclosed instanceof ElementNode el) errorMsg = "<" + el.tagName + ">";
+            
+            throw new IllegalStateException("Falta cerrar: " + errorMsg);
         }
 
         return rootNodes;
