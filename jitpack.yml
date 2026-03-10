@@ -1,5 +1,5 @@
 # Archivo: jitpack.yml
 jdk:
-  - openjdk17
+  - 21.0.2-tem
 install:
   - mvn clean install -DskipTests
