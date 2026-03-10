@@ -108,11 +108,13 @@ public class AstComponentEngine extends AbstractComponentEngine {
         
         if (ctx.getClass().isAnnotationPresent(Client.class)) {
             String id = ctx.getId();
-            String name = ctx.getClass().getSimpleName();
+            
+            // 🔥 FIX: Aquí también debemos usar el FQCN (antes decía getSimpleName())
+            String safeName = ctx.getClass().getName().replace(".", "_").replace("$", "_");
+            
             String scopeId = ctx._getScopeId();
 
-            //html = resources + "<div id=\"" + id + "\"  data-jrx-client=\"" + name + "\"></div>";
-            html = resources + "<div id=\"" + id + "\" class=\"" + scopeId + "\" data-jrx-client=\"" + name + "\"></div>";
+            html = resources + "<div id=\"" + id + "\" class=\"" + scopeId + "\" data-jrx-client=\"" + safeName + "\"></div>";
             /*
             // Token stateless incluso en shell client
             if (ctx.getClass().isAnnotationPresent(Stateless.class)) {
@@ -415,13 +417,16 @@ public class AstComponentEngine extends AbstractComponentEngine {
 
         // 4) CSR hijo => shell + resources once + copiar class/style
      // 4) CSR hijo => shell + resources once + copiar class/style
+     // 4) CSR hijo => shell + resources once + copiar class/style
         if (child.getClass().isAnnotationPresent(Client.class)) {
             String css = getResourcesOnce(child, s.emittedResources);
             String scopeId = child._getScopeId(); // 🔥 Extraemos el ID
 
-            String shell = "<div id=\"" + child.getId() + "\" data-jrx-client=\"" + child.getClass().getSimpleName() + "\"";
+            // 🔥 FIX: Usamos getName() y reemplazamos '.' y '$' (para inner classes) por '_'
+            String safeName = child.getClass().getName().replace(".", "_").replace("$", "_");
+            String shell = "<div id=\"" + child.getId() + "\" data-jrx-client=\"" + safeName + "\"";
             
-            // 🔥 Fusionamos las clases pasadas por el usuario con la clase del Scope
+            // Fusionamos las clases pasadas por el usuario con la clase del Scope
             String finalClass = attrs.containsKey("class") ? escapeAttr(attrs.get("class")) + " " + scopeId : scopeId;
             shell += " class=\"" + finalClass + "\"";
             

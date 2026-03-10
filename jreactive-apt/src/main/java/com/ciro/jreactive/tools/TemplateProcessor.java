@@ -170,18 +170,21 @@ public final class TemplateProcessor extends AbstractProcessor {
     }
 
     private void generateHtmlResource(TypeElement clazz, String htmlContent) {
-        String className = clazz.getSimpleName().toString();
+        // 🔥 FIX: FQCN en lugar de simpleName
+        String safeName = clazz.getQualifiedName().toString().replace(".", "_");
         try {
-            FileObject fileObject = filer.createResource(StandardLocation.CLASS_OUTPUT, "", "static/jrx/templates/" + className + ".html");
+            FileObject fileObject = filer.createResource(StandardLocation.CLASS_OUTPUT, "", "static/jrx/templates/" + safeName + ".html");
             try (Writer writer = fileObject.openWriter()) { writer.write(htmlContent); }
         } catch (IOException e) { 
-            messager.printMessage(Diagnostic.Kind.ERROR, "Error generando HTML para " + className + ": " + e);
+            messager.printMessage(Diagnostic.Kind.ERROR, "Error generando HTML para " + safeName + ": " + e);
         }
     }
 
     private void generateClientJs(TypeElement cls, String html) {
-        String className = cls.getSimpleName().toString();
-        String fileName = "static/js/jrx/" + className + ".jrx.js";
+        // 🔥 FIX: FQCN para el archivo JS y el objeto window
+        String safeName = cls.getQualifiedName().toString().replace(".", "_");
+        String fileName = "static/js/jrx/" + safeName + ".jrx.js";
+        
         if (!_generatedClientJs.add(fileName)) return;
 
         String ownerPackage = processingEnv.getElementUtils()
@@ -199,7 +202,7 @@ public final class TemplateProcessor extends AbstractProcessor {
             FileObject resource = filer.createResource(StandardLocation.CLASS_OUTPUT, "", fileName);
             try (Writer writer = resource.openWriter()) {
                 writer.write("if(!window.JRX_RENDERERS) window.JRX_RENDERERS = {};\n");
-                writer.write("window.JRX_RENDERERS['" + className + "'] = {\n");
+                writer.write("window.JRX_RENDERERS['" + safeName + "'] = {\n");
                 writer.write("  compiled: true,\n");
                 writer.write("  getTemplate: function() {\n");
                 writer.write("    return `" + compiledHtml
@@ -212,7 +215,7 @@ public final class TemplateProcessor extends AbstractProcessor {
             }
         } catch (IOException e) {
             messager.printMessage(Diagnostic.Kind.ERROR,
-                    "Error generando client JS para " + className + ": " + e.getMessage(),
+                    "Error generando client JS para " + safeName + ": " + e.getMessage(),
                     cls);
         }
     }
@@ -460,7 +463,7 @@ public final class TemplateProcessor extends AbstractProcessor {
     
     private final class AptComponentResolver implements ComponentBlueprintCompiler.ComponentResolver {
 
-        @Override
+    	@Override
         public ComponentBlueprintCompiler.ResolvedComponent resolve(String tagName, String ownerPackage) {
             String simpleName = simpleName(tagName);
             TypeElement type = locateType(tagName, ownerPackage);
@@ -475,7 +478,7 @@ public final class TemplateProcessor extends AbstractProcessor {
 
             String template = null;
 
-            // 1. Intentar por fuente actual (sirve para componentes del módulo que se está compilando)
+            // 1. Intentar por fuente actual
             if (type != null) {
                 ExecutableElement tplMethod = findTemplateMethod(type);
                 if (tplMethod != null) {
@@ -486,9 +489,17 @@ public final class TemplateProcessor extends AbstractProcessor {
                 }
             }
 
-            // 2. Fallback por recurso generado (sirve para componentes en dependencias ya compiladas)
+            // 2. Fallback por recurso generado
             if (template == null || template.isBlank()) {
-                template = tryLoadGeneratedTemplate(simpleName);
+                // 🔥 FIX: Buscar por el nombre seguro (FQCN con guiones bajos)
+                String fqcn = type != null ? type.getQualifiedName().toString() : (ownerPackage + "." + simpleName);
+                String safeName = fqcn.replace(".", "_");
+                template = tryLoadGeneratedTemplate(safeName);
+                
+                // Fallback de retrocompatibilidad (por si hay componentes viejos)
+                if (template == null || template.isBlank()) {
+                    template = tryLoadGeneratedTemplate(simpleName);
+                }
             }
 
             if (template == null || template.isBlank()) {

@@ -17,7 +17,7 @@ import java.util.List;
 
 @Component
 @Route(path = "/clients")
-@Client
+//@Client
 public class ClientsPage extends AppPage {
 
     @Autowired
