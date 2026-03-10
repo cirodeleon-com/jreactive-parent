@@ -3,7 +3,7 @@ package com.ciro.jreactive;
 import org.springframework.stereotype.Component;
 import com.ciro.jreactive.router.Route;
 
-@Component
+
 @Route(path = "/hook-test")
 public class HookPage extends AppPage {
 

@@ -8,7 +8,7 @@ import com.ciro.jreactive.annotations.Stateless;
 import com.ciro.jreactive.router.Route;
 import org.springframework.stereotype.Component;
 
-@Component
+
 @Route(path = "/focus-test")
 @StatefulRam
 @Client

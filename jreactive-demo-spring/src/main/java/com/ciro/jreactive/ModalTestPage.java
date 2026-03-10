@@ -1,11 +1,9 @@
 package com.ciro.jreactive;
 
-import org.springframework.stereotype.Component;
-
 import com.ciro.jreactive.annotations.Call;
 import com.ciro.jreactive.router.Route;
 
-@Component
+
 @Route(path = "/modal-test")
 public class ModalTestPage extends AppPage {
 

@@ -4,14 +4,13 @@ import com.ciro.jreactive.annotations.Call;
 import com.ciro.jreactive.annotations.Client;
 import com.ciro.jreactive.annotations.StatefulRam;
 import com.ciro.jreactive.router.Route;
-import org.springframework.stereotype.Component;
 
 import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
 
-@Component
+
 @Route(path = "/mapa")
 @Client
 @StatefulRam

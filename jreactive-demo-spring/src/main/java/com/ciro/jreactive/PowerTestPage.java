@@ -10,7 +10,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
 
-@Component
 @Route(path = "/power")
 @StatefulRam
 public class PowerTestPage extends AppPage {

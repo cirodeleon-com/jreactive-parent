@@ -7,7 +7,6 @@ import java.util.List;
 
 import org.springframework.stereotype.Component;
 
-@Component
 @Route(path = "/optimistic")
 public class OptimisticShowcasePage extends AppPage {
 

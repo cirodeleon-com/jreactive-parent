@@ -3,12 +3,11 @@ package com.ciro.jreactive;
 import com.ciro.jreactive.annotations.Call;
 import com.ciro.jreactive.annotations.Client;
 import com.ciro.jreactive.router.Route;
-import org.springframework.stereotype.Component;
 
 import java.util.List;
 import java.util.Random;
 
-@Component
+
 @Route(path = "/chart")
 @Client
 public class ChartTestPage extends AppPage {

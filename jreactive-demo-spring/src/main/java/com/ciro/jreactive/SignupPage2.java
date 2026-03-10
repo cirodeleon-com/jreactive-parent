@@ -9,11 +9,10 @@ import jakarta.validation.Valid;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
-import org.springframework.stereotype.Component;
 
 import java.io.Serializable;
 
-@Component
+
 @Route(path = "/signup2")
 @Stateless
 @Client

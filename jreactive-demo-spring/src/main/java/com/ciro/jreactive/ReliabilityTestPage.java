@@ -1,17 +1,14 @@
 package com.ciro.jreactive;
 
-import org.springframework.stereotype.Component;
-
 import com.ciro.jreactive.annotations.Call;
 import com.ciro.jreactive.annotations.Stateless;
 import com.ciro.jreactive.router.Route;
 import com.ciro.jreactive.router.UrlParam;
-
 import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.List;
 
-@Component
+
 @Route(path = "/reliability")
 @Stateless 
 public class ReliabilityTestPage extends AppPage {

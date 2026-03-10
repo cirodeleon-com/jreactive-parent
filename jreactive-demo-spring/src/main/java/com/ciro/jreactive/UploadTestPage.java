@@ -1,12 +1,10 @@
 package com.ciro.jreactive;
 
-import org.springframework.stereotype.Component;
-
 import com.ciro.jreactive.annotations.Call;
 import com.ciro.jreactive.router.Layout;
 import com.ciro.jreactive.router.Route;
 
-@Component
+
 @Route(path = "/uploadTest")
 public class UploadTestPage extends AppPage {
 

@@ -12,7 +12,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 
-@Component
+
 @Route(path = "/delta-test") // Accede en http://localhost:8080/delta-test
 @StatefulRam
 public class DeltaTestPage extends AppPage {

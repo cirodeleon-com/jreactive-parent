@@ -1,10 +1,9 @@
 package com.ciro.jreactive;
 
-import org.springframework.stereotype.Component;
 import com.ciro.jreactive.annotations.Call;
 import com.ciro.jreactive.router.Route;
 
-@Component
+
 @Route(path = "/optimistic-test")
 public class OptimisticTestPage extends AppPage {
 

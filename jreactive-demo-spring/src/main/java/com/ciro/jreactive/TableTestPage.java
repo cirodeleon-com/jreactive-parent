@@ -3,16 +3,10 @@ package com.ciro.jreactive;
 import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.List;
-
-import org.springframework.stereotype.Component;
-
 import com.ciro.jreactive.annotations.Call;
 import com.ciro.jreactive.annotations.Client;
-import com.ciro.jreactive.annotations.StatefulRam;
-import com.ciro.jreactive.annotations.Stateless;
 import com.ciro.jreactive.router.Route;
 
-@Component
 @Route(path = "/table-test")
 @Client
 public class TableTestPage extends AppPage {

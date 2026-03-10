@@ -2,17 +2,10 @@ package com.ciro.jreactive;
 
 
 import java.io.Serializable;
-
-import org.springframework.stereotype.Component;
-
-import com.ciro.jreactive.HtmlComponent;
 import com.ciro.jreactive.annotations.Call;
-import com.ciro.jreactive.annotations.Client;
-import com.ciro.jreactive.annotations.StatefulRam;
 import com.ciro.jreactive.router.Route;
 import com.ciro.jreactive.State;
 
-@Component
 @Route(path = "/store-test")
 public class StoreTestPage extends AppPage {
 

@@ -4,9 +4,9 @@ import com.ciro.jreactive.annotations.Call;
 import com.ciro.jreactive.annotations.Client;
 import com.ciro.jreactive.annotations.StatefulRam;
 import com.ciro.jreactive.router.Route;
-import org.springframework.stereotype.Component;
 
-@Component
+
+
 @Route(path = "/editor")
 @Client
 @StatefulRam

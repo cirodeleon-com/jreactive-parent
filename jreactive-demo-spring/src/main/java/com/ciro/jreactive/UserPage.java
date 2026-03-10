@@ -1,12 +1,10 @@
 package com.ciro.jreactive;
 
-import org.springframework.stereotype.Component;
-
 import com.ciro.jreactive.router.Param;
 import com.ciro.jreactive.router.Route;
 import static com.ciro.jreactive.Type.$;
 
-@Component
+
 @Route(path="/users/{id}")
 public class UserPage extends AppPage {
 

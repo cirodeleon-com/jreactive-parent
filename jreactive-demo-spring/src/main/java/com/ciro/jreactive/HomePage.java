@@ -10,7 +10,7 @@ import com.ciro.jreactive.router.Route;
 import static com.ciro.jreactive.Type.$;
 
 
-@Component
+
 @Route(path = "/")
 public class HomePage extends AppPage {
 	

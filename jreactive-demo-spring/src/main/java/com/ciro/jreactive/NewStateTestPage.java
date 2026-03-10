@@ -10,7 +10,7 @@ import static com.ciro.jreactive.Type.$;
 import com.ciro.jreactive.annotations.Call;
 import com.ciro.jreactive.router.Route;
 
-@Component
+
 @Route(path = "/newStateTest")
 public class NewStateTestPage extends AppPage {
 

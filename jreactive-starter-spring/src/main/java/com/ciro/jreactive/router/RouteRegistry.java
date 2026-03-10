@@ -35,18 +35,36 @@ public class RouteRegistry implements RouteProvider {
     public RouteRegistry(ApplicationContext ctx) {
         AutowireCapableBeanFactory beanFactory = ctx.getAutowireCapableBeanFactory();
 
-        // 1. Escanea Beans
-        ctx.getBeansOfType(HtmlComponent.class).values().forEach(bean -> {
-            Route ann = bean.getClass().getAnnotation(Route.class);
-            if (ann == null) return;
+        // 1. Autodescubrir el paquete principal del usuario (donde está su @SpringBootApplication)
+        String basePackage = "com.ciro"; // Fallback por defecto
+        var bootApps = ctx.getBeansWithAnnotation(org.springframework.boot.autoconfigure.SpringBootApplication.class);
+        if (!bootApps.isEmpty()) {
+            basePackage = bootApps.values().iterator().next().getClass().getPackageName();
+        }
 
-            Class<? extends HtmlComponent> clazz = bean.getClass();
+        // 2. Escanear el classpath buscando tu anotación @Route directamente (No necesita @Component)
+        org.springframework.context.annotation.ClassPathScanningCandidateComponentProvider scanner = 
+                new org.springframework.context.annotation.ClassPathScanningCandidateComponentProvider(false);
+        scanner.addIncludeFilter(new org.springframework.core.type.filter.AnnotationTypeFilter(Route.class));
 
-            // 2. Crea Factory de Spring (Vital para prototype scope)
-            Supplier<HtmlComponent> sup = () -> beanFactory.createBean(clazz);
-
-            routes.add(new Entry(ann.path(), sup));
-        });
+        for (org.springframework.beans.factory.config.BeanDefinition bd : scanner.findCandidateComponents(basePackage)) {
+            try {
+                Class<?> clazz = Class.forName(bd.getBeanClassName());
+                Route ann = clazz.getAnnotation(Route.class);
+                
+                if (ann != null && HtmlComponent.class.isAssignableFrom(clazz)) {
+                    @SuppressWarnings("unchecked")
+                    Class<? extends HtmlComponent> compClass = (Class<? extends HtmlComponent>) clazz;
+                    
+                    // La magia: createBean() inyectará los @Autowired automáticamente 
+                    // aunque la clase no esté registrada como @Component
+                    Supplier<HtmlComponent> sup = () -> beanFactory.createBean(compClass);
+                    routes.add(new Entry(ann.path(), sup));
+                }
+            } catch (ClassNotFoundException e) {
+                e.printStackTrace();
+            }
+        }
 
         // 3. Validación de root
         boolean hasRoot = routes.stream().anyMatch(e -> "/".equals(e.template));

@@ -4,7 +4,7 @@ import org.springframework.stereotype.Component;
 
 import com.ciro.jreactive.router.Route;
 
-@Component
+
 @Route(path = "/two")
 public class HomeTwoPage extends AppPage{
 

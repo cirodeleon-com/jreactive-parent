@@ -7,13 +7,10 @@ import java.io.Serializable;
 import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
-
-import org.springframework.stereotype.Component;
-
 import com.ciro.jreactive.annotations.Call;
 import com.ciro.jreactive.router.Route;
 
-@Component
+
 @Route(path = "/signup-country")
 public class SignupCountryPage extends AppPage {
 
