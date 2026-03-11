@@ -74,10 +74,14 @@ public final class TemplateProcessor extends AbstractProcessor {
 
                 if (rawHtml != null) {
                     rawHtml = rawHtml.stripIndent().trim();
-                    validateTemplateConnections(rawHtml, clazz, tplMethod);
-                    generateHtmlResource(clazz, rawHtml);
-                    generateClientJs(clazz, rawHtml);
-                    generateJavaAccessor(clazz);
+                    
+                    boolean isValid = validateTemplateConnections(rawHtml, clazz, tplMethod);
+                    
+                    if(isValid) {
+                       generateHtmlResource(clazz, rawHtml);
+                       generateClientJs(clazz, rawHtml);
+                       generateJavaAccessor(clazz);
+                    }
                 }
             } else if (shouldGenerateAccessor(clazz)) {
                 generateJavaAccessor(clazz);
@@ -87,20 +91,20 @@ public final class TemplateProcessor extends AbstractProcessor {
     }
 
  // 🔥 Agregamos ExecutableElement tplMethod a los parámetros
-    private void validateTemplateConnections(String html, TypeElement clazz, ExecutableElement tplMethod) {
+ // 🔥 Ahora devuelve boolean
+    private boolean validateTemplateConnections(String html, TypeElement clazz, ExecutableElement tplMethod) {
         
-        // Agregamos .java para que sea evidente en la consola
         String fileName = clazz.getSimpleName() + ".java";
+        boolean hasErrors = false;
 
         try {
             com.ciro.jreactive.ast.JrxParser.parse(html);
         } catch (IllegalStateException ex) {
-            // 🔥 Pasamos tplMethod al final en lugar de clazz
             messager.printMessage(Diagnostic.Kind.ERROR, 
                 "❌ [JReactive] Error de sintaxis HTML en " + fileName + " : " + ex.getMessage(), tplMethod);
-            return; // Detenemos la validación si el HTML ya está roto
+            return false; // 🔥 Detenemos todo, el HTML es irrecuperable
         }
-        
+
         Set<String> validVariables = new HashSet<>(Arrays.asList("this", "id", "true", "false", "null"));
         Set<String> validMethods = new HashSet<>();
         Set<String> validRefs = new HashSet<>();
@@ -129,9 +133,9 @@ public final class TemplateProcessor extends AbstractProcessor {
             String rootVar = mVar.group(1).split("\\.")[0];
             if (rootVar.matches("-?\\d+") || rootVar.isEmpty()) continue;
             if (!validVariables.contains(rootVar)) {
-                // 🔥 Pasamos tplMethod al final
                 messager.printMessage(Diagnostic.Kind.ERROR, 
                     "❌ [JReactive] La variable '" + rootVar + "' no existe en " + fileName + ". Declárala con @State o expose.", tplMethod);
+                hasErrors = true;
             }
         }
 
@@ -141,16 +145,18 @@ public final class TemplateProcessor extends AbstractProcessor {
             if (fullCall.contains(".")) {
                 String refName = fullCall.split("\\.")[0];
                 if (!validRefs.contains(refName)) {
-                    // 🔥 Pasamos tplMethod al final
                     messager.printMessage(Diagnostic.Kind.ERROR, 
                         "❌ [JReactive] La referencia '" + refName + "' en el método '" + fullCall + "' no existe. Añade ref=\"" + refName + "\". (" + fileName + ")", tplMethod);
+                    hasErrors = true;
                 }
             } else if (!validMethods.contains(fullCall)) {
-                // 🔥 Pasamos tplMethod al final
                 messager.printMessage(Diagnostic.Kind.ERROR, 
                     "❌ [JReactive] El método '" + fullCall + "' no existe en " + fileName + ". Falta @Call.", tplMethod);
+                hasErrors = true;
             }
         }
+        
+        return !hasErrors;
     }
 
     private String extractTemplateString(TypeElement clazz, ExecutableElement method) {
