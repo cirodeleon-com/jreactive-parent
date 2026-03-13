@@ -18,7 +18,7 @@ public class JrxStateToken {
     
     // 🔥 MAPPER INTERNO ESTÁTICO: Aislado de Spring.
     private static final ObjectMapper TOKEN_MAPPER = new ObjectMapper().findAndRegisterModules();
-    private static final String SECRET = "JrxSuperSecretKey2026_ParetoMinimalist!"; 
+    private static final String SECRET = System.getenv().getOrDefault("JRX_SECRET", java.util.UUID.randomUUID().toString()); 
 
     public static String encode(Map<String, Object> state) throws Exception {
         Map<String, Object> payload = new HashMap<>(state);

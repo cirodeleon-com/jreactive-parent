@@ -136,7 +136,7 @@ public class TemplateContext {
                 return f.get(obj);
             }
         } catch (Exception e) {
-            // Silencioso
+        	System.err.println("⚠️ [JReactive] Error accediendo a propiedad '" + fieldName + "' en objeto " + obj.getClass().getSimpleName() + ": " + e.getMessage());
         }
         return null;
     }

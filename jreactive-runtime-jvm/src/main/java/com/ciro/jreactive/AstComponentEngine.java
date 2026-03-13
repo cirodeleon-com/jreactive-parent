@@ -906,6 +906,7 @@ public class AstComponentEngine extends AbstractComponentEngine {
         try {
             return new P().parseExpr();
         } catch (Exception e) {
+        	System.err.println("⚠️ [JReactive] Error de sintaxis evaluando expresión booleana '" + expr + "': " + e.getMessage());
             return false;
         }
     }

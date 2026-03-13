@@ -67,7 +67,21 @@ private final  Map<String, String> _childRefAlias = new HashMap<>();
     private boolean _initialized = false;
     
     // 🔒 Lock para gestión de estado y árbol (Anti-Pinning)
-    private final transient ReentrantLock lock = new ReentrantLock();
+    private transient volatile ReentrantLock lock;
+    
+ 
+    private ReentrantLock getLock() {
+        ReentrantLock result = lock;
+        if (result == null) {
+            synchronized (this) {
+                result = lock;
+                if (result == null) {
+                    lock = result = new ReentrantLock();
+                }
+            }
+        }
+        return result;
+    }
     
     public String _getBundledResources() {
         return RESOURCE_CACHE.computeIfAbsent(this.getClass(), clazz -> {
@@ -118,7 +132,7 @@ private final  Map<String, String> _childRefAlias = new HashMap<>();
     }
     
     public void _captureStateSnapshot() {
-        lock.lock();
+    	getLock().lock();
         try {
             if (map == null) buildBindings();
             
@@ -135,7 +149,9 @@ private final  Map<String, String> _childRefAlias = new HashMap<>();
                         // Es un POJO: guardamos el hash de sus campos
                         _structureHashes.put(key, getPojoHash(val));
                     }
-                } catch (Exception ignored) {}
+                } catch (Exception e) {
+                    System.err.println("⚠️ [JReactive] Error capturando snapshot de '@State " + key + "': " + e.getMessage());
+                }
             }
             
             // Recurrimos sobre una copia segura de la lista de hijos
@@ -144,7 +160,7 @@ private final  Map<String, String> _childRefAlias = new HashMap<>();
                 child._captureStateSnapshot();
             }
         } finally {
-            lock.unlock();
+        	getLock().unlock();
         }
     }
 
@@ -161,33 +177,33 @@ private final  Map<String, String> _childRefAlias = new HashMap<>();
      * Vital para el reciclaje de componentes en modo AOT.
      */
     public void addChild(HtmlComponent child) {
-        lock.lock();
+    	getLock().lock();
         try {
             if (!this._children.contains(child)) {
                 this._children.add(child);
             }
         } finally {
-            lock.unlock();
+        	getLock().unlock();
         }
     }
     
     void _addChild(HtmlComponent child) { 
-        lock.lock();
+    	getLock().lock();
         try {
             _children.add(child); 
         } finally {
-            lock.unlock();
+        	getLock().unlock();
         }
     }
     
     
 
     List<HtmlComponent> _children() { 
-        lock.lock();
+    	getLock().lock();
         try {
             return new ArrayList<>(_children); 
         } finally {
-            lock.unlock();
+        	getLock().unlock();
         }
     }
     
@@ -217,7 +233,7 @@ private final  Map<String, String> _childRefAlias = new HashMap<>();
 //        del componente (no necesariamente com.ciro.jreactive).
  // ──────────────────────────────────────────────────────────────
  public void _beginRenderCycle() {
-     lock.lock();
+	 getLock().lock();
      try {
          // defensivo por reentrancia
          if (_renderPool != null) return;
@@ -234,18 +250,18 @@ private final  Map<String, String> _childRefAlias = new HashMap<>();
       
          
      } finally {
-         lock.unlock();
+    	 getLock().unlock();
      }
  }
 
  public void _endRenderCycle() {
      List<HtmlComponent> pool;
-     lock.lock();
+     getLock().lock();
      try {
          pool = _renderPool;
          _renderPool = null;
      } finally {
-         lock.unlock();
+    	 getLock().unlock();
      }
 
      // Desmontar lo NO reutilizado (lo que quedó en pool)
@@ -266,13 +282,13 @@ private final  Map<String, String> _childRefAlias = new HashMap<>();
 
  /** Secuencia estable por tipo de hijo (solo se incrementa al CREAR, no al reusar) */
  public int _nextChildIdSeq(String className) {
-     lock.lock();
+	 getLock().lock();
      try {
          int n = _childIdSeq.getOrDefault(className, 0);
          _childIdSeq.put(className, n + 1);
          return n;
      } finally {
-         lock.unlock();
+    	 getLock().unlock();
      }
  }
  
@@ -378,12 +394,12 @@ private final  Map<String, String> _childRefAlias = new HashMap<>();
     protected abstract String template();
 
     public Map<String, ReactiveVar<?>> getRawBindings() {
-        lock.lock();
+    	getLock().lock();
         try {
             if (map == null) buildBindings();
             return map;
         } finally {
-            lock.unlock();
+        	getLock().unlock();
         }
     }
 
@@ -465,7 +481,7 @@ private final  Map<String, String> _childRefAlias = new HashMap<>();
     }
 
     public void _syncState() {
-        lock.lock();
+    	getLock().lock();
         try {
             if (map == null) buildBindings();
     
@@ -494,7 +510,7 @@ private final  Map<String, String> _childRefAlias = new HashMap<>();
                 child._syncState();
             }
         } finally {
-            lock.unlock();
+        	getLock().unlock();
         }
     }
 
@@ -669,7 +685,7 @@ private final  Map<String, String> _childRefAlias = new HashMap<>();
     
     @SuppressWarnings("unchecked")
     protected void updateState(String fieldName) {
-        lock.lock();
+    	getLock().lock();
         try {
             Class<?> c = getClass();
             Field found = null;
@@ -701,7 +717,7 @@ private final  Map<String, String> _childRefAlias = new HashMap<>();
         } catch (Exception e) {
             throw new RuntimeException("Error updating @State '" + fieldName + "'", e);
         } finally {
-            lock.unlock();
+        	getLock().unlock();
         }
     }
     
@@ -766,7 +782,7 @@ private final  Map<String, String> _childRefAlias = new HashMap<>();
      * Útil para optimizar el tráfico de componentes @Client.
      */
     public Map<String, Object> _getStateDeltas() {
-        lock.lock();
+    	getLock().lock();
         try {
             Map<String, Object> deltas = new HashMap<>();
             for (String key : stateKeys) {
@@ -775,11 +791,13 @@ private final  Map<String, String> _childRefAlias = new HashMap<>();
                     if (hasChanged(key, newValue)) {
                         deltas.put(key, newValue);
                     }
-                } catch (Exception ignored) {}
+                } catch (Exception e) {
+                    System.err.println("⚠️ [JReactive] Error calculando Delta para '@State " + key + "': " + e.getMessage());
+                }
             }
             return deltas;
         } finally {
-            lock.unlock();
+        	getLock().unlock();
         }
     }
     
@@ -799,20 +817,20 @@ private final  Map<String, String> _childRefAlias = new HashMap<>();
 
     public void _registerRef(String alias, String realId) {
         if (alias == null || realId == null) return;
-        lock.lock();
+        getLock().lock();
         try {
             _childRefAlias.put(alias, realId);
         } finally {
-            lock.unlock();
+        	getLock().unlock();
         }
     }
     
     public String _resolveRef(String alias) {
-        lock.lock();
+    	getLock().lock();
         try {
             return _childRefAlias.get(alias);
         } finally {
-            lock.unlock();
+        	getLock().unlock();
         }
     }
     

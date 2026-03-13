@@ -1977,6 +1977,13 @@ function setupEventBindings(root = document) {
 	                    return true;
 	                }
 	            });
+				
+				const forbiddenWords = ['document', 'window', 'fetch', 'XMLHttpRequest', 'eval', 'setTimeout', 'setInterval', 'location'];
+		        if (forbiddenWords.some(word => optCode.includes(word))) {
+			       console.error("🚨 [JReactive Seguridad] Bloqueado intento de ejecución insegura en data-optimistic:", optCode);
+				   rollbackData = null;
+				   return; // Cortamos la ejecución
+		        }
 	            
 	            // Ejecutamos el código del desarrollador inyectándole el proxy como 'state'
 	            new Function('state', optCode).call(el, optProxy);

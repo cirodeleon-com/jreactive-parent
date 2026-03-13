@@ -250,7 +250,7 @@ public class JrxHttpApi {
             }
 
             // B. Actualizar con los inputs que vienen en args
-            autoUpdateStateFromArgs(owner, args);
+            autoUpdateStateFromArgs(owner, target, args);
             if (owner instanceof HtmlComponent comp) comp._syncState();
 
             // C. Ejecutar la acción
@@ -362,31 +362,24 @@ public class JrxHttpApi {
         }
     }
     
-    /**
-     * Magia de Framework:
-     * Si recibes un objeto complejo (DTO) como argumento, busca si hay un campo @State
-     * del mismo tipo en el componente y actualízalo automáticamente.
-     */
-    /**
-     * Magia de Framework: Auto-Binding de DTOs.
-     * 🔥 MODIFICADO: Ahora soporta Proxies (CGLIB) recorriendo la jerarquía.
-     * Esto no afecta a componentes normales, simplemente busca más a fondo si no encuentra el campo al principio.
-     */
-    /**
-     * Magia de Framework: Auto-Binding de DTOs.
-     * Busca un campo @State en el componente (o sus padres) que coincida 
-     * con el tipo del argumento recibido y lo inyecta automáticamente.
-     */
-    private void autoUpdateStateFromArgs(Object owner, Object[] args) {
-        if (owner == null || args == null) return;
+ // 🔥 NOTA: Añadimos 'Method method' a la firma
+    private void autoUpdateStateFromArgs(Object owner, Method method, Object[] args) {
+        if (owner == null || args == null || method == null) return;
 
-        for (Object arg : args) {
+        // Obtenemos los metadatos de los parámetros del método (nombres reales)
+        java.lang.reflect.Parameter[] params = method.getParameters();
+
+        for (int i = 0; i < args.length; i++) {
+            Object arg = args[i];
             if (arg == null) continue;
 
-            // 1. Seguridad: Ignoramos tipos básicos para no sobrescribir contadores o flags por error
+            // 1. Seguridad: Ignoramos tipos básicos para no sobrescribir contadores o flags
             if (isPrimitiveOrWrapper(arg.getClass()) || arg instanceof String) {
                 continue;
             }
+
+            // 🔥 LA CLAVE: Extraemos el nombre exacto del parámetro (Ej: "form")
+            String targetName = params[i].getName();
 
             // 2. Inicio de la búsqueda en la clase del objeto
             Class<?> clazz = owner.getClass();
@@ -394,25 +387,24 @@ public class JrxHttpApi {
 
             // 3. Bucle para subir por la herencia (Proxy -> Clase Real -> Padre)
             while (clazz != null && clazz != Object.class) {
-                
-                for (java.lang.reflect.Field field : clazz.getDeclaredFields()) {
-                    // Solo nos interesan los campos marcados como Estado
-                    if (field.isAnnotationPresent(com.ciro.jreactive.State.class)) {
+                try {
+                    // 🔥 Búsqueda quirúrgica O(1): Buscamos el campo exactamente por su nombre
+                    java.lang.reflect.Field field = clazz.getDeclaredField(targetName);
+                    
+                    // Solo inyectamos si está marcado como @State y los tipos coinciden
+                    if (field.isAnnotationPresent(com.ciro.jreactive.State.class) &&
+                        field.getType().isAssignableFrom(arg.getClass())) {
                         
-                        // Si el tipo del campo es compatible con el argumento recibido
-                        if (field.getType().isAssignableFrom(arg.getClass())) {
-                            try {
-                                field.setAccessible(true);
-                                field.set(owner, arg); // 🔄 Inyección del valor
-                                inyectado = true;
-                                System.out.println("✅ [JRX-BIND] Inyección exitosa en: " + field.getName() + " (Clase: " + clazz.getSimpleName() + ")");
-                                // Break aquí para evitar asignar el mismo DTO a dos campos diferentes
-                                break; 
-                            } catch (IllegalAccessException e) {
-                                e.printStackTrace();
-                            }
-                        }
+                        field.setAccessible(true);
+                        field.set(owner, arg); // 🔄 Inyección Quirúrgica
+                        inyectado = true;
+                        System.out.println("✅ [JRX-BIND] Inyección segura por nombre en: " + field.getName() + " (Clase: " + clazz.getSimpleName() + ")");
+                        break; 
                     }
+                } catch (NoSuchFieldException e) {
+                    // Silencioso: El campo no está en esta clase, el while subirá al padre
+                } catch (IllegalAccessException e) {
+                    e.printStackTrace();
                 }
                 
                 if (inyectado) break;
@@ -421,8 +413,7 @@ public class JrxHttpApi {
             }
             
             if (!inyectado) {
-                System.err.println("⚠️ [JRX-BIND] No se encontró campo @State compatible para el argumento: " + arg.getClass().getSimpleName());
-                System.err.println("   -> Buscado en jerarquía de: " + owner.getClass().getName());
+                System.err.println("⚠️ [JRX-BIND] No se inyectó el argumento '" + targetName + "' (No se encontró un @State con ese nombre exacto o los tipos no coinciden).");
             }
         }
     }
