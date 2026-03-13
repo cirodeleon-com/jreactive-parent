@@ -37,6 +37,9 @@ public class PowerTestPage extends AppPage {
     @State public List<ServerNode> servers = new ArrayList<>();
     @State public int totalOps = 0;
     @State public ServerNode newServerForm = new ServerNode();
+    
+    // 🔥 FIX: Contador real e independiente para evitar IDs duplicados (Zombies)
+    @State public int serverIdCounter = 3; 
 
     @Override
     protected void onInit() {
@@ -60,7 +63,8 @@ public class PowerTestPage extends AppPage {
 
     @Call
     public void openAddModal() {
-        newServerForm = new ServerNode("SRV-" + (servers.size() + 1), "", 0, "🟢 Booting");
+        serverIdCounter++; // 🔥 Incrementamos el contador de forma segura
+        newServerForm = new ServerNode("SRV-" + serverIdCounter, "", 0, "🟢 Booting");
         findChild("deployModal", JModal.class).open();
     }
 

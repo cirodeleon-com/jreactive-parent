@@ -966,6 +966,12 @@ function updateEachBlocks() {
     /* 3 · recorrido con reuse inteligente --------------------------- */
     data.forEach((item, idx) => {
       const key = getKey(item, idx); 
+	  
+	  if (next.has(key)) {
+	     console.warn(`⚠️ [JReactive] ID duplicado detectado en bucle: ${key}. Protegiendo DOM...`);
+	     key = key + '_dup_' + idx;
+	  }
+	  
       let entry = prev.get(key);
 
       // 🔥 FIX: Detectar si el contenido real cambió (SET/Update)

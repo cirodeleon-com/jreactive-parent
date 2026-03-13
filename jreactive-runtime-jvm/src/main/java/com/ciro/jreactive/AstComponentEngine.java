@@ -115,7 +115,7 @@ public class AstComponentEngine extends AbstractComponentEngine {
             String scopeId = ctx._getScopeId();
 
             html = resources + "<div id=\"" + id + "\" class=\"" + scopeId + "\" data-jrx-client=\"" + safeName + "\"></div>";
-            /*
+            
             // Token stateless incluso en shell client
             if (ctx.getClass().isAnnotationPresent(Stateless.class)) {
                 html = injectStatelessToken(html, s.allBindings, id);
@@ -125,7 +125,7 @@ public class AstComponentEngine extends AbstractComponentEngine {
             disposeUnused(pool);
             ctx._mountRecursive();
             return new ComponentEngine.Rendered(html, s.allBindings);
-            */
+            
         }
 
         // Token @Stateless en SSR

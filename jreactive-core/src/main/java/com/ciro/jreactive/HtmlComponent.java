@@ -146,7 +146,8 @@ private final  Map<String, String> _childRefAlias = new HashMap<>();
                         _simpleSnapshots.put(key, null);
                     } else if (val instanceof String || val instanceof Number || val instanceof Boolean) {
                         _simpleSnapshots.put(key, val);
-                        // Es un POJO: guardamos el hash de sus campos
+                    } else {
+                        // 🔥 FIX: Faltaba este 'else'. Es un POJO: guardamos el hash de sus campos
                         _structureHashes.put(key, getPojoHash(val));
                     }
                 } catch (Exception e) {
