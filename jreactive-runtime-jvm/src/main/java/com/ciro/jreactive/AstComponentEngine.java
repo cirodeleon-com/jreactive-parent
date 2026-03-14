@@ -87,10 +87,25 @@ public class AstComponentEngine extends AbstractComponentEngine {
         // =============================
         // SSR
         // =============================
+     // =============================
+        // SSR
+        // =============================
         String ns = isRoot ? "" : prefix;
         
-        List<JrxNode> ast = AST_CACHE.computeIfAbsent(ctx.getClass(), k -> JrxParser.parse(ctx.template()));
-        //List<JrxNode> ast = JrxParser.parse(ctx.template());
+        // 🔥 AOT ZERO-PARSE: Intentamos sacar el AST directo del Accessor generado
+        List<JrxNode> ast = AST_CACHE.computeIfAbsent(ctx.getClass(), k -> {
+            @SuppressWarnings({"rawtypes", "unchecked"})
+            com.ciro.jreactive.spi.ComponentAccessor acc = com.ciro.jreactive.spi.AccessorRegistry.get((Class) k);
+            if (acc != null) {
+                List<JrxNode> precompiledAst = acc.getAst();
+                if (precompiledAst != null) {
+                    // System.out.println("⚡ [AOT] Usando AST pre-compilado para: " + k.getSimpleName());
+                    return precompiledAst;
+                }
+            }
+            // Fallback (JIT): Si el componente es muy viejo o falló el APT, parseamos en caliente
+            return JrxParser.parse(ctx.template());
+        });
 
         // scoping: SOLO a los root elements (equivalente a Jsoup)
         addScopeToRootElements(ast, ctx._getScopeId());

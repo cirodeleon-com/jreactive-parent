@@ -88,30 +88,21 @@ private final  Map<String, String> _childRefAlias = new HashMap<>();
     public String _getBundledResources() {
         return RESOURCE_CACHE.computeIfAbsent(this.getClass(), clazz -> {
             StringBuilder bundle = new StringBuilder();
-            String baseName = clazz.getSimpleName(); // Ej: "UserPage"
-            
-            String scopeId = _getScopeId();
+            String baseName = clazz.getSimpleName();
 
-            // 1. Intentar cargar CSS (UserPage.css)
-            try (InputStream is = clazz.getResourceAsStream(baseName + ".css")) {
-                if (is != null) {
-                    String rawCss = new String(is.readAllBytes(), StandardCharsets.UTF_8);
-                    // Inyectamos con un data-resource para facilitar depuración en DevTools
-                    String scopedCss = CssScoper.scope(rawCss, scopeId);
-                    
-                    if (!scopedCss.isEmpty()) {
-                        bundle.append("\n<style data-resource=\"").append(baseName).append("\">")
-                              .append(scopedCss)
-                              .append("</style>");
-                    }
-                    
-                    
+            // 🔥 1. MAGIA AOT: Obtenemos el CSS ya con scope y minificado desde el Accessor (O(1))
+            @SuppressWarnings({"rawtypes", "unchecked"})
+            com.ciro.jreactive.spi.ComponentAccessor acc = com.ciro.jreactive.spi.AccessorRegistry.get((Class) clazz);
+            if (acc != null) {
+                String scopedCss = acc.getScopedCss();
+                if (scopedCss != null && !scopedCss.isBlank()) {
+                    bundle.append("\n<style data-resource=\"").append(baseName).append("\">\n")
+                          .append(scopedCss)
+                          .append("\n</style>");
                 }
-            } catch (Exception e) {
-                System.err.println("⚠️ JReactive: Error leyendo CSS para " + baseName + ": " + e.getMessage());
             }
 
-            // 2. Intentar cargar JS (UserPage.js)
+            // 2. JS: Se lee normal desde el disco (Se mantiene igual)
             try (InputStream is = clazz.getResourceAsStream(baseName + ".js")) {
                 if (is != null) {
                     String js = new String(is.readAllBytes(), StandardCharsets.UTF_8);
@@ -119,7 +110,7 @@ private final  Map<String, String> _childRefAlias = new HashMap<>();
                           .append("/*<![CDATA[*/\n")
                           .append(js)
                           .append("\n/*]]>*/\n")
-                          .append("\n</script>\n");
+                          .append("</script>\n");
                 }
             } catch (Exception e) {
                 System.err.println("⚠️ JReactive: Error leyendo JS para " + baseName + ": " + e.getMessage());

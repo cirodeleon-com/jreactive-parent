@@ -68,6 +68,7 @@ public final class TemplateProcessor extends AbstractProcessor {
             if (!isJReactiveComponent(clazz)) continue;
 
             String rawHtml = tryReadHtmlFile(clazz);
+            String rawCss = tryReadCssFile(clazz);
             ExecutableElement tplMethod = findTemplateMethod(clazz);
             
             if (rawHtml == null && tplMethod != null) {
@@ -83,7 +84,7 @@ public final class TemplateProcessor extends AbstractProcessor {
                if(isValid) {
                   generateHtmlResource(clazz, rawHtml);
                   generateClientJs(clazz, rawHtml);
-                  generateJavaAccessor(clazz);
+                  generateJavaAccessor(clazz, rawHtml, rawCss);
                }
                 
             } else if (shouldGenerateAccessor(clazz)) {
@@ -91,7 +92,7 @@ public final class TemplateProcessor extends AbstractProcessor {
                     messager.printMessage(Diagnostic.Kind.WARNING, 
                         "⚠️ [JReactive] No se encontró el HTML para el @Client " + clazz.getSimpleName() + ". El componente aparecerá en blanco.", clazz);
                 }
-                generateJavaAccessor(clazz);
+            	generateJavaAccessor(clazz, rawHtml, rawCss);
             }
         }
         return false;
@@ -261,7 +262,7 @@ public final class TemplateProcessor extends AbstractProcessor {
         }
     }
 
-    private void generateJavaAccessor(TypeElement clazz) {
+    private void generateJavaAccessor(TypeElement clazz, String rawHtml, String rawCss) {
         String pkg = processingEnv.getElementUtils().getPackageOf(clazz).getQualifiedName().toString();
         String className = clazz.getSimpleName().toString();
         String accessorName = className + "__Accessor";
@@ -283,6 +284,10 @@ public final class TemplateProcessor extends AbstractProcessor {
                 generateWriteMethod(w, clazz, className);
                 generateReadMethod(w, clazz, className);
                 generateCallMethod(w, clazz, className);
+                
+                // 🔥 LLAMAMOS A LOS DOS NUEVOS MOTORES AOT
+                generateAstMethod(w, rawHtml);
+                generateCssMethod(w, clazz, rawCss);
 
                 w.write("}\n");
             }
@@ -627,6 +632,127 @@ public final class TemplateProcessor extends AbstractProcessor {
         } catch (Exception ignored) {}
 
         return null;
+    }
+    
+    private String tryReadCssFile(TypeElement clazz) {
+        String pkg = processingEnv.getElementUtils().getPackageOf(clazz).getQualifiedName().toString();
+        String fileName = clazz.getSimpleName().toString() + ".css";
+        try {
+            if (this.trees != null) {
+                com.sun.source.util.TreePath path = trees.getPath(clazz);
+                if (path != null) {
+                    javax.tools.JavaFileObject sourceFile = path.getCompilationUnit().getSourceFile();
+                    java.nio.file.Path javaNioPath = java.nio.file.Paths.get(sourceFile.toUri());
+                    String cssPathStr = javaNioPath.toString().replace(".java", ".css");
+                    java.io.File file = new java.io.File(cssPathStr);
+                    if (file.exists()) return new String(java.nio.file.Files.readAllBytes(file.toPath()), java.nio.charset.StandardCharsets.UTF_8);
+                }
+            }
+        } catch (Throwable ignored) {}
+
+        try {
+            java.io.File file = new java.io.File("src/main/java/" + pkg.replace(".", "/") + "/" + fileName);
+            if (!file.exists()) file = new java.io.File("jreactive-demo-spring/src/main/java/" + pkg.replace(".", "/") + "/" + fileName);
+            if (file.exists()) return new String(java.nio.file.Files.readAllBytes(file.toPath()), java.nio.charset.StandardCharsets.UTF_8);
+        } catch (Exception ignored) {}
+
+        return null;
+    }
+    
+    
+    
+ // =========================================================================
+    // 🔥 PRE-MASTICADORES AOT (AST y CSS)
+    // =========================================================================
+
+    private void generateAstMethod(Writer w, String html) throws IOException {
+        w.write("    @Override\n");
+        w.write("    public java.util.List<com.ciro.jreactive.ast.JrxNode> getAst() {\n");
+        if (html == null || html.isBlank()) {
+            w.write("        return null;\n    }\n\n");
+            return;
+        }
+        try {
+            List<com.ciro.jreactive.ast.JrxNode> nodes = com.ciro.jreactive.ast.JrxParser.parse(html);
+            w.write("        return java.util.Arrays.asList(\n");
+            for (int i = 0; i < nodes.size(); i++) {
+                writeNodeCode(w, nodes.get(i), 3);
+                if (i < nodes.size() - 1) w.write(",\n");
+            }
+            w.write("\n        );\n");
+        } catch (Exception e) {
+            w.write("        return null;\n"); // Fallback seguro
+        }
+        w.write("    }\n\n");
+    }
+
+    private void writeNodeCode(Writer w, com.ciro.jreactive.ast.JrxNode n, int indent) throws IOException {
+        String ind = "    ".repeat(indent);
+        if (n instanceof com.ciro.jreactive.ast.TextNode txt) {
+            w.write(ind + "new com.ciro.jreactive.ast.TextNode(\"" + escapeJavaString(txt.text) + "\")");
+        } else if (n instanceof com.ciro.jreactive.ast.ElementNode el) {
+            boolean isComp = n instanceof com.ciro.jreactive.ast.ComponentNode;
+            String className = isComp ? "ComponentNode" : "ElementNode";
+            w.write(ind + "new com.ciro.jreactive.ast." + className + "(\"" + escapeJavaString(el.tagName) + "\", " + el.isSelfClosing + ")");
+            if (!el.attributes.isEmpty() || !el.children.isEmpty()) {
+                w.write(" {{\n");
+                for (Map.Entry<String, String> attr : el.attributes.entrySet()) {
+                    w.write(ind + "    attributes.put(\"" + escapeJavaString(attr.getKey()) + "\", \"" + escapeJavaString(attr.getValue()) + "\");\n");
+                }
+                for (com.ciro.jreactive.ast.JrxNode child : el.children) {
+                    w.write(ind + "    children.add(\n");
+                    writeNodeCode(w, child, indent + 2);
+                    w.write("\n" + ind + "    );\n");
+                }
+                w.write(ind + "}}");
+            }
+        } else if (n instanceof com.ciro.jreactive.ast.IfNode ifn) {
+            w.write(ind + "new com.ciro.jreactive.ast.IfNode(\"" + escapeJavaString(ifn.condition) + "\") {{\n");
+            for (com.ciro.jreactive.ast.JrxNode child : ifn.trueBranch) {
+                w.write(ind + "    trueBranch.add(\n");
+                writeNodeCode(w, child, indent + 2);
+                w.write("\n" + ind + "    );\n");
+            }
+            ifn.falseBranch.forEach(child -> {
+                try {
+                    w.write(ind + "    falseBranch.add(\n");
+                    writeNodeCode(w, child, indent + 2);
+                    w.write("\n" + ind + "    );\n");
+                } catch (IOException ignored) {}
+            });
+            w.write(ind + "}}");
+        } else if (n instanceof com.ciro.jreactive.ast.EachNode each) {
+            w.write(ind + "new com.ciro.jreactive.ast.EachNode(\"" + escapeJavaString(each.listExpression) + "\", \"" + escapeJavaString(each.alias) + "\") {{\n");
+            for (com.ciro.jreactive.ast.JrxNode child : each.children) {
+                w.write(ind + "    children.add(\n");
+                writeNodeCode(w, child, indent + 2);
+                w.write("\n" + ind + "    );\n");
+            }
+            w.write(ind + "}}");
+        }
+    }
+
+    private void generateCssMethod(Writer w, TypeElement clazz, String rawCss) throws IOException {
+        w.write("    @Override\n");
+        w.write("    public String getScopedCss() {\n");
+        if (rawCss == null || rawCss.isBlank()) {
+            w.write("        return \"\";\n    }\n\n");
+            return;
+        }
+        String scopeId = "jrx-sc-" + clazz.getSimpleName().toString();
+        // 🔥 AOT CSS: Compilamos y minificamos durante el 'mvn install'
+        String scoped = CssScoper.scope(rawCss, scopeId);
+        w.write("        return \"" + escapeJavaString(scoped) + "\";\n");
+        w.write("    }\n\n");
+    }
+
+    private String escapeJavaString(String s) {
+        if (s == null) return "";
+        return s.replace("\\", "\\\\")
+                .replace("\"", "\\\"")
+                .replace("\n", "\\n")
+                .replace("\r", "\\r")
+                .replace("\t", "\\t");
     }
     
 }

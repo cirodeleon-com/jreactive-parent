@@ -5,6 +5,7 @@ import com.ciro.jreactive.annotations.Client;
 import com.ciro.jreactive.router.Route;
 
 @Route(path = "/external-test")
+@Client
 public class ExternalHtmlPage extends AppPage {
 	// hi world
 

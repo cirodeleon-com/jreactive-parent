@@ -1,4 +1,4 @@
-package com.ciro.jreactive;
+package com.ciro.jreactive.tools;
 
 import com.helger.css.ECSSVersion;
 import com.helger.css.decl.*;

@@ -18,4 +18,7 @@ public interface ComponentAccessor<T extends HtmlComponent> {
     Object call(T component, String method, Object... args);
     
     default String renderStatic(T component) { return null; }
+    
+    default java.util.List<com.ciro.jreactive.ast.JrxNode> getAst() { return null; }
+    default String getScopedCss() { return null; }
 }
