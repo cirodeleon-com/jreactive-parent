@@ -3,7 +3,6 @@ package com.ciro.jreactive;
 import com.ciro.jreactive.annotations.Call;
 import com.ciro.jreactive.router.Route;
 
-
 @Route(path = "/optimistic-test")
 public class OptimisticTestPage extends AppPage {
 
@@ -87,10 +86,10 @@ public class OptimisticTestPage extends AppPage {
 
                     <button @click="toggleLikeOptimistic()" 
                             data-optimistic="
-                                state.hasLiked = !state.hasLiked; 
-                                state.likes += state.hasLiked ? 1 : -1; 
-                                state.heartIcon = state.hasLiked ? '❤️' : '🤍'; 
-                                state.heartColor = state.hasLiked ? '#e25555' : '#ccc';
+                                likes: hasLiked ? -1 : +1; 
+                                heartIcon: hasLiked ? '🤍' : '❤️'; 
+                                heartColor: hasLiked ? '#ccc' : '#e25555'; 
+                                hasLiked: toggle
                             "
                             style="padding: 15px; font-size: 1.1em; cursor: pointer; border-radius: 8px; border: none; background: #007bff; color: white;">
                         ⚡ <strong>Optimista:</strong> Reacción en 0ms (Manda petición en 2do plano)
@@ -98,10 +97,10 @@ public class OptimisticTestPage extends AppPage {
 
                     <button @click="toggleLikeError()" 
                             data-optimistic="
-                                state.hasLiked = !state.hasLiked; 
-                                state.likes += state.hasLiked ? 1 : -1; 
-                                state.heartIcon = state.hasLiked ? '❤️' : '🤍'; 
-                                state.heartColor = state.hasLiked ? '#e25555' : '#ccc';
+                                likes: hasLiked ? -1 : +1; 
+                                heartIcon: hasLiked ? '🤍' : '❤️'; 
+                                heartColor: hasLiked ? '#ccc' : '#e25555'; 
+                                hasLiked: toggle
                             "
                             style="padding: 15px; font-size: 1.1em; cursor: pointer; border-radius: 8px; border: none; background: #dc3545; color: white;">
                         💣 <strong>Rollback:</strong> Optimista (0ms) + Error del Servidor

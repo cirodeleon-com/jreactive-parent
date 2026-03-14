@@ -87,10 +87,10 @@ public class OptimisticShowcasePage extends AppPage {
                 </div>
 
                 <div class="card">
-                    <h3>3. Mutación de Estado (JS Externo)</h3>
+                    <h3>3. Mutación de Estado (In-line Seguro)</h3>
                     <p>Carrito: <strong>{{items}}</strong> items | Total: <strong>${{total}}</strong></p>
                     <button @click="buyItem()" 
-                            data-optimistic="calcularCarritoOptimista(state)"
+                            data-optimistic="items:+1; total:+150.50"
                             style="padding: 10px; background: #007bff; color: white; border: none; border-radius: 4px;">
                         🛒 Comprar ($150.50)
                     </button>
@@ -101,7 +101,7 @@ public class OptimisticShowcasePage extends AppPage {
                     <p>Si la petición falla, JReactive debe revertir la ilusión óptica.</p>
                     <button @click="bombAction()" 
                             jrx-optimistic-class="is-loading"
-                            data-optimistic="likesCount += 1000"
+                            data-optimistic="likesCount:+1000"
                             style="padding: 10px; background: #dc3545; color: white; border: none; border-radius: 4px;">
                         💣 Acción Peligrosa (+1000 likes falsos)
                     </button>

@@ -1956,48 +1956,85 @@ function setupEventBindings(root = document) {
 	        }
 	    }
 	
-	let rollbackData = null;
-	    const optCode = el.getAttribute('data-optimistic');
-	    
-	    if (optCode) {
-	        rollbackData = {};
-	        try {
-	            // Creamos un Proxy inteligente que intercepta lecturas y escrituras
-	            const optProxy = new Proxy(state, {
-	                get(target, prop) {
-	                    // Resuelve nombres cortos (ej: "count" -> "CounterLeaf#1.count")
-	                    const realKey = target[prop] !== undefined ? prop : Object.keys(target).find(k => k.endsWith('.' + prop));
-	                    return realKey ? target[realKey] : undefined;
-	                },
-	                set(target, prop, value) {
-	                    const realKey = target[prop] !== undefined ? prop : Object.keys(target).find(k => k.endsWith('.' + prop)) || prop;
-	                    
-	                    // Guardamos la copia de seguridad solo la primera vez que se toca
-	                    if (!(realKey in rollbackData)) {
-	                        rollbackData[realKey] = target[realKey]; 
-	                    }
-	                    
-	                    // Aplicamos el cambio al estado local y actualizamos el DOM en 0ms
-	                    target[realKey] = value;
-	                    updateDomForKey(realKey, value); 
-	                    return true;
-	                }
-	            });
-				
-				const forbiddenWords = ['document', 'window', 'fetch', 'XMLHttpRequest', 'eval', 'setTimeout', 'setInterval', 'location'];
-		        if (forbiddenWords.some(word => optCode.includes(word))) {
-			       console.error("🚨 [JReactive Seguridad] Bloqueado intento de ejecución insegura en data-optimistic:", optCode);
-				   rollbackData = null;
-				   return; // Cortamos la ejecución
+		let rollbackData = null;
+		    const optCode = el.getAttribute('data-optimistic');
+		    
+		    if (optCode) {
+		        rollbackData = {};
+		        try {
+		            const optProxy = new Proxy(state, {
+		                get(target, prop) {
+		                    const realKey = target[prop] !== undefined ? prop : Object.keys(target).find(k => k.endsWith('.' + prop));
+		                    return realKey ? target[realKey] : undefined;
+		                },
+		                set(target, prop, value) {
+		                    const realKey = target[prop] !== undefined ? prop : Object.keys(target).find(k => k.endsWith('.' + prop)) || prop;
+		                    if (!(realKey in rollbackData)) {
+		                        rollbackData[realKey] = target[realKey]; 
+		                    }
+		                    target[realKey] = value;
+		                    updateDomForKey(realKey, value); 
+		                    return true;
+		                }
+		            });
+		            
+		            // 🛡️ NUEVO MOTOR: AST Minimalista 100% Seguro (Adiós new Function)
+		            // Sintaxis esperada: "variable:accion; variable2:accion2"
+					// 🛡️ NUEVO MOTOR: AST Minimalista 100% Seguro (Adiós new Function)
+					            const stmts = optCode.split(';');
+					            
+					            stmts.forEach(stmt => {
+					                // Buscamos los dos puntos que separan la variable de la acción
+					                const firstColon = stmt.indexOf(':');
+					                if (firstColon < 0) return;
+					                
+					                const key = stmt.substring(0, firstColon).trim().replace(/^state\./, '');
+					                let valStr = stmt.substring(firstColon + 1).trim();
+
+					                // 🧠 NUEVO: Soporte para Operadores Ternarios (condicion ? valorTrue : valorFalse)
+					                if (valStr.includes('?')) {
+					                    const qMark = valStr.indexOf('?');
+					                    const colon = valStr.lastIndexOf(':'); // Separador del ternario
+					                    if (colon > qMark) {
+					                        let cond = valStr.substring(0, qMark).trim();
+					                        const trueVal = valStr.substring(qMark + 1, colon).trim();
+					                        const falseVal = valStr.substring(colon + 1).trim();
+					                        
+					                        // Evaluar condición leyendo del estado (Soporta negación !)
+					                        let invert = cond.startsWith('!');
+					                        if (invert) cond = cond.substring(1);
+					                        
+					                        const condValue = optProxy[cond];
+					                        const isTrue = invert ? !condValue : !!condValue;
+					                        
+					                        // Elegir el camino
+					                        valStr = isTrue ? trueVal : falseVal;
+					                    }
+					                }
+
+					                // Procesamiento normal de la acción resultante
+					                if (valStr === 'toggle') {
+					                    optProxy[key] = !optProxy[key];
+					                } else if (valStr.startsWith('+')) {
+					                    optProxy[key] = (Number(optProxy[key]) || 0) + Number(valStr.substring(1));
+					                } else if (valStr.startsWith('-')) {
+					                    optProxy[key] = (Number(optProxy[key]) || 0) - Number(valStr.substring(1));
+					                } else if (valStr === 'true') {
+					                    optProxy[key] = true;
+					                } else if (valStr === 'false') {
+					                    optProxy[key] = false;
+					                } else if ((valStr.startsWith("'") && valStr.endsWith("'")) || (valStr.startsWith('"') && valStr.endsWith('"'))) {
+					                    optProxy[key] = valStr.slice(1, -1);
+					                } else if (!isNaN(valStr) && valStr !== '') {
+					                    optProxy[key] = Number(valStr);
+					                }
+					            });
+		            
+		        } catch (err) {
+		            console.warn("⚠️ [JReactive] Error en Optimistic UI, ignorando predicción:", err);
+		            rollbackData = null;
 		        }
-	            
-	            // Ejecutamos el código del desarrollador inyectándole el proxy como 'state'
-	            new Function('state', optCode).call(el, optProxy);
-	        } catch (err) {
-	            console.warn("⚠️ [JReactive] Error en Optimistic UI, ignorando predicción:", err);
-	            rollbackData = null;
-	        }
-	    }
+		    }
 	
 		
 	startLoading();
