@@ -67,23 +67,30 @@ public final class TemplateProcessor extends AbstractProcessor {
             if (clazz.getSimpleName().toString().endsWith("__Accessor")) continue;
             if (!isJReactiveComponent(clazz)) continue;
 
+            String rawHtml = tryReadHtmlFile(clazz);
             ExecutableElement tplMethod = findTemplateMethod(clazz);
+            
+            if (rawHtml == null && tplMethod != null) {
+                rawHtml = extractTemplateString(clazz, tplMethod);
+            }
 
-            if (tplMethod != null) {
-                String rawHtml = extractTemplateString(clazz, tplMethod);
-
-                if (rawHtml != null) {
-                    rawHtml = rawHtml.stripIndent().trim();
+            if (rawHtml != null) {
+               rawHtml = rawHtml.stripIndent().trim();
+                 
+               Element errorLocation = tplMethod != null ? tplMethod : clazz;
+               boolean isValid = validateTemplateConnections(rawHtml, clazz, errorLocation);
                     
-                    boolean isValid = validateTemplateConnections(rawHtml, clazz, tplMethod);
-                    
-                    if(isValid) {
-                       generateHtmlResource(clazz, rawHtml);
-                       generateClientJs(clazz, rawHtml);
-                       generateJavaAccessor(clazz);
-                    }
-                }
+               if(isValid) {
+                  generateHtmlResource(clazz, rawHtml);
+                  generateClientJs(clazz, rawHtml);
+                  generateJavaAccessor(clazz);
+               }
+                
             } else if (shouldGenerateAccessor(clazz)) {
+            	if (clazz.getAnnotation(Client.class) != null) {
+                    messager.printMessage(Diagnostic.Kind.WARNING, 
+                        "⚠️ [JReactive] No se encontró el HTML para el @Client " + clazz.getSimpleName() + ". El componente aparecerá en blanco.", clazz);
+                }
                 generateJavaAccessor(clazz);
             }
         }
@@ -92,7 +99,7 @@ public final class TemplateProcessor extends AbstractProcessor {
 
  // 🔥 Agregamos ExecutableElement tplMethod a los parámetros
  // 🔥 Ahora devuelve boolean
-    private boolean validateTemplateConnections(String html, TypeElement clazz, ExecutableElement tplMethod) {
+    private boolean validateTemplateConnections(String html, TypeElement clazz, Element tplMethod) {
         
         String fileName = clazz.getSimpleName() + ".java";
         boolean hasErrors = false;
@@ -175,9 +182,20 @@ public final class TemplateProcessor extends AbstractProcessor {
     }
 
     private boolean isJReactiveComponent(TypeElement clazz) {
-        return findTemplateMethod(clazz) != null || 
-               clazz.getSuperclass().toString().contains("HtmlComponent") ||
-               clazz.getSuperclass().toString().contains("ViewLeaf");
+        if (findTemplateMethod(clazz) != null) return true;
+
+        TypeElement current = clazz;
+        while (current != null && !current.getQualifiedName().toString().equals("java.lang.Object")) {
+            String superName = current.getSuperclass().toString();
+            if (superName.contains("HtmlComponent") || superName.contains("ViewLeaf")) {
+                return true;
+            }
+            
+            TypeMirror superClassMirror = current.getSuperclass();
+            if (superClassMirror.getKind() == TypeKind.NONE) break;
+            current = (TypeElement) processingEnv.getTypeUtils().asElement(superClassMirror);
+        }
+        return false;
     }
 
     private ExecutableElement findTemplateMethod(TypeElement clazz) {
@@ -584,4 +602,31 @@ public final class TemplateProcessor extends AbstractProcessor {
             return null;
         }
     }
+    
+    private String tryReadHtmlFile(TypeElement clazz) {
+        String pkg = processingEnv.getElementUtils().getPackageOf(clazz).getQualifiedName().toString();
+        String fileName = clazz.getSimpleName().toString() + ".html";
+        
+        // 1. Intento por código fuente
+        try {
+            FileObject fileObject = filer.getResource(StandardLocation.SOURCE_PATH, pkg, fileName);
+            CharSequence content = fileObject.getCharContent(true);
+            if (content != null) return content.toString();
+        } catch (Exception ignored) {}
+
+        // 2. Intento por disco duro (Directo, infalible en consola)
+        try {
+            java.io.File file = new java.io.File("src/main/java/" + pkg.replace(".", "/") + "/" + fileName);
+            if (!file.exists()) {
+                // Modo multi-módulo (Si compilas desde parent)
+                file = new java.io.File("jreactive-demo-spring/src/main/java/" + pkg.replace(".", "/") + "/" + fileName);
+            }
+            if (file.exists()) {
+                return new String(java.nio.file.Files.readAllBytes(file.toPath()), java.nio.charset.StandardCharsets.UTF_8);
+            }
+        } catch (Exception ignored) {}
+
+        return null;
+    }
+    
 }

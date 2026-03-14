@@ -1,0 +1,18 @@
+<div style="padding: 40px; font-family: system-ui, sans-serif; text-align: center; max-width: 600px; margin: 0 auto;">
+    <h1>🎉 Prueba de HTML por Convención</h1>
+    <p style="color: #666;">
+        Este HTML vive en su propio archivo, pero está mágicamente enlazado a la clase Java.
+    </p>
+    
+    <div style="margin: 20px 0; padding: 30px; border: 2px dashed #007bff; border-radius: 12px; background: #f8f9fa;">
+        <h2>Clicks: <span style="color: #007bff; font-size: 1.5em;">{{clicks}}</span></h2>
+        <p>Estado: <strong>{{message}}</strong></p>
+        
+        <button @click="interact()" 
+                style="margin-top: 15px; padding: 12px 24px; font-size: 16px; background: #007bff; color: white; border: none; border-radius: 6px; cursor: pointer; transition: 0.2s;">
+            ⚡ ¡Probar Reactividad!
+        </button>
+    </div>
+    
+    <a data-router href="/" style="color: gray; text-decoration: none;">⬅️ Volver al inicio</a>
+</div>

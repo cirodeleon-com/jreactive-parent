@@ -57,6 +57,8 @@ private final  Map<String, String> _childRefAlias = new HashMap<>();
     private final Map<String, Object> _simpleSnapshots = new HashMap<>();
     private final Map<String, Integer> _identitySnapshots = new HashMap<>();
     private static final Map<Class<?>, String> RESOURCE_CACHE = new ConcurrentHashMap<>();
+    private static final Map<Class<?>, String> TEMPLATE_HTML_CACHE = new ConcurrentHashMap<>();
+    
     
   //🔥 Cachés Estáticos de Reflexión (Se ejecutan 1 sola vez en la vida del Servidor)
     private static final Map<Class<?>, List<Field>> FIELDS_CACHE = new ConcurrentHashMap<>();
@@ -392,7 +394,19 @@ private final  Map<String, String> _childRefAlias = new HashMap<>();
     }
 
     @Language("html")
-    protected abstract String template();
+    protected String template() {
+        return TEMPLATE_HTML_CACHE.computeIfAbsent(this.getClass(), clazz -> {
+            String baseName = clazz.getSimpleName() + ".html";
+            try (InputStream is = clazz.getResourceAsStream(baseName)) {
+                if (is != null) {
+                    return new String(is.readAllBytes(), StandardCharsets.UTF_8);
+                }
+            } catch (Exception e) {
+                System.err.println("⚠️ [JReactive] Error leyendo template externo " + baseName + ": " + e.getMessage());
+            }
+            throw new IllegalStateException("JReactive: Debes sobrescribir el método template() o crear el archivo " + baseName + " junto a la clase " + clazz.getSimpleName());
+        });
+    }
 
     public Map<String, ReactiveVar<?>> getRawBindings() {
     	getLock().lock();
