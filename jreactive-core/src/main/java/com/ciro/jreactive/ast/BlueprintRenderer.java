@@ -36,9 +36,9 @@ public final class BlueprintRenderer {
     }
 
     private static void renderElementBlueprint(ElementNode el, StringBuilder sb, TemplateContext ctx) {
-        // 🔥 SLOT EXPAND: aquí está la magia
-        if ("slot".equalsIgnoreCase(el.tagName)) {
-            String slotHtml = ctx.getComponent()._getSlotHtml();
+    	if ("slot".equalsIgnoreCase(el.tagName)) {
+            String slotName = el.attributes.getOrDefault("name", "default");
+            String slotHtml = ctx.getComponent()._getSlotHtml(slotName);
             if (slotHtml != null) sb.append(slotHtml);
             return;
         }

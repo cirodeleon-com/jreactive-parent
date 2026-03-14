@@ -23,8 +23,13 @@ public class ElementNode implements JrxNode {
 
     @Override
     public void renderRaw(StringBuilder sb) {
-        if ("slot".equalsIgnoreCase(tagName)) {
-            sb.append("<slot/>");
+    	if ("slot".equalsIgnoreCase(tagName)) {
+            String slotName = attributes.getOrDefault("name", "default");
+            if ("default".equals(slotName)) {
+                sb.append("<slot/>");
+            } else {
+                sb.append("<slot name=\"").append(slotName).append("\"/>");
+            }
             return;
         }
 
@@ -54,7 +59,8 @@ public class ElementNode implements JrxNode {
     @Override
     public void render(StringBuilder sb, TemplateContext ctx) {
         if ("slot".equalsIgnoreCase(tagName)) {
-            String slotHtml = ctx.getComponent()._getSlotHtml();
+        	String slotName = attributes.getOrDefault("name", "default");
+            String slotHtml = ctx.getComponent()._getSlotHtml(slotName);
             if (slotHtml != null) sb.append(slotHtml);
             return;
         }

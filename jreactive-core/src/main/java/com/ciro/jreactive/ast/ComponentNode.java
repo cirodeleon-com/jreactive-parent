@@ -1,6 +1,9 @@
 package com.ciro.jreactive.ast;
 
 
+import java.util.HashMap;
+import java.util.Map;
+
 import com.ciro.jreactive.HtmlComponent;
 import com.ciro.jreactive.template.TemplateContext;
 
@@ -12,25 +15,31 @@ public class ComponentNode extends ElementNode {
 
     @Override
     public void render(StringBuilder sb, TemplateContext ctx) {
-        // 1. Convertir hijos a String para pasarlo como <slot>
-        String slotContent = "";
+        // 1. Clasificar hijos en slots nombrados o el slot por defecto
+        Map<String, String> slots = new HashMap<>();
+        StringBuilder defaultSlot = new StringBuilder();
+
         if (!children.isEmpty()) {
-            StringBuilder slotSb = new StringBuilder();
             for (JrxNode child : children) {
-                child.renderRaw(slotSb);
+                if (child instanceof ElementNode el && "template".equalsIgnoreCase(el.tagName) && el.attributes.containsKey("slot")) {
+                    String slotName = el.attributes.get("slot");
+                    StringBuilder slotSb = new StringBuilder();
+                    for (JrxNode templateChild : el.children) {
+                        templateChild.renderRaw(slotSb);
+                    }
+                    slots.put(slotName, slotSb.toString());
+                } else {
+                    child.renderRaw(defaultSlot);
+                }
             }
-            slotContent = slotSb.toString();
         }
+        slots.put("default", defaultSlot.toString());
 
-        // 2. Extraer el componente padre del contexto actual
         HtmlComponent parentComponent = ctx.getComponent();
-
-        // 3. ¡EL FIX! Le decimos al padre que renderice a su hijo
-        // Él internamente ya tiene acceso al ComponentEngine y gestiona el Pool
         String childHtml = parentComponent.renderChild(
             this.tagName, 
             this.attributes, 
-            slotContent
+            slots
         );
 
         sb.append(childHtml);

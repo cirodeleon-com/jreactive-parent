@@ -1,7 +1,5 @@
 package com.ciro.jreactive.crud;
 
-
-
 import com.ciro.jreactive.*;
 import com.ciro.jreactive.annotations.Call;
 import com.ciro.jreactive.annotations.StatefulRam;
@@ -17,7 +15,7 @@ import java.util.List;
 
 @Component
 @Route(path = "/clients")
-//@Client
+@Client // 🔥 Activamos el motor CSR
 public class ClientsPage extends AppPage {
 
     @Autowired
@@ -28,6 +26,9 @@ public class ClientsPage extends AppPage {
     @State public Client_ form = new Client_(); // Objeto para el formulario
     @State public boolean isEditing = false;
     @State public String modalTitle = "Nuevo Cliente";
+    
+    // 🔥 NUEVO: Controlador del Modal
+    @State public boolean isModalOpen = false;
     
     // Configuración tabla
     @Bind public List<String> headers = List.of("Nombre", "Email", "Estado", "Acciones");
@@ -42,7 +43,6 @@ public class ClientsPage extends AppPage {
         this.statusOptions = JSelect.from("Activo", "Inactivo");
         
         this.form.setStatus("Activo");
-        
     }
 
     // --- ACCIONES (@Call) ---
@@ -50,17 +50,11 @@ public class ClientsPage extends AppPage {
     @Call
     public void openCreate() {
         this.form = new Client_(); // Limpiar form
+        this.form.setStatus("Activo");
         this.isEditing = false;
-        // Abrimos el modal por referencia (usando el ID del componente hijo)
         
         this.modalTitle = "Crear Cliente";
-        var modal = findChild("clientModal", JModal.class);
-        if (modal != null) {
-            modal.open();
-        } else {
-            // Esto te avisa en la consola en lugar de romper toda la petición
-            System.err.println("⚠️ Error crítico: El modal 'clientModal' no se encontró. Verifica el template.");
-        }
+        this.isModalOpen = true; // 👈 Abrimos el modal reactivamente
     }
 
     @Call
@@ -73,18 +67,13 @@ public class ClientsPage extends AppPage {
         this.form.status = row.status;
         
         this.isEditing = true;
-        
         this.modalTitle = "Editar Cliente: " + row.name;
-        
-        
-        
-        var modal = findChild("clientModal", JModal.class);
-        if (modal != null) {
-            modal.open();
-        } else {
-            // Esto te avisa en la consola en lugar de romper toda la petición
-            System.err.println("⚠️ Error crítico: El modal 'clientModal' no se encontró. Verifica el template.");
-        }
+        this.isModalOpen = true; // 👈 Abrimos el modal reactivamente
+    }
+
+    @Call
+    public void closeModal() {
+        this.isModalOpen = false; // 👈 Cerramos el modal reactivamente
     }
 
     @Call
@@ -96,13 +85,7 @@ public class ClientsPage extends AppPage {
         this.clients = service.findAll();
         
         // 3. Cerrar modal
-        var modal = findChild("clientModal", JModal.class);
-        if (modal != null) {
-            modal.close();
-        } else {
-            // Esto te avisa en la consola en lugar de romper toda la petición
-            System.err.println("⚠️ Error crítico: El modal 'clientModal' no se encontró. Verifica el template.");
-        }
+        this.isModalOpen = false; // 👈 Cerramos el modal
     }
 
     @Call
@@ -114,7 +97,7 @@ public class ClientsPage extends AppPage {
     // --- VISTA (Template) ---
     @Override
     protected String template() {
-    	// language=html
+        // language=html
         return """
             <div style="padding: 20px;">
                 <h1>Gestión de Clientes</h1>
@@ -135,7 +118,7 @@ public class ClientsPage extends AppPage {
                     </td>
                 </JTable>
 
-                <JModal ref="clientModal" :title="modalTitle">
+                <JModal :title="modalTitle" :visible="isModalOpen" onClose="closeModal()">
                     
                     <JForm onSubmit="save(form)">
 

@@ -14,13 +14,12 @@ import java.util.Random;
 @StatefulRam
 public class PowerTestPage extends AppPage {
 
-    // 1. DTO del Modelo de Negocio (Ahora incluye el color)
     public static class ServerNode implements Serializable {
         public String id;
         public String name;
         public int cpuUsage;
         public String status;
-        public String color; // 🎨 Nuevo campo visual
+        public String color; 
 
         public ServerNode() {}
         public ServerNode(String id, String name, int cpuUsage, String status) {
@@ -37,9 +36,10 @@ public class PowerTestPage extends AppPage {
     @State public List<ServerNode> servers = new ArrayList<>();
     @State public int totalOps = 0;
     @State public ServerNode newServerForm = new ServerNode();
-    
-    // 🔥 FIX: Contador real e independiente para evitar IDs duplicados (Zombies)
     @State public int serverIdCounter = 3; 
+
+    // 🔥 NUEVO: Controlador del Modal
+    @State public boolean isModalOpen = false;
 
     @Override
     protected void onInit() {
@@ -55,7 +55,7 @@ public class PowerTestPage extends AppPage {
             ServerNode s = servers.get(i);
             s.cpuUsage = r.nextInt(100);
             s.status = s.cpuUsage > 85 ? "🔴 Danger" : (s.cpuUsage > 60 ? "🟠 Warning" : "🟢 Online");
-            s.color = s.cpuUsage > 85 ? "#dc3545" : (s.cpuUsage > 60 ? "#ffc107" : "#28a745"); // Calculamos el color en Java
+            s.color = s.cpuUsage > 85 ? "#dc3545" : (s.cpuUsage > 60 ? "#ffc107" : "#28a745"); 
             servers.set(i, s); 
         }
         totalOps++;
@@ -63,16 +63,21 @@ public class PowerTestPage extends AppPage {
 
     @Call
     public void openAddModal() {
-        serverIdCounter++; // 🔥 Incrementamos el contador de forma segura
+        serverIdCounter++; 
         newServerForm = new ServerNode("SRV-" + serverIdCounter, "", 0, "🟢 Booting");
-        findChild("deployModal", JModal.class).open();
+        this.isModalOpen = true; // 👈 Abrimos reactivamente
+    }
+
+    @Call
+    public void closeModal() {
+        this.isModalOpen = false; // 👈 Cerramos reactivamente
     }
 
     @Call
     public void saveServer(ServerNode form) {
         servers.add(new ServerNode(form.id, form.name, form.cpuUsage, form.status));
         totalOps++;
-        findChild("deployModal", JModal.class).close();
+        this.isModalOpen = false; // 👈 Cerramos reactivamente
     }
 
     @Call
@@ -117,7 +122,7 @@ public class PowerTestPage extends AppPage {
                     </JTable>
                 </JCard>
 
-                <JModal ref="deployModal" title="Nuevo Nodo de Cómputo">
+                <JModal title="Nuevo Nodo de Cómputo" :visible="isModalOpen" onClose="closeModal()">
                     <JForm onSubmit="saveServer(newServerForm)">
                         <input type="hidden" name="newServerForm.id" value="{{newServerForm.id}}">
                         <input type="hidden" name="newServerForm.cpuUsage" value="{{newServerForm.cpuUsage}}">

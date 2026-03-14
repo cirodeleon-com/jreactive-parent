@@ -1,21 +1,11 @@
 package com.ciro.jreactive;
 
-import com.ciro.jreactive.annotations.Call;
-
 public class JModal extends HtmlComponent {
 
-    @State public boolean visible = false;
+    // 🔥 Ahora son @Bind. El padre se los inyecta.
+    @Bind public boolean visible = false;
     @Bind public String title = "Mensaje del Sistema";
-
-    @Call
-    public void open() {
-        this.visible = true;
-    }
-
-    @Call
-    public void close() {
-        this.visible = false;
-    }
+    @Bind public String onClose = ""; // Evento para avisarle al padre que lo cierre
 
     @Override
     protected String template() {
@@ -29,7 +19,7 @@ public class JModal extends HtmlComponent {
                     <div class="jrx-modal-content">
                         <div class="jrx-modal-header">
                             <strong>{{title}}</strong>
-                            <button @click="close()" style="border:none; background:none; cursor:pointer; font-size:20px;">&times;</button>
+                            <button @click="{{onClose}}" style="border:none; background:none; cursor:pointer; font-size:20px;">&times;</button>
                         </div>
                         <div class="jrx-modal-body">
                             <slot />

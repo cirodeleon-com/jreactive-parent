@@ -60,7 +60,8 @@ public class JrxHttpApi {
                 HtmlComponent layout = layoutAnn.value().getDeclaredConstructor().newInstance();
                 
                 // Inyección: Renderizamos la página y se la pasamos al layout como slot
-                layout._setSlotHtml(page.render());
+             // Inyección: Renderizamos la página y se la pasamos al layout en el slot por defecto
+                layout._setSlots(java.util.Map.of("default", page.render()));
                 
                 // Renderizamos el layout
                 String fullHtml = layout.render();

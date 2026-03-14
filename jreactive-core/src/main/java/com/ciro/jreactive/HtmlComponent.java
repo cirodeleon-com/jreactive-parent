@@ -65,6 +65,7 @@ private final  Map<String, String> _childRefAlias = new HashMap<>();
     private static final Map<Class<?>, Map<String, Method>> CALLABLES_CACHE = new ConcurrentHashMap<>();
 
     private String slotHtml = "";
+    private Map<String, String> _slots = new HashMap<>();
     
     private boolean _initialized = false;
     
@@ -158,13 +159,7 @@ private final  Map<String, String> _childRefAlias = new HashMap<>();
         }
     }
 
-    void _setSlotHtml(String html) {
-        this.slotHtml = (html == null) ? "" : html;
-    }
-
-    protected String slot() {
-        return slotHtml;
-    }
+    
     
     /**
      * Agrega un hijo de forma segura usando el lock del componente.
@@ -201,23 +196,39 @@ private final  Map<String, String> _childRefAlias = new HashMap<>();
         }
     }
     
+    public void _setSlots(Map<String, String> slots) {
+        this._slots = (slots == null) ? new HashMap<>() : slots;
+    }
+
+    public String _getSlotHtml(String name) {
+        if (name == null || name.isBlank()) name = "default";
+        return _slots.getOrDefault(name, "");
+    }
+
     public String _getSlotHtml() {
-        return this.slotHtml;
+        return _getSlotHtml("default");
+    }
+
+    protected String slot() {
+        return _getSlotHtml("default");
     }
     
-    public String renderChild(String className, Map<String, String> attrs, String slot) {
+    protected String slot(String name) {
+        return _getSlotHtml(name);
+    }
+    
+    public String renderChild(String className, Map<String, String> attrs, Map<String, String> slots) {
         if (attrs != null) {
             String ref = attrs.get("ref");
             if (ref != null && !ref.isBlank()) {
                 String qualified = _qualifyChildRef(ref);
                 if (!qualified.equals(ref)) {
-                    // guardamos alias para que findChild("miRef") siga funcionando
                     _childRefAlias.put(ref, qualified);
                     attrs.put("ref", qualified);
                 }
             }
         }
-        return ComponentEngine.renderChild(this, className, attrs, slot);
+        return ComponentEngine.renderChild(this, className, attrs, slots);
     }
 
     

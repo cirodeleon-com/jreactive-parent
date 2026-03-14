@@ -220,7 +220,8 @@ public class AstComponentEngine extends AbstractComponentEngine {
     ) {
         // Slot: parsear el HTML del slot y procesarlo con el contexto del componente receptor
         if ("slot".equalsIgnoreCase(el.tagName)) {
-            String slotHtml = ctx._getSlotHtml();
+        	String slotName = el.attributes.getOrDefault("name", "default");
+            String slotHtml = ctx._getSlotHtml(slotName);
             if (slotHtml != null && !slotHtml.isBlank()) {
                 List<JrxNode> slotNodes = JrxParser.parse(slotHtml);
 
@@ -416,13 +417,26 @@ public class AstComponentEngine extends AbstractComponentEngine {
         // 1) Slot blueprint: NO renderizar (para no instanciar componentes del slot “en el padre”)
         //   - aplicar el namespaceAttributesRecursive “guardado” (caso crítico de componentes en slots)
         String slotNs = parent.getId() + ".";
-        String slotHtml = buildSlotBlueprint(comp.children, parent, ns, slotNs, aliases);
+        Map<String, String> slots = new HashMap<>();
+        
+        List<JrxNode> defaultNodes = new ArrayList<>();
+        
+        for (JrxNode child : comp.children) {
+            if (child instanceof ElementNode el && "template".equalsIgnoreCase(el.tagName) && el.attributes.containsKey("slot")) {
+                String slotName = el.attributes.get("slot");
+                slots.put(slotName, buildSlotBlueprint(el.children, parent, ns, slotNs, aliases));
+            } else {
+                defaultNodes.add(child);
+            }
+        }
+        
+        slots.put("default", buildSlotBlueprint(defaultNodes, parent, ns, slotNs, aliases));
 
         // 2) Crear/bind hijo con globalBindings compartido
         List<HtmlComponent> pool = parent._getRenderPool();
         if (pool == null) pool = new ArrayList<>();
 
-        HtmlComponent child = createAndBindComponent(parent, pool, s.allBindings, className, attrs, slotHtml);
+        HtmlComponent child = createAndBindComponent(parent, pool, s.allBindings, className, attrs, slots);
         child._initIfNeeded();
         child._syncState();
 
@@ -608,7 +622,8 @@ public class AstComponentEngine extends AbstractComponentEngine {
 
          // 🔥 Slot dentro de template (ej: JTable tiene <slot/> dentro de {{#each}})
          if ("slot".equalsIgnoreCase(el.tagName)) {
-             String slotHtml = ctx._getSlotHtml();
+        	 String slotName = el.attributes.getOrDefault("name", "default");
+             String slotHtml = ctx._getSlotHtml(slotName);
              if (slotHtml != null && !slotHtml.isBlank()) {
                  try {
                      List<JrxNode> slotNodes = JrxParser.parse(slotHtml);

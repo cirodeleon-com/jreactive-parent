@@ -25,8 +25,12 @@ public class JCard extends HtmlComponent {
                 </div>
               {{/if}}
 
-              <div class="jrx-card-body">
+              <div class="jrx-card-body" style="padding: 15px;">
                  <slot />
+              </div>
+              
+              <div class="jrx-card-footer" style="padding: 10px 15px; border-top: 1px solid #eee; background: #fdfdfd; display: flex; gap: 10px; justify-content: flex-end;">
+                 <slot name="footer" />
               </div>
 
             </div>

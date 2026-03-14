@@ -77,7 +77,7 @@ public abstract class AbstractComponentEngine implements ComponentEngine.Strateg
 
 
 
-    protected HtmlComponent createAndBindComponent(HtmlComponent parent, List<HtmlComponent> pool, Map<String, ReactiveVar<?>> globalBindings, String className, Map<String, String> attrs, String slotHtml) {
+    protected HtmlComponent createAndBindComponent(HtmlComponent parent, List<HtmlComponent> pool, Map<String, ReactiveVar<?>> globalBindings, String className, Map<String, String> attrs, Map<String, String> slots) {
         String ref = attrs.get("ref");
         ViewLeaf leaf;
 
@@ -108,7 +108,8 @@ public abstract class AbstractComponentEngine implements ComponentEngine.Strateg
         }
         
         HtmlComponent hc = (HtmlComponent) leaf;
-        if (slotHtml != null && !slotHtml.isBlank()) hc._setSlotHtml(slotHtml);
+        //if (slotHtml != null && !slotHtml.isBlank()) hc._setSlotHtml(slotHtml);
+        hc._setSlots(slots);
         
         // 3. REGISTRO DE ALIAS (Para que findChild funcione)
         // Aunque el ID sea "Page-Modal-0", guardamos que "clientModal" apunta a él.
@@ -218,7 +219,7 @@ public abstract class AbstractComponentEngine implements ComponentEngine.Strateg
     
     
     @Override
-    public String renderChild(HtmlComponent parent, String className, Map<String, String> attrs, String slot) {
+    public String renderChild(HtmlComponent parent, String className, Map<String, String> attrs, Map<String, String> slots) {
 
         // ✅ Pool real (viene del _beginRenderCycle del parent)
         List<HtmlComponent> pool = parent._getRenderPool();
@@ -230,7 +231,7 @@ public abstract class AbstractComponentEngine implements ComponentEngine.Strateg
             parent.getRawBindings(), // ✅ NO llames parent.bindings() aquí (evita recursion/side effects)
             className,
             attrs,
-            slot
+            slots
         );
 
         child._initIfNeeded();

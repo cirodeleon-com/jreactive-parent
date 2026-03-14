@@ -9,7 +9,7 @@ final class ComponentEngine {
 
     interface Strategy {
         Rendered render(HtmlComponent ctx);
-        String renderChild(HtmlComponent parent, String className, Map<String, String> attrs, String slot);
+        String renderChild(HtmlComponent parent, String className, Map<String, String> attrs, Map<String, String> slots);
     }
 
     // ✅ NO default acá (core no conoce Jsoup runtime)
@@ -27,9 +27,9 @@ final class ComponentEngine {
         return s.render(ctx);
     }
     
-    static String renderChild(HtmlComponent parent, String className, Map<String, String> attrs, String slot) {
+    static String renderChild(HtmlComponent parent, String className, Map<String, String> attrs, Map<String, String> slots) {
         if (strategy == null) return "";
-        return strategy.renderChild(parent, className, attrs, slot);
+        return strategy.renderChild(parent, className, attrs, slots);
     }
 
     static void setStrategy(Strategy newStrategy) {

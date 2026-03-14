@@ -2,6 +2,7 @@ package com.ciro.jreactive.ast;
 
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -127,22 +128,30 @@ public final class ComponentBlueprintCompiler {
     }
 
     private static void renderComponent(
-            ComponentNode comp,
-            StringBuilder out,
-            ComponentResolver resolver,
-            String ownerPackage,
-            Map<String, BindingValue> parentBindings,
-            Set<String> parentAliases
-    ) {
+            ComponentNode comp, StringBuilder out, ComponentResolver resolver,
+            String ownerPackage, Map<String, BindingValue> parentBindings, Set<String> parentAliases) {
+        
         ResolvedComponent resolved = resolver.resolve(comp.tagName, ownerPackage);
         if (resolved == null || resolved.template() == null || resolved.template().isBlank()) {
             renderComponentFallback(comp, out, resolver, ownerPackage, parentBindings, parentAliases);
             return;
         }
 
-        String slotHtml = compileSlot(comp.children, resolver, ownerPackage, parentBindings, parentAliases);
+        Map<String, String> compiledSlots = new HashMap<>();
+        List<JrxNode> defaultNodes = new ArrayList<>();
+        for (JrxNode c : comp.children) {
+            if (c instanceof ElementNode e && "template".equalsIgnoreCase(e.tagName) && e.attributes.containsKey("slot")) {
+                compiledSlots.put(e.attributes.get("slot"), compileSlot(e.children, resolver, ownerPackage, parentBindings, parentAliases));
+            } else {
+                defaultNodes.add(c);
+            }
+        }
+        compiledSlots.put("default", compileSlot(defaultNodes, resolver, ownerPackage, parentBindings, parentAliases));
+
         Map<String, BindingValue> childBindings = buildChildBindings(comp.attributes, parentBindings, parentAliases);
-        childBindings.put("slot", new BindingValue(slotHtml, true));
+        for (Map.Entry<String, String> entry : compiledSlots.entrySet()) {
+            childBindings.put("slot_" + entry.getKey(), new BindingValue(entry.getValue(), true));
+        }
 
         List<JrxNode> childNodes = JrxParser.parse(resolved.template());
         renderNodes(childNodes, out, resolver, resolved.packageName(), childBindings, new LinkedHashSet<>());
@@ -290,11 +299,10 @@ public final class ComponentBlueprintCompiler {
             Map<String, BindingValue> bindings,
             Set<String> aliases
     ) {
-        if ("slot".equalsIgnoreCase(el.tagName)) {
-            BindingValue slot = bindings.get("slot");
-            if (slot != null) {
-                out.append(slot.value());
-            }
+    	if ("slot".equalsIgnoreCase(el.tagName)) {
+            String slotName = el.attributes.getOrDefault("name", "default");
+            BindingValue slot = bindings.get("slot_" + slotName);
+            if (slot != null) out.append(slot.value());
             return;
         }
 
