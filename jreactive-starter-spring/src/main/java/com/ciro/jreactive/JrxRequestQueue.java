@@ -1,6 +1,7 @@
 package com.ciro.jreactive;
 
 import org.springframework.stereotype.Component;
+import java.util.concurrent.locks.ReentrantLock;
 
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
@@ -52,6 +53,7 @@ public class JrxRequestQueue {
         private final Executor backend;
         private final Queue<Runnable> tasks = new ArrayDeque<>();
         private final AtomicBoolean running = new AtomicBoolean(false);
+        private final ReentrantLock lock = new ReentrantLock();
 
         SerialExecutor(Executor backend) {
             this.backend = backend;
@@ -70,8 +72,11 @@ public class JrxRequestQueue {
         }
 
         private void enqueue(Runnable r) {
-            synchronized (tasks) {
+            lock.lock();
+            try {
                 tasks.add(r);
+            } finally {
+                lock.unlock();
             }
             schedule();
         }
@@ -83,8 +88,11 @@ public class JrxRequestQueue {
                 try {
                     while (true) {
                         Runnable next;
-                        synchronized (tasks) {
+                        lock.lock();
+                        try {
                             next = tasks.poll();
+                        } finally {
+                            lock.unlock();
                         }
                         if (next == null) return;
                         next.run();
@@ -92,8 +100,11 @@ public class JrxRequestQueue {
                 } finally {
                     running.set(false);
                     // si entraron tareas mientras salíamos, reprograma
-                    synchronized (tasks) {
+                    lock.lock();
+                    try {
                         if (!tasks.isEmpty()) schedule();
+                    } finally {
+                        lock.unlock();
                     }
                 }
             });
