@@ -15,7 +15,6 @@ import java.io.Serializable;
 
 @Route(path = "/signup2")
 @Stateless
-@Client
 public class SignupPage2 extends AppPage {
 
     public static class SignupForm implements Serializable {

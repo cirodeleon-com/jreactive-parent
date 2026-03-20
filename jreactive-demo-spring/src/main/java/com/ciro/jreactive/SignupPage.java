@@ -14,7 +14,6 @@ import java.io.Serializable;
 
 @Route(path = "/signup")
 @StatefulRam
-@Client
 public class SignupPage extends AppPage {
 
     // 1) DTO con Bean Validation
@@ -92,10 +91,13 @@ public class SignupPage extends AppPage {
                       @click="register(form)">
                 Registrarme
               </button>
-
-              <p data-if="state.lastMessage">
-                {{state.lastMessage}}
-              </p>
+             
+             {{#if state.lastMessage}}
+                <p style="margin-top: 15px; font-weight: bold; color: #28a745;">
+                  {{state.lastMessage}}
+                </p>
+             {{/if}}
+              
             </section>
             """;
     }

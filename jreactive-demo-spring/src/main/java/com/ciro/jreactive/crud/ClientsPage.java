@@ -15,7 +15,6 @@ import java.util.List;
 
 @Component
 @Route(path = "/clients")
-@Client // 🔥 Activamos el motor CSR
 public class ClientsPage extends AppPage {
 
     @Autowired

@@ -8,7 +8,6 @@ import com.ciro.jreactive.annotations.Client;
 import com.ciro.jreactive.router.Route;
 
 @Route(path = "/table-test")
-@Client
 public class TableTestPage extends AppPage {
 	
 	public static class UserData implements Serializable {
