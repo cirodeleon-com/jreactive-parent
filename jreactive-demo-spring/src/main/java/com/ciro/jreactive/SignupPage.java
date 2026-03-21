@@ -13,7 +13,7 @@ import java.io.Serializable;
 
 
 @Route(path = "/signup")
-@StatefulRam
+@Stateless
 public class SignupPage extends AppPage {
 
     // 1) DTO con Bean Validation

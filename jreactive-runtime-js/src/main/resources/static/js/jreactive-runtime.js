@@ -2619,8 +2619,16 @@ function applyValidationErrors(violations, el) {
 
   /** Pintar errores campo por campo */
   byField.forEach((messages, name) => {
-    const input = document.querySelector(`[name="${name}"]`);
-    if (!input) return;
+    // 🔥 EL FIX ESTÁ AQUÍ: Buscar coincidencia exacta O que termine en ".name"
+    const input = document.querySelector(`[name="${name}"]`) || 
+                  document.querySelector(`[name$=".${name}"]`);
+	
+    if (!input) {
+      console.warn(`⚠️ [JReactive] No se encontró el input [name="${name}"] ni [name$=".${name}"]. ¿Falta compilar con -parameters en Java?`);
+      // Fallback: Mover estos mensajes a los errores globales para que al menos se vean
+      globalErrors.push(...messages); 
+      return;
+    }
 
     input.dataset.jrxError = 'true';
     input.classList.add('jrx-error');

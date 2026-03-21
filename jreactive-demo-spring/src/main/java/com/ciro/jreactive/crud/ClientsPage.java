@@ -7,14 +7,18 @@ import com.ciro.jreactive.annotations.Stateless;
 import com.ciro.jreactive.annotations.Client;
 import com.ciro.jreactive.annotations.Stateful;
 import com.ciro.jreactive.router.Route;
+
+import jakarta.validation.Valid;
+
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
 import java.util.List;
 
-@Component
+
 @Route(path = "/clients")
+@Stateless
 public class ClientsPage extends AppPage {
 
     @Autowired
@@ -76,7 +80,7 @@ public class ClientsPage extends AppPage {
     }
 
     @Call
-    public void save(Client_ form) {
+    public void save(@Valid Client_ form) {
         // 1. Guardar en DB
         service.save(form);
         
@@ -85,6 +89,10 @@ public class ClientsPage extends AppPage {
         
         // 3. Cerrar modal
         this.isModalOpen = false; // 👈 Cerramos el modal
+    }
+    @Call
+    public void validar(@Valid Client_ form) {
+    	
     }
 
     @Call
@@ -126,6 +134,7 @@ public class ClientsPage extends AppPage {
                         <JInput 
                             label="Nombre Completo" 
                             :field="form.name" 
+                            onChange="validar(form)"
                             required="true" 
                         />
                         
@@ -133,6 +142,7 @@ public class ClientsPage extends AppPage {
                             label="Correo Electrónico" 
                             type="email"
                             :field="form.email" 
+                            onChange="validar(form)"
                             required="true" 
                         />
 

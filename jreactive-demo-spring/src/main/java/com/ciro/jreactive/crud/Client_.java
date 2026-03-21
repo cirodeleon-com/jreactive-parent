@@ -3,9 +3,14 @@ package com.ciro.jreactive.crud;
 import java.io.Serializable;
 import java.util.UUID;
 
+import jakarta.validation.constraints.Email;
+import jakarta.validation.constraints.NotBlank;
+
 public class Client_ implements Serializable {
     public String id;
+    @NotBlank(message = "El nombre es obligatorio")
     public String name;
+    @NotBlank @Email
     public String email;
     public String status; // "Activo", "Inactivo"
 
