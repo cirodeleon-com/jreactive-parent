@@ -203,8 +203,11 @@ public class JrxHttpApi {
                         if (rv != null) {
                             Object currentVal = rv.get();
                             
-                            // Si ya restauramos esta lista a través de otra variable (ej: el padre), la saltamos
-                            if (currentVal != null && restoredInstances.contains(currentVal)) {
+                            // 🔥 FIX QUIRÚRGICO 1: Detectar si es primitivo o String
+                            boolean isPrimitive = currentVal != null && (isPrimitiveOrWrapper(currentVal.getClass()) || currentVal instanceof String);
+
+                            // 🔥 FIX QUIRÚRGICO 2: Ignorar primitivos en el chequeo anti-bucles
+                            if (!isPrimitive && currentVal != null && restoredInstances.contains(currentVal)) {
                                 continue;
                             }
                             
@@ -217,7 +220,6 @@ public class JrxHttpApi {
                                 
                                 Object converted = objectMapper.convertValue(rawValue, objectMapper.constructType(targetType));
                                 
-                                // 🔥 EL FIX DEL COMPA: Mantener vivas las colecciones inteligentes usando clear() y addAll()
                                 if (currentVal instanceof com.ciro.jreactive.smart.SmartList currentList && converted instanceof java.util.List newList) {
                                     currentList.clear();
                                     @SuppressWarnings("unchecked")
@@ -238,7 +240,11 @@ public class JrxHttpApi {
                                     restoredInstances.add(currentMap);
                                 } else {
                                     rv.set(converted);
-                                    if (converted != null) restoredInstances.add(converted);
+                                    // 🔥 FIX QUIRÚRGICO 3: No guardar primitivos en el escudo
+                                    boolean isConvertedPrimitive = converted != null && (isPrimitiveOrWrapper(converted.getClass()) || converted instanceof String);
+                                    if (!isConvertedPrimitive && converted != null) {
+                                        restoredInstances.add(converted);
+                                    }
                                 }
                             } else {
                                 rv.set(null);
