@@ -2,7 +2,7 @@ package com.ciro.jreactive;
 
 import com.ciro.jreactive.annotations.Call;
 import com.ciro.jreactive.router.Layout;
-import com.ciro.jreactive.router.Param;
+import com.ciro.jreactive.router.UrlVariable;
 import com.ciro.jreactive.spi.AccessorRegistry;
 import com.ciro.jreactive.spi.ComponentAccessor;
 import com.fasterxml.jackson.databind.JavaType;
@@ -153,7 +153,7 @@ public class JrxHttpApi {
             Parameter p = params[i];
             Object raw = i < rawArgs.size() ? rawArgs.get(i) : null;
 
-            Param ann = p.getAnnotation(Param.class);
+            UrlVariable ann = p.getAnnotation(UrlVariable.class);
             if (ann != null) {
                 raw = routeParams.get(ann.value());
             }

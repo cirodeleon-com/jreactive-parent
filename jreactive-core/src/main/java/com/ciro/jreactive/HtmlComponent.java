@@ -596,7 +596,7 @@ private final  Map<String, String> _childRefAlias = new HashMap<>();
             c = c.getSuperclass();
         }
         for (var f : fields) {
-            var ann = f.getAnnotation(com.ciro.jreactive.router.Param.class);
+            var ann = f.getAnnotation(com.ciro.jreactive.router.UrlVariable.class);
             if (ann == null) continue;
             String name = ann.value();
             if (!params.containsKey(name)) continue;

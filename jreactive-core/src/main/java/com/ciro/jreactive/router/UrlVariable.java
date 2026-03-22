@@ -9,6 +9,6 @@ import static java.lang.annotation.ElementType.PARAMETER;
 /** Marca un campo o parámetro que debe llenarse con un valor del path. */
 @Retention(RUNTIME)
 @Target({FIELD, PARAMETER})
-public @interface Param {
+public @interface UrlVariable {
     String value(); // nombre del placeholder en la ruta
 }

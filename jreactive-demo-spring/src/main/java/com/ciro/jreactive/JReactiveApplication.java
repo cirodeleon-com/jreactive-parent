@@ -1,6 +1,6 @@
 package com.ciro.jreactive;
 
-import com.ciro.jreactive.router.Param;
+import com.ciro.jreactive.router.UrlVariable;
 import com.fasterxml.jackson.databind.JavaType;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.servlet.http.HttpServletRequest;
