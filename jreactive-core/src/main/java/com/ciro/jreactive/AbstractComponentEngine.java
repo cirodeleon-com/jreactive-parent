@@ -81,105 +81,89 @@ public abstract class AbstractComponentEngine implements ComponentEngine.Strateg
         String ref = attrs.get("ref");
         ViewLeaf leaf;
 
-        // ---------------------------------------------------------
-        // 1. GENERACIÓN DETERMINISTA DE ID (La Solución)
-        // ---------------------------------------------------------
-        // No importa si tiene ref o no. Siempre calculamos el ID basado 
-        // en el orden (secuencia). Así, si el servidor reinicia, 
-        // el primer JModal siempre será "Page-JModal-0".
         int seq = parent._nextChildIdSeq(className);
         String stableId = parent.getId() + "-" + className + "-" + seq;
 
-        // 2. BUSCAR EN EL POOL (Reciclaje)
-        // Buscamos si existe un componente con este ID exacto
-        Optional<HtmlComponent> match = pool.stream()
-                .filter(c -> c.getId().equals(stableId))
-                .findFirst();
+        Optional<HtmlComponent> match = pool.stream().filter(c -> c.getId().equals(stableId)).findFirst();
 
         if (match.isPresent()) {
-            // ¡Lo encontramos! (Caso Stateful o mismo render)
             leaf = (ViewLeaf) match.get();
             pool.remove(leaf); 
         } else {
-            // No existe (Caso Stateless / Reinicio / Primera vez)
-            // Creamos uno nuevo y le FORZAMOS el ID estable.
             leaf = newInstance(parent, className);
             leaf.setId(stableId); 
         }
         
         HtmlComponent hc = (HtmlComponent) leaf;
-        //if (slotHtml != null && !slotHtml.isBlank()) hc._setSlotHtml(slotHtml);
         hc._setSlots(slots);
         
-        // 3. REGISTRO DE ALIAS (Para que findChild funcione)
-        // Aunque el ID sea "Page-Modal-0", guardamos que "clientModal" apunta a él.
         if (ref != null && !ref.isBlank()) {
             String simpleRef = ref;
-            if (ref.contains(parent.getId() + ".")) {
-                simpleRef = ref.replace(parent.getId() + ".", "");
-            }
+            if (ref.contains(parent.getId() + ".")) simpleRef = ref.replace(parent.getId() + ".", "");
             parent._registerRef(simpleRef, hc.getId());
         }
-        
         parent._addChild(hc);
         
-        // 4. BINDINGS (Tu lógica original intacta)
         Map<String, ReactiveVar<?>> childBinds = hc.getRawBindings();
+        @SuppressWarnings("rawtypes")
+        com.ciro.jreactive.spi.ComponentAccessor acc = com.ciro.jreactive.spi.AccessorRegistry.get(hc.getClass());
+
         attrs.forEach((k, v) -> {
-            if (k.equals("ref")) return;
+            if (k.equals("ref") || k.equals("expose")) return;
+            
             boolean isB = k.startsWith(":");
             String prop = isB ? k.substring(1) : k;
+            
+            @SuppressWarnings("unchecked")
             ReactiveVar<Object> target = (ReactiveVar<Object>) childBinds.get(prop);
             
-            if (target != null) {
-                if (isB) {
-                    ReactiveVar<?> pRx = parent.getRawBindings().get(v);
-                    if (pRx == null) pRx = globalBindings.get(v);
-                    
-                    if (pRx == null && v.contains(".")) {
-                        String shortKey = v.substring(v.indexOf('.') + 1);
-                        pRx = parent.getRawBindings().get(shortKey);
-                        if (pRx == null) pRx = globalBindings.get(shortKey);
-                    }
-                    
-                    if (pRx == null && v.startsWith(parent.getId() + ".")) {
-                        String shortKey = v.substring(parent.getId().length() + 1);
-                        pRx = parent.getRawBindings().get(shortKey);
-                    }
-                    
-                    // Tu Fix Robusto para hermanos
-                    if (pRx == null && v.contains(".")) {
-                        String refKey = v.substring(0, v.indexOf('.')); // "hello"
-                        String varName = v.substring(v.indexOf('.') + 1); // "newFruit"
+            ReactiveVar<?> pRx = null;
 
-                        // A. Traducir el alias ("hello" -> "HomePage-HelloLeaf-0")
-                        String resolvedId = parent._resolveRef(refKey);
+            if (isB) {
+                pRx = parent.getRawBindings().get(v);
+                if (pRx == null) pRx = globalBindings.get(v);
+                
+                if (pRx == null && v.contains(".")) {
+                    String shortKey = v.substring(v.indexOf('.') + 1);
+                    pRx = parent.getRawBindings().get(shortKey);
+                    if (pRx == null) pRx = globalBindings.get(shortKey);
+                }
+                
+                if (pRx == null && v.startsWith(parent.getId() + ".")) {
+                    String shortKey = v.substring(parent.getId().length() + 1);
+                    pRx = parent.getRawBindings().get(shortKey);
+                }
+                
+                if (pRx == null && v.contains(".")) {
+                    String refKey = v.substring(0, v.indexOf('.')); 
+                    String varName = v.substring(v.indexOf('.') + 1); 
+                    String resolvedId = parent._resolveRef(refKey);
 
-                        for (HtmlComponent sibling : parent._children()) {
-                            // 1. Coincidencia por Alias Resuelto (Lo nuevo)
-                            if (resolvedId != null && sibling.getId().equals(resolvedId)) {
-                                pRx = sibling.getRawBindings().get(varName);
-                                if (pRx != null) break;
-                            }
-                            
-                            // 2. Coincidencia directa (Legacy o si usaron el ID largo)
-                            if (sibling.getId().equals(refKey)) {
-                                pRx = sibling.getRawBindings().get(varName);
-                                if (pRx != null) break;
-                            }
-                            
-                            // 3. Tu lógica anterior (Por si el nombre de variable incluye ID)
-                            if (v.startsWith(sibling.getId() + ".")) {
-                                String sub = v.substring(sibling.getId().length() + 1);
-                                pRx = sibling.getRawBindings().get(sub);
-                                if (pRx != null) break;
-                            }
+                    for (HtmlComponent sibling : parent._children()) {
+                        if (resolvedId != null && sibling.getId().equals(resolvedId)) {
+                            pRx = sibling.getRawBindings().get(varName);
+                            if (pRx != null) break;
+                        }
+                        if (sibling.getId().equals(refKey)) {
+                            pRx = sibling.getRawBindings().get(varName);
+                            if (pRx != null) break;
+                        }
+                        if (v.startsWith(sibling.getId() + ".")) {
+                            String sub = v.substring(sibling.getId().length() + 1);
+                            pRx = sibling.getRawBindings().get(sub);
+                            if (pRx != null) break;
                         }
                     }
+                }
+            }
 
+            // 🔥 APLICACIÓN DE DATOS DUAL (@Bind y @Prop)
+            if (target != null) {
+                // 1. Conexión de Reactividad
+                if (isB) {
                     if (pRx != null) {
                         target.set(pRx.get());
-                        pRx.onChange(target::set);
+                        pRx.onChange(target::set); 
                     } else {
                         target.set(coerceLiteral(v));
                     }
@@ -187,8 +171,20 @@ public abstract class AbstractComponentEngine implements ComponentEngine.Strateg
                     String fixed = qualifyEventPropIfNeeded(parent, prop, v);
                     target.set(fixed);
                 }
+
+                // 2. Inyección AOT Estática 
+                if (acc != null) {
+                    if (isB) {
+                        Object parentValue = (pRx != null) ? pRx.get() : coerceLiteral(v);
+                        acc.write(hc, prop, parentValue);
+                    } else {
+                        String fixed = qualifyEventPropIfNeeded(parent, prop, v);
+                        acc.write(hc, prop, fixed);
+                    }
+                }
             }
         });
+        
         return hc;
     }
 

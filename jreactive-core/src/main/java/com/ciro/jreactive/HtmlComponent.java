@@ -18,6 +18,8 @@ import org.intellij.lang.annotations.Language;
 
 import java.util.Collection;
 import java.util.Objects;
+
+import com.ciro.jreactive.annotations.Prop;
 import com.ciro.jreactive.smart.SmartList;
 import com.ciro.jreactive.smart.SmartSet;
 import com.ciro.jreactive.spi.AccessorRegistry;
@@ -425,13 +427,15 @@ private final  Map<String, String> _childRefAlias = new HashMap<>();
         map = new HashMap<>();
         stateKeys.clear();
 
-        // 1. Obtener campos (Desde el Caché O(1) o escaneando la primera vez)
         List<Field> fields = FIELDS_CACHE.computeIfAbsent(this.getClass(), clazz -> {
             List<Field> list = new ArrayList<>();
             Class<?> c = clazz;
             while (c != null && c != Object.class) {
                 for (Field f : c.getDeclaredFields()) {
-                    if (f.isAnnotationPresent(Bind.class) || f.isAnnotationPresent(State.class)) {
+                    // 🔥 MODO DUAL: Escaneamos las 3 anotaciones
+                    if (f.isAnnotationPresent(Bind.class) || 
+                        f.isAnnotationPresent(State.class) || 
+                        f.isAnnotationPresent(Prop.class)) {
                         f.setAccessible(true);
                         list.add(f);
                     }
@@ -441,54 +445,66 @@ private final  Map<String, String> _childRefAlias = new HashMap<>();
             return list;
         });
 
-        // 2. Procesar los campos (Ya filtrados y cacheados)
         for (Field f : fields) {
             Bind bindAnn = f.getAnnotation(Bind.class);
             State stateAnn = f.getAnnotation(State.class);
+            Prop propAnn = f.getAnnotation(Prop.class); 
 
             try {
                 Object raw = f.get(this);
 
-                ReactiveVar<?> rx;
+                // --- 1. MODO LEGACY: @Bind (Two-Way Binding) ---
                 if (bindAnn != null) {
-                    rx = (raw instanceof ReactiveVar<?> r) ? r :
-                         (raw instanceof Type<?> v)        ? v.rx() :
-                         new ReactiveVar<>(raw);
-                    
+                    ReactiveVar<?> rx = (raw instanceof ReactiveVar<?> r) ? r :
+                                        (raw instanceof Type<?> v)        ? v.rx() :
+                                        new ReactiveVar<>(raw);
                     rx.setGenericType(extractRealType(f.getGenericType()));
-
                     String key = bindAnn.value().isBlank() ? f.getName() : bindAnn.value();
                     rx.setActiveGuard(() -> _state() == ComponentState.MOUNTED);
                     map.put(key, rx);
                 }
 
+                // --- 2. MODO NUEVO: @Prop (One-Way Plano) ---
+                if (propAnn != null) {
+                    ReactiveVar<Object> prx = new ReactiveVar<>(raw);
+                    prx.setGenericType(extractRealType(f.getGenericType()));
+                    String key = propAnn.value().isBlank() ? f.getName() : propAnn.value();
+                    prx.setActiveGuard(() -> _state() == ComponentState.MOUNTED);
+                    
+                    prx.onChange(newValue -> {
+                        try {
+                            f.setAccessible(true);
+                            Object smartNew = wrapInSmartType(newValue);
+                            f.set(this, smartNew);
+                        } catch (Exception e) {}
+                    });
+                    
+                    map.put(key, prx);
+                    // 🚫 IMPORTANTE: NO lo agregamos a stateKeys (es de solo lectura)
+                }
+
+                // --- 3. MODO ESTADO: @State (Estado interno) ---
                 if (stateAnn != null) {
                     Object smartValue = wrapInSmartType(raw);
-
                     if (smartValue != raw) {
                         f.set(this, smartValue);
                         raw = smartValue; 
                     }
-
                     ReactiveVar<Object> srx = new ReactiveVar<>(raw);
-                    
                     srx.setGenericType(extractRealType(f.getGenericType()));
-                    
                     srx.setActiveGuard(() -> _state() == ComponentState.MOUNTED);
 
                     srx.onChange(newValue -> {
                         try {
-                            f.setAccessible(true); // En caso de que se haya perdido el flag
+                            f.setAccessible(true); 
                             Object smartNew = wrapInSmartType(newValue);
                             f.set(this, smartNew);
-                        } catch (Exception e) {
-                            System.err.println("Error reflexion writing field " + f.getName() + ": " + e.getMessage());
-                        }
+                        } catch (Exception e) {}
                     });
 
                     String key = stateAnn.value().isBlank() ? f.getName() : stateAnn.value();
                     map.put(key, srx);
-                    stateKeys.add(key);
+                    stateKeys.add(key); // ✅ Este SÍ va al escáner de cambios
                 }
 
             } catch (IllegalAccessException e) {
@@ -555,9 +571,17 @@ private final  Map<String, String> _childRefAlias = new HashMap<>();
         Class<?> c = getClass();
         while (c != null && c != Object.class) {
             for (Field f : c.getDeclaredFields()) {
-                State ann = f.getAnnotation(State.class);
-                if (ann != null) {
-                    String annVal = ann.value().isBlank() ? f.getName() : ann.value();
+                State stateAnn = f.getAnnotation(State.class);
+                Bind bindAnn = f.getAnnotation(Bind.class);
+                Prop propAnn = f.getAnnotation(Prop.class); // 🔥
+                
+                if (stateAnn != null || bindAnn != null || propAnn != null) {
+                    String annVal = "";
+                    if (stateAnn != null && !stateAnn.value().isBlank()) annVal = stateAnn.value();
+                    else if (bindAnn != null && !bindAnn.value().isBlank()) annVal = bindAnn.value();
+                    else if (propAnn != null && !propAnn.value().isBlank()) annVal = propAnn.value();
+                    else annVal = f.getName();
+
                     if (annVal.equals(key)) {
                         f.setAccessible(true);
                         return f.get(this);

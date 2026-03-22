@@ -4,6 +4,7 @@ import com.ciro.jreactive.Bind;
 import com.ciro.jreactive.State;
 import com.ciro.jreactive.annotations.Call;
 import com.ciro.jreactive.annotations.Client;
+import com.ciro.jreactive.annotations.Prop;
 import com.google.auto.service.AutoService;
 import com.sun.source.util.TreePath;
 import com.sun.source.util.Trees;
@@ -482,15 +483,21 @@ public final class TemplateProcessor extends AbstractProcessor {
         return e.getKind() == ElementKind.FIELD && 
                !e.getModifiers().contains(Modifier.PRIVATE) && 
                !e.getModifiers().contains(Modifier.STATIC) &&
-               (e.getAnnotation(State.class) != null || e.getAnnotation(Bind.class) != null);
+               // 🔥 Agregamos Prop.class a los campos válidos
+               (e.getAnnotation(State.class) != null || 
+                e.getAnnotation(Bind.class) != null || 
+                e.getAnnotation(Prop.class) != null);
     }
 
     private String getBindKey(Element e) {
         State s = e.getAnnotation(State.class);
         Bind b = e.getAnnotation(Bind.class);
+        Prop p = e.getAnnotation(Prop.class); // 🔥
         String name = e.getSimpleName().toString();
+        
         if (s != null && !s.value().isBlank()) return s.value();
         if (b != null && !b.value().isBlank()) return b.value();
+        if (p != null && !p.value().isBlank()) return p.value(); // 🔥
         return name;
     }
 
