@@ -100,7 +100,11 @@ const Store = {
 
 
   
-  
+// --- Eventos Globales ---
+// Tus 4 eventos sagrados e intocables
+const CORE_EVENTS = ['click', 'change', 'input', 'submit'];
+// Registro en memoria para eventos de Web Components descubiertos al vuelo
+const CUSTOM_EVENTS = new Set();
 
   let currentPath = '/';
   let firstMiss   = true;
@@ -1245,13 +1249,13 @@ function jrxMorphCallback(fromEl, toEl) {
         return false; 
     }
 
-    // 🛡️ PROTECCIÓN DE FOCO: No interrumpir al usuario mientras escribe
-    if (fromEl === document.activeElement && (fromEl.tagName === 'INPUT' || fromEl.tagName === 'TEXTAREA' || fromEl.tagName === 'SELECT')) {
-        if (fromEl.className !== toEl.className) {
-            fromEl.className = toEl.className;
-        }
-        return false; 
-    }
+	// 🛡️ PROTECCIÓN DE FOCO: No interrumpir al usuario mientras escribe
+	    if (fromEl === document.activeElement && (fromEl.tagName === 'INPUT' || fromEl.tagName === 'TEXTAREA' || fromEl.tagName === 'SELECT' || fromEl.tagName.includes('-'))) {
+	        if (fromEl.className !== toEl.className) {
+	            fromEl.className = toEl.className;
+	        }
+	        return false; 
+	    }
 
     return true;
 }
@@ -1582,92 +1586,83 @@ function reindexBindings() {
       }
     }
 
-  $$('input,textarea,select').forEach(el => {
-    const k = el.name || el.id;
-    if (!k) return;
+	// 🔥 FIX QUIRÚRGICO: Auto-sincronización mágica para CUALQUIER Web Component
+	  $$('input,textarea,select, [name]').forEach(el => {
+		const k = el.name || el.getAttribute('name') || el.id;
+	    // Evitamos bindear contenedores estructurales
+	    if (!k || el.tagName === 'META' || el.tagName === 'FORM' || el.tagName === 'SLOT') return;
 
-    (bindings.get(k) || bindings.set(k, []).get(k)).push(el);
+	    (bindings.get(k) || bindings.set(k, []).get(k)).push(el);
 
-    // 🔹 Flag SOLO para el binding de input → WS
-    if (el._jrxInputBound) return;
-    el._jrxInputBound = true;
+	    if (el._jrxInputBound) return;
+	    el._jrxInputBound = true;
 
-    let evt;
-    if (el.type === 'checkbox' || el.type === 'radio' || el.type === 'file') {
-      evt = 'change';
-    } else {
-      // 🔥 FIX DE RENDIMIENTO PARA POLLING:
-      // En WS somos agresivos (input), en Poll somos pacientes (change/blur).
-      // Esto evita saturar la red con una petición por cada letra.
-      //evt = (transport === 'ws') ? 'input' : 'change';
-      evt = 'input';
-    }
-    
-    
-    el.addEventListener('blur', () => {
-        const keyToSave = el.name || el.id || k;
-        lastEdits.delete(keyToSave); // Borramos la marca de tiempo
-    });
-    
+	    // Detectamos inteligentemente los eventos según el tipo de elemento
+	    let evts = ['input'];
+	    if (el.type === 'checkbox' || el.type === 'radio' || el.type === 'file') {
+	      evts = ['change'];
+	    } else if (el.tagName.includes('-')) {
+	      // 🚀 MAGIA: Si es un Web Component (sl-input, ion-input), extraemos su prefijo nativo
+	      const prefix = el.tagName.split('-')[0].toLowerCase(); 
+	      evts = [prefix + '-input', prefix + '-change', 'input', 'change']; // Escuchamos de todo
+	    }
+	    
+	    el.addEventListener('blur', () => {
+	        const keyToSave = el.name || el.id || k;
+	        lastEdits.delete(keyToSave); 
+	    });
+	    
+	    // Bindeamos todos los eventos pertinentes
+	    evts.forEach(evt => {
+	        el.addEventListener(evt, async (e) => {
+	            // Evitamos envíos duplicados si el evento nativo burbujea
+	            if (e && e.target !== el) return;
 
-    el.addEventListener(evt, async () => {
-		
-	el._jrxLastEdit = Date.now();
-	const keyToSave = el.name || el.id || k; 
-    lastEdits.set(keyToSave, Date.now());
-  // Archivos: no mandamos base64 por tiempo real aquí
-  if (el.type === 'file') {
-    const file = el.files && el.files[0];
-    const info = file ? file.name : null;
+	            el._jrxLastEdit = Date.now();
+	            const keyToSave = el.name || el.id || k; 
+	            lastEdits.set(keyToSave, Date.now());
 
-    if (socket && socket.readyState === 1) {
-      socket.send(JSON.stringify({ k, v : info}));
-      return;
-    } else {
-      await sendSet(k, info);
-    }
-    return;
-  }
+	          // Soporte para archivos
+	          if (el.type === 'file') {
+	            const file = el.files && el.files[0];
+	            const info = file ? file.name : null;
+	            if (socket && socket.readyState === 1) { socket.send(JSON.stringify({ k, v : info})); return; } 
+	            else { await sendSet(k, info); return; }
+	          }
 
-  const v = (el.type === 'checkbox' || el.type === 'radio') ? el.checked : el.value;
-  
-  state[k] = v;
-  
-  updateDomForKey(k,v);
-  
-  
-  const customDebounce = el.dataset.jrxDebounce;
-          let isFastTransport = false;
-          if (socket) {
-              isFastTransport = (typeof SockJS !== 'undefined') ? (socket.transport === 'websocket') : true;
-          }
-          
-          const shouldDebounce = customDebounce || (evt === 'input' && !isFastTransport);
+	          // Leemos el valor del componente nativo o Web Component
+	          const v = (el.type === 'checkbox' || el.type === 'radio') ? el.checked : el.value;
+	          
+	          state[k] = v;
+	          updateDomForKey(k,v);
+	          
+	          // Debounce inteligente
+	          const customDebounce = el.dataset.jrxDebounce;
+	          let isFastTransport = false;
+	          if (socket) isFastTransport = (typeof SockJS !== 'undefined') ? (socket.transport === 'websocket') : true;
+	                  
+	          const shouldDebounce = customDebounce || (evt.includes('input') && !isFastTransport);
 
-          if (shouldDebounce) {
-              const dMs = customDebounce ? parseInt(customDebounce) : 300;
-              if (el._jrxStateSyncTimer) clearTimeout(el._jrxStateSyncTimer);
-              
-              await new Promise(resolve => {
-                  el._jrxStateSyncTimer = setTimeout(resolve, dMs);
-              });
-              
-              // Si el elemento desapareció o el usuario siguió escribiendo, cancelamos este envío viejo
-              if (!document.body.contains(el)) return;
-              const currentV = (el.type === 'checkbox' || el.type === 'radio') ? el.checked : el.value;
-              if (currentV !== v) return; 
-          } 
-  
+	          if (shouldDebounce) {
+	              const dMs = customDebounce ? parseInt(customDebounce) : 300;
+	              if (el._jrxStateSyncTimer) clearTimeout(el._jrxStateSyncTimer);
+	              
+	              await new Promise(resolve => { el._jrxStateSyncTimer = setTimeout(resolve, dMs); });
+	              
+	              if (!document.body.contains(el)) return;
+	              const currentV = (el.type === 'checkbox' || el.type === 'radio') ? el.checked : el.value;
+	              if (currentV !== v) return; 
+	          } 
 
-  if (socket && socket.readyState === 1) {
-    socket.send(JSON.stringify({ k, v }));
-    return;
-  } else {
-    await sendSet(k, v);
-  }
-});
-
-  });
+	          // ¡Disparo por WebSocket!
+	          if (socket && socket.readyState === 1) {
+	            socket.send(JSON.stringify({ k, v }));
+	          } else {
+	            await sendSet(k, v);
+	          }
+	        });
+	    });
+	  });
 
 
   console.log('[BINDINGS NOW]', [...bindings.keys()]);
@@ -1891,7 +1886,7 @@ async function fileInputToJrx(el) {
 
 // 🔥 3. FUNCIÓN BLINDADA (Debounce + Cola Unificada)
 function setupEventBindings(root = document) {
-  const EVENT_DIRECTIVES = ['click', 'change', 'input', 'submit'];
+  
 
   // Lógica central para ejecutar cualquier llamada @Call
   const executeCall = async (el, evtName, qualifiedRaw, rawParams, ev) => {
@@ -2141,56 +2136,53 @@ function setupEventBindings(root = document) {
   };
 
   // 🔥 FIX QUIRÚRGICO: Determinamos el nodo raíz para la búsqueda de eventos
-  const searchNode = root === document ? document.body : root;
+    const searchNode = root === document ? document.body : root;
 
-  // --- Bindeo de eventos Nuevos (data-call-click) ---
-  EVENT_DIRECTIVES.forEach(evtName => {
-    const capEvt = evtName.charAt(0).toUpperCase() + evtName.slice(1);
-    const selector = `[data-call-${evtName}]`;
+    // ⚡ NUEVO: Bindeo de eventos Core + Web Components combinados
+    const ALL_EVENTS = [...CORE_EVENTS, ...CUSTOM_EVENTS];
 
-    // 1. Buscar en hijos
-    const elements = Array.from(searchNode.querySelectorAll(selector));
-    // 2. Revisar si el propio contenedor también tiene el evento
-    if (searchNode.matches && searchNode.matches(selector)) {
-        elements.push(searchNode);
+    ALL_EVENTS.forEach(evtName => {
+      // Convertimos "sl-change" a "SlChange" para extraerlo correctamente del dataset
+      const camelEvt = evtName.split('-').map(part => part.charAt(0).toUpperCase() + part.slice(1)).join('');
+      const selector = `[data-call-${evtName}]`;
+
+      // 1. Buscar en hijos
+      const elements = Array.from(searchNode.querySelectorAll(selector));
+      // 2. Revisar si el propio contenedor también tiene el evento
+      if (searchNode.matches && searchNode.matches(selector)) {
+          elements.push(searchNode);
+      }
+
+      elements.forEach(el => {
+        const flag = `_jrxCallBound_${evtName}`;
+        if (el[flag]) return;
+        el[flag] = true;
+        const qualified = el.dataset[`call${camelEvt}`];
+        const rawParams = el.dataset[`param${camelEvt}`];
+        el.addEventListener(evtName, (ev) => executeCall(el, evtName, qualified, rawParams, ev));
+      });
+    });
+
+    // --- Bindeo de eventos Legacy (data-call) ---
+    const legacyElements = Array.from(searchNode.querySelectorAll('[data-call]'));
+    if (searchNode.matches && searchNode.matches('[data-call]')) {
+        legacyElements.push(searchNode);
     }
 
-    elements.forEach(el => {
-      const flag = `_jrxCallBound_${evtName}`;
-      if (el[flag]) return;
-      el[flag] = true;
-      const qualified = el.dataset[`call${capEvt}`];
-      const rawParams = el.dataset[`param${capEvt}`];
+    legacyElements.forEach(el => {
+      if (el._jrxCallBoundLegacy) return;
+      el._jrxCallBoundLegacy = true;
+      const evtName = el.dataset.event || 'click';
+      const qualified = el.dataset.call;
+      const rawParams = el.dataset.param;
       el.addEventListener(evtName, (ev) => executeCall(el, evtName, qualified, rawParams, ev));
     });
-  });
-
-  // --- Bindeo de eventos Legacy (data-call) ---
-  const legacyElements = Array.from(searchNode.querySelectorAll('[data-call]'));
-  if (searchNode.matches && searchNode.matches('[data-call]')) {
-      legacyElements.push(searchNode);
-  }
-
-  legacyElements.forEach(el => {
-    if (el._jrxCallBoundLegacy) return;
-    el._jrxCallBoundLegacy = true;
-    const evtName = el.dataset.event || 'click';
-    const qualified = el.dataset.call;
-    const rawParams = el.dataset.param;
-    el.addEventListener(evtName, (ev) => executeCall(el, evtName, qualified, rawParams, ev));
-  });
 }
 
 
-/* ─────────────────────────────────────────────────────────
- * FIX: Ahora procesa el nodo raíz (root) Y sus hijos.
- * Vital para que Idiomorph no rompa los eventos del nodo contenedor.
- * ───────────────────────────────────────────────────────── */
-function hydrateEventDirectives(root = document, forceNs = "") {
-  const EVENT_DIRECTIVES = ['click', 'change', 'input', 'submit'];
 
+function hydrateEventDirectives(root = document, forceNs = "") {
   // 🔥 FIX: Si root es un elemento (el botón), lo metemos en la lista manual.
-  // Tu versión anterior usaba solo querySelectorAll y por eso ignoraba al propio botón.
   let all;
   if (root instanceof Element) {
       all = [root, ...root.querySelectorAll('*')];
@@ -2198,34 +2190,28 @@ function hydrateEventDirectives(root = document, forceNs = "") {
       all = (root === document ? document.body : root).querySelectorAll('*');
   }
 
-  all.forEach(el => {
-    const hydratedSet = el._jrxHydratedEvents || (el._jrxHydratedEvents = new Set());
+  // 🛡️ REFACTOR ZERO-RISK: Envolvemos tu lógica exacta en un helper interno
+  const processEventAttr = (el, attrMatch, evtName, hydratedSet) => {
+      const attrName = attrMatch.name;
+      let value = (attrMatch.value || '').trim();
 
-	EVENT_DIRECTIVES.forEach(evtName => {
-	      // 1. Buscamos cualquier atributo que empiece por el evento (ej: @click o @input.debounce.500ms)
-	      const attrMatch = Array.from(el.attributes).find(a => a.name.startsWith('@' + evtName));
-	      if (!attrMatch || hydratedSet.has(evtName)) return;
-
-	      const attrName = attrMatch.name;
-	      let value = (attrMatch.value || '').trim();
-
-	      // 2. Limpieza de basura {{...}}
-	      if (!value || value.includes('{{')) {
-	        el.removeAttribute(attrName);
-	        hydratedSet.add(evtName);
-	        return;
-	      }
-	      
-	      // 3. Extraer modificadores (.debounce.500ms, .throttle.1000ms)
-	      const modifiers = attrName.split('.').slice(1);
-	      modifiers.forEach(mod => {
-	          if (mod.startsWith('debounce')) {
-	              el.dataset.jrxDebounce = mod.replace('debounce', '').replace('ms', '') || '300';
-	          }
-	          if (mod.startsWith('throttle')) {
-	              el.dataset.jrxThrottle = mod.replace('throttle', '').replace('ms', '') || '1000';
-	          }
-	      });
+      // 2. Limpieza de basura {{...}}
+      if (!value || value.includes('{{')) {
+        el.removeAttribute(attrName);
+        hydratedSet.add(evtName);
+        return;
+      }
+      
+      // 3. Extraer modificadores (.debounce.500ms, .throttle.1000ms)
+      const modifiers = attrName.split('.').slice(1);
+      modifiers.forEach(mod => {
+          if (mod.startsWith('debounce')) {
+              el.dataset.jrxDebounce = mod.replace('debounce', '').replace('ms', '') || '300';
+          }
+          if (mod.startsWith('throttle')) {
+              el.dataset.jrxThrottle = mod.replace('throttle', '').replace('ms', '') || '1000';
+          }
+      });
       
       if (forceNs && !value.includes('.') && !value.includes('#')) {
           value = forceNs + value;
@@ -2256,7 +2242,9 @@ function hydrateEventDirectives(root = document, forceNs = "") {
       }
 
       const qualified = compId ? `${compId}.${method}` : method;
-      const capEvt = evtName.charAt(0).toUpperCase() + evtName.slice(1);
+      
+      // 🔥 FIX PARA WEB COMPONENTS: Convertimos guiones (sl-change) a CamelCase (SlChange)
+      const capEvt = evtName.split('-').map(part => part.charAt(0).toUpperCase() + part.slice(1)).join('');
 
       // Escribimos los atributos de datos que usa el runtime
       el.dataset[`call${capEvt}`] = qualified;
@@ -2268,7 +2256,31 @@ function hydrateEventDirectives(root = document, forceNs = "") {
       }
 
       hydratedSet.add(evtName);
-      el.removeAttribute(attrName); // Borramos el @click para que no ensucie
+      el.removeAttribute(attrName); // Borramos el @click o @sl-change para que no ensucie
+  };
+
+  all.forEach(el => {
+    const hydratedSet = el._jrxHydratedEvents || (el._jrxHydratedEvents = new Set());
+
+    // --- 1. RUTA CORE (Intocable, usando la variable global CORE_EVENTS) ---
+    CORE_EVENTS.forEach(evtName => {
+      const attrMatch = Array.from(el.attributes).find(a => a.name.startsWith('@' + evtName));
+      if (attrMatch && !hydratedSet.has(evtName)) {
+          processEventAttr(el, attrMatch, evtName, hydratedSet);
+      }
+    });
+
+    // --- 2. RUTA DINÁMICA (Escáner para Web Components) ---
+    Array.from(el.attributes).forEach(attrMatch => {
+      if (!attrMatch.name.startsWith('@')) return;
+
+      const rawName = attrMatch.name.substring(1);
+      const evtName = rawName.split('.')[0]; // Ej: extrae "sl-change" de "@sl-change.debounce"
+
+      if (!CORE_EVENTS.includes(evtName) && !hydratedSet.has(evtName)) {
+          CUSTOM_EVENTS.add(evtName); // Lo registramos para que setupEventBindings lo escuche
+          processEventAttr(el, attrMatch, evtName, hydratedSet);
+      }
     });
   });
 }
@@ -2323,7 +2335,7 @@ function updateDomForKey(k, v) {
     }
 
     // B) Inputs / Selects / TextAreas
-    const isInput = el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT';
+	const isInput = el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.tagName.includes('-');
     if (isInput) {
       // 🛡️ PROTECCIÓN DE FOCO SIMPLE:
       if (document.activeElement === el) {
@@ -2474,7 +2486,7 @@ function applyStateForKey(k, v) {
 
             // B. Rescatar valores vivos de los inputs
             const name = childEl.getAttribute('name');
-            if (name && (childEl.tagName === 'INPUT' || childEl.tagName === 'SELECT' || childEl.tagName === 'TEXTAREA')) {
+			if (name && (childEl.tagName === 'INPUT' || childEl.tagName === 'SELECT' || childEl.tagName === 'TEXTAREA' || childEl.tagName.includes('-'))) {
                 const val = resolveDeep(name, localState);
                 if (val !== undefined && val !== null) {
                     if (childEl.type === 'checkbox' || childEl.type === 'radio') {

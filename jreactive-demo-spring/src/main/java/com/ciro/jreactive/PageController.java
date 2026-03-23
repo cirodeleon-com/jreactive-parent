@@ -58,7 +58,7 @@ public class PageController {
     @PostMapping(
             value = "/call/{qualified:.+}",
             consumes = MediaType.APPLICATION_JSON_VALUE,
-            produces = MediaType.APPLICATION_JSON_VALUE
+            produces = MediaType.TEXT_PLAIN_VALUE
     )
     public String callMethod(@PathVariable("qualified") String qualified,
                              @RequestBody Map<String, Object> body,

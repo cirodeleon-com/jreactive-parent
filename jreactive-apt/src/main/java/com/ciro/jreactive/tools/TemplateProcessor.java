@@ -72,6 +72,16 @@ public final class TemplateProcessor extends AbstractProcessor {
             String rawCss = tryReadCssFile(clazz);
             ExecutableElement tplMethod = findTemplateMethod(clazz);
             
+            // 🔥 CIRUGÍA: Interceptar @WebComponent antes del flujo normal
+            com.ciro.jreactive.annotations.WebComponent wcAnn = clazz.getAnnotation(com.ciro.jreactive.annotations.WebComponent.class);
+            if (wcAnn != null) {
+                rawHtml = generateWebComponentHtml(wcAnn);
+                generateHtmlResource(clazz, rawHtml);
+                generateClientJs(clazz, rawHtml);
+                generateJavaAccessor(clazz, rawHtml, rawCss);
+                continue; // Terminamos con esta clase, pasamos a la siguiente
+            }
+
             if (rawHtml == null && tplMethod != null) {
                 rawHtml = extractTemplateString(clazz, tplMethod);
             }
@@ -184,6 +194,9 @@ public final class TemplateProcessor extends AbstractProcessor {
     }
 
     private boolean isJReactiveComponent(TypeElement clazz) {
+    	
+    	if (clazz.getAnnotation(com.ciro.jreactive.annotations.WebComponent.class) != null) return true;
+    	
         if (findTemplateMethod(clazz) != null) return true;
 
         TypeElement current = clazz;
@@ -760,6 +773,43 @@ public final class TemplateProcessor extends AbstractProcessor {
                 .replace("\n", "\\n")
                 .replace("\r", "\\r")
                 .replace("\t", "\\t");
+    }
+    
+ // 🔥 NUEVO: Generador automático del template para Web Components
+    private String generateWebComponentHtml(com.ciro.jreactive.annotations.WebComponent wc) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("<").append(wc.tag());
+
+        // 1. Inyectar Props (:prop="{{prop}}")
+        for (String prop : wc.props()) {
+            sb.append(" :").append(prop).append("=\"{{").append(prop).append("}}\"");
+        }
+
+        // 2. Inyectar Eventos (@evento="{{onEvento}}")
+        for (String evt : wc.events()) {
+            // Convierte "sl-change" a "onSlChange" para el método Java
+            String camelCase = java.util.Arrays.stream(evt.split("-"))
+                .map(p -> p.substring(0, 1).toUpperCase() + p.substring(1))
+                .collect(java.util.stream.Collectors.joining());
+            
+            sb.append(" @").append(evt).append("=\"{{on").append(camelCase).append("}}\"");
+        }
+        sb.append(">\n");
+
+        // 3. Inyectar Slots
+        for (String slot : wc.slots()) {
+            if ("default".equals(slot) || "".equals(slot)) {
+                sb.append("  <slot/>\n");
+            } else {
+                // El truco del display:contents para Web Components
+                sb.append("  <div slot=\"").append(slot).append("\" style=\"display: contents;\">\n");
+                sb.append("    <slot name=\"").append(slot).append("\"/>\n");
+                sb.append("  </div>\n");
+            }
+        }
+
+        sb.append("</").append(wc.tag()).append(">");
+        return sb.toString();
     }
     
 }

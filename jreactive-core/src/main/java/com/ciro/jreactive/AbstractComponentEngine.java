@@ -190,23 +190,32 @@ public abstract class AbstractComponentEngine implements ComponentEngine.Strateg
 
     private ViewLeaf newInstance(HtmlComponent ctx, String className) {
         try {
-            Class<?> raw;
-            try {
-                // 1. Intento rápido: mismo paquete que el padre (ej: com.ciro.jreactive.crud.JButton)
-                String localPackageClass = ctx.getClass().getPackageName() + "." + className;
-                raw = Class.forName(localPackageClass);
-            } catch (ClassNotFoundException e) {
+            Class<?> raw = null;
+            
+            // 🔥 CIRUGÍA: Lista ordenada de paquetes donde el motor buscará la clase
+            String[] packagesToTry = {
+                ctx.getClass().getPackageName() + ".", // 1. Mismo paquete que el padre
+                "",                                    // 2. Nombre global (si pasaste el FQCN en el HTML)
+                "com.ciro.jreactive.",                 // 3. Paquete base UI (JTable, JButton, etc.)
+                "com.ciro.jreactive.web.components.",  // 4. NUEVO: Paquete de Web Components
+                "com.ciro.jreactive.components."       // 5. Fallback común para componentes extra
+            };
+
+            for (String prefix : packagesToTry) {
                 try {
-                    // 2. Fallback: Buscar por nombre global (si el template tiene el nombre completo)
-                    raw = Class.forName(className);
-                } catch (ClassNotFoundException e2) {
-                    // 🔥 3. FIX: Buscar en el paquete base de componentes UI (com.ciro.jreactive)
-                    // Esto permite que <JButton> funcione desde cualquier subpaquete
-                    String uiPackageClass = "com.ciro.jreactive." + className;
-                    raw = Class.forName(uiPackageClass);
+                    raw = Class.forName(prefix + className);
+                    break; // ¡Lo encontramos! Salimos del bucle
+                } catch (ClassNotFoundException ignored) {
+                    // Ignoramos silenciosamente y probamos el siguiente paquete
                 }
             }
+
+            if (raw == null) {
+                throw new ClassNotFoundException(className);
+            }
+
             return (ViewLeaf) componentFactory.create((Class<? extends ViewLeaf>) raw);
+            
         } catch (Exception e) { 
             throw new RuntimeException("Error: No se encontró el componente '" + className + 
                 "'. Verifica el nombre, imports o usa el paquete completo (ej: com.app.ui." + className + ")", e); 

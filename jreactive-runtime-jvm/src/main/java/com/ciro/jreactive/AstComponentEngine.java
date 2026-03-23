@@ -93,24 +93,31 @@ public class AstComponentEngine extends AbstractComponentEngine {
         String ns = isRoot ? "" : prefix;
         
         // 🔥 AOT ZERO-PARSE: Intentamos sacar el AST directo del Accessor generado
+     // 🔥 AOT ZERO-PARSE: Intentamos sacar el AST directo del Accessor generado
         List<JrxNode> ast = AST_CACHE.computeIfAbsent(ctx.getClass(), k -> {
             @SuppressWarnings({"rawtypes", "unchecked"})
             com.ciro.jreactive.spi.ComponentAccessor acc = com.ciro.jreactive.spi.AccessorRegistry.get((Class) k);
             if (acc != null) {
                 List<JrxNode> precompiledAst = acc.getAst();
                 if (precompiledAst != null) {
-                    // System.out.println("⚡ [AOT] Usando AST pre-compilado para: " + k.getSimpleName());
                     return precompiledAst;
                 }
             }
-            // Fallback (JIT): Si el componente es muy viejo o falló el APT, parseamos en caliente
+            
+            // 🔥 DX FIX: Si es un Web Component y falló el AOT, damos un error claro
+            if (ctx.getClass().isAnnotationPresent(com.ciro.jreactive.annotations.WebComponent.class)) {
+                throw new IllegalStateException("El componente '" + k.getSimpleName() + "' es un @WebComponent, pero su Accessor AOT no existe. Detén la app y ejecuta 'mvn clean install -DskipTests' para generarlo.");
+            }
+
+            // Fallback (JIT): Parseamos en caliente si es un componente normal
             return JrxParser.parse(ctx.template());
         });
 
         // scoping: SOLO a los root elements (equivalente a Jsoup)
         addScopeToRootElements(ast, ctx._getScopeId());
 
-        StringBuilder out = new StringBuilder(ctx.template().length() * 2);
+        // 🔥 FIX: Eliminamos el ctx.template().length() que causaba crash en Web Components
+        StringBuilder out = new StringBuilder(1024);
         out.append(resources);
 
         TemplateContext tplCtx = new TemplateContext(ctx);
