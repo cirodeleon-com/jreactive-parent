@@ -572,24 +572,42 @@ async function syncStateHttp() {
  *  Resuelve expresiones con “.”  +  size / length
  * --------------------------------------------------------- */
 
-function resolveExpr(expr) {
+// 🔥 FIX DEFINITIVO DE RECURSIVIDAD Y SCOPING 🔥
+function resolveExpr(expr, el) {
   const safe = v => (typeof v === 'string' ? escapeHtml(v) : v ?? '');
   if (!expr) return '';
   
-  // 🔥 SEGURIDAD: Si intentan acceder a prototipos, cortamos de raíz.
   if (expr.includes('__proto__') || expr.includes('constructor') || expr.includes('prototype')) {
       console.warn('⚠️ Security: Access denied to property path:', expr);
       return '';
   }
 
-  // 1) Si la expresión completa existe en el estado → devuélvela directo
+  // 1. Prioridad Máxima: Scope Local inyectado en el DOM (Permite #each anidados)
+  if (el) {
+      let current = el;
+      while (current) {
+          if (current._jrxScope) {
+              const root = expr.split('.')[0];
+              if (current._jrxScope[root] !== undefined) {
+                  let val = current._jrxScope[root];
+                  const parts = expr.split('.').slice(1);
+                  for (let p of parts) {
+                      if (p === 'size' || p === 'length') val = calcSizeLen(val, p);
+                      else val = val == null ? undefined : val[p];
+                  }
+                  return safe(val);
+              }
+          }
+          current = current.parentElement || current.previousSibling; 
+      }
+  }
+
+  // 2. Si no hay scope local, usamos el estado global
   if (expr in state) return safe(state[expr]);
 
   const parts = expr.split('.');
   if (parts.length === 0) return '';
 
-  // 2) Buscar la clave de estado MÁS LARGA que sea prefijo exacto
-  //    ej. "HelloLeaf#1.orders.size"  → baseKey = "HelloLeaf#1.orders"
   let baseKey = null;
   let propsStartIdx = parts.length;
 
@@ -602,20 +620,14 @@ function resolveExpr(expr) {
     }
   }
 
-  // Si no hay ninguna clave en el estado que sea prefijo exacto → vacío
   if (!baseKey) return '';
 
   let value = state[baseKey];
 
-  // 3) Navegar propiedades restantes + size/length
   for (let i = propsStartIdx; i < parts.length; i++) {
     const p = parts[i];
-
-    // tamaños especiales: .size / .length
     if (p === 'size' || p === 'length') {
-      if (Array.isArray(value) || typeof value === 'string') {
-        return value.length;
-      }
+      if (Array.isArray(value) || typeof value === 'string') return value.length;
       if (value && typeof value === 'object') {
         if (typeof value.length === 'number')   return value.length;
         if (typeof value.size   === 'number')   return value.size;
@@ -623,7 +635,6 @@ function resolveExpr(expr) {
       }
       return '0';
     }
-
     value = value == null ? undefined : value[p];
   }
 
@@ -637,13 +648,13 @@ function resolveExpr(expr) {
  * 3. Re-render de nodos texto   (ahora con dot-path, size, length)
  * ------------------------------------------------------------------ */
 
-function renderText(node) {
-  const re = /{{\s*([\w#.-]+)\s*}}/g;
-  node.textContent = node.__tpl.replace(re, (_, expr) => {
-    const v = resolveExpr(expr);
-    return v == null ? '' : String(v);
-  });
-}
+ function renderText(node) {
+   const re = /{{\s*([\w#.-]+)\s*}}/g;
+   node.textContent = node.__tpl.replace(re, (_, expr) => {
+     const v = resolveExpr(expr, node); // 🔥 Pasamos el nodo para resolver scopes anidados
+     return v == null ? '' : String(v);
+   });
+ }
 
 
 
@@ -668,163 +679,224 @@ function calcSizeLen(val, prop) {
    * 4. Motores data-if  y  data-each
    * ------------------------------------------------------------------ */
 
-function mount(tpl) {
-  const frag = tpl.content.cloneNode(true);
-  tpl._nodes = [...frag.childNodes];
-  tpl.after(frag);
+  function mount(tpl) {
+    const frag = tpl.content.cloneNode(true);
+    tpl._nodes = [...frag.childNodes];
+    tpl.after(frag);
 
-  /*  ❌  NO LLAMES de nuevo a updateEachBlocks()
-   *      eso provocaba la duplicación recursiva
-   */
-  // 1. Re-indexar los {{variables}} para que updateDomForKey los encuentre
-  reindexBindings();
-  
-  // 2. 🔥 LA CLAVE: Forzar renderizado inicial de los nuevos nodos texto
-  bindings.forEach((nodes, key) => {
-	
-	const currentVal = resolveExpr(key);
-	
-    nodes.forEach(node => {
-       if (node.nodeType === Node.TEXT_NODE){ 
-		  renderText(node);
-	   }
-	   else if (node.tagName && currentVal !== undefined && currentVal !== null) {
-	             // Checkboxes / Radios
-	             if (node.type === 'checkbox' || node.type === 'radio') {
-	                // Comparamos string vs boolean por seguridad
-	                node.checked = (String(currentVal) === 'true' || currentVal === true);
-	             } 
-	             // Inputs normales / Selects / Textareas
-	             else if (node.type !== 'file') {
-	                // Solo asignamos si difiere para no perder cursor (aunque en mount da igual)
-	                if (node.value != currentVal) {
-	                    node.value = currentVal;
-	                }
-	             }
-	         }
+    reindexBindings();
+    
+    bindings.forEach((nodes, key) => {
+      nodes.forEach(node => {
+         const currentVal = resolveExpr(key, node); // 🔥 Pasamos node para soportar sub-scopes
+         if (node.nodeType === Node.TEXT_NODE){ 
+  		  renderText(node);
+  	   }
+  	   else if (node.tagName && currentVal !== undefined && currentVal !== null) {
+               if (node.type === 'checkbox' || node.type === 'radio') {
+                  node.checked = (String(currentVal) === 'true' || currentVal === true);
+               } else if (node.type !== 'file') {
+                  if (node.value != currentVal) node.value = currentVal;
+               }
+         }
+      });
     });
-  });
 
-  // 2. Convertir los @click nuevos en data-call
-  hydrateEventDirectives();
-
-  // 3. Conectar los listeners de eventos a los nuevos elementos
-  setupEventBindings();
-  
-  //updateIfBlocks();
-  //updateEachBlocks();
-}
+    hydrateEventDirectives();
+    setupEventBindings();
+  }
 
   function unmount(tpl) {
     (tpl._nodes || []).forEach(n => n.remove());
     tpl._nodes = null;
   }
 
-function evalCond(expr) {
-  const tokens = tokenize(expr);
-  const ast    = parseExpr(tokens);
-  return ast();                       // devuelve boolean
-}
-
-
-function valueOfPath(expr) {
-  // Reutiliza la función existente; si no la tienes extrae la parte relevante
-  return resolveExpr(expr);               // devuelve cualquier tipo
-}
-
-function tokenize(src) {
-  const re = /\s*(&&|\|\||!|\(|\)|[a-zA-Z_][\w#.-]*)\s*/g;
-  const out = [];
-  let m;
-  while ((m = re.exec(src))) out.push(m[1]);
-  return out;
-}
-
-function parseExpr(tokens) {         // OR level
-  let node = parseAnd(tokens);
-  while (tokens[0] === '||') {
-    tokens.shift();
-    node = () => node() || parseAnd(tokens)();
+  function evalCond(expr, el) {
+    const tokens = tokenize(expr);
+    const ast    = parseExpr(tokens, el);
+    return ast();
   }
-  return node;
-}
 
-function parseAnd(tokens) {          // AND level
-  let node = parseNot(tokens);
-  while (tokens[0] === '&&') {
-    tokens.shift();
-    node = () => node() && parseNot(tokens)();
+
+  function valueOfPath(expr, el) {
+    return resolveExpr(expr, el);               
   }
-  return node;
-}
 
-function parseNot(tokens) {          // !factor
-  if (tokens[0] === '!') {
-    tokens.shift();
-    const factor = parseNot(tokens);
-    return () => !factor();
+  function tokenize(src) {
+    const re = /\s*(&&|\|\||!|\(|\)|[a-zA-Z_][\w#.-]*)\s*/g;
+    const out = [];
+    let m;
+    while ((m = re.exec(src))) out.push(m[1]);
+    return out;
   }
-  return parsePrimary(tokens);
-}
 
-function parsePrimary(tokens) {
-  if (tokens[0] === '(') {
-    tokens.shift();
-    const inside = parseExpr(tokens);
-    tokens.shift();                  // consume ')'
-    return inside;
+  function parseExpr(tokens, el) {         
+    let node = parseAnd(tokens, el);
+    while (tokens[0] === '||') {
+      tokens.shift();
+      let right = parseAnd(tokens, el);
+      let left = node;
+      node = () => left() || right();
+    }
+    return node;
   }
-  const id = tokens.shift();         // identifier or path
-  return () => !!valueOfPath(id);
-}
+
+  function parseAnd(tokens, el) {          
+    let node = parseNot(tokens, el);
+    while (tokens[0] === '&&') {
+      tokens.shift();
+      let right = parseNot(tokens, el);
+      let left = node;
+      node = () => left() && right();
+    }
+    return node;
+  }
+
+  function parseNot(tokens, el) {          
+    if (tokens[0] === '!') {
+      tokens.shift();
+      const factor = parseNot(tokens, el);
+      return () => !factor();
+    }
+    return parsePrimary(tokens, el);
+  }
+
+  function parsePrimary(tokens, el) {
+    if (tokens[0] === '(') {
+      tokens.shift();
+      const inside = parseExpr(tokens, el);
+      tokens.shift();                  
+      return inside;
+    }
+    const id = tokens.shift();         
+    return () => !!valueOfPath(id, el);
+  }
 
 
-function updateIfBlocks() {
-  let mountedAny = true;
-  let depth = 0;
-  
-  // Bucle para desanidar templates recursivamente (Ej: JModal -> JForm -> Button)
-  // Máximo 5 niveles de profundidad por seguridad para evitar bucles infinitos.
-  while (mountedAny && depth < 5) {
-    mountedAny = false;
+  // 🔥 FIX DEFINITIVO: Cascada de Reactividad Unificada (If + Each)
+  function updateIfBlocks() {
+    let changed = true;
+    let depth = 0;
     
-    // plantilla con data-if
-    document.querySelectorAll('template[data-if]').forEach(tpl => {
-      const cond = tpl.dataset.if;
-      const show = evalCond(cond);
-	  
-	  if (tpl._nodes && tpl._nodes.length > 0 && !tpl._nodes[0].parentNode) {
-	      tpl._nodes = null;
-	  }
+    // Bucle maestro: soporta hasta 50 niveles de recursividad cruzada
+    while (changed && depth < 50) {
+      changed = false;
+      
+      // 1. Evaluar IFs
+      document.querySelectorAll('template[data-if]').forEach(tpl => {
+        const show = evalCond(tpl.dataset.if, tpl);
+        if (tpl._nodes && tpl._nodes.length > 0 && !tpl._nodes[0].parentNode) tpl._nodes = null;
+        if (show && !tpl._nodes) { mount(tpl); changed = true; }
+        if (!show && tpl._nodes) { unmount(tpl); changed = true; }
+      });
 
-      if (show && !tpl._nodes) { 
-          mount(tpl); 
-          mountedAny = true; 
-      }
-      if (!show && tpl._nodes) { 
-          unmount(tpl); 
-          mountedAny = true; 
-      }
-    });
+      // 2. Evaluar ELSEs
+      document.querySelectorAll('template[data-else]').forEach(tpl => {
+        const show = !evalCond(tpl.dataset.else, tpl);
+        if (tpl._nodes && tpl._nodes.length > 0 && !tpl._nodes[0].parentNode) tpl._nodes = null;
+        if (show && !tpl._nodes) { mount(tpl); changed = true; }
+        if (!show && tpl._nodes) { unmount(tpl); changed = true; }
+      });
 
-    // plantilla complementaria data-else
-    document.querySelectorAll('template[data-else]').forEach(tpl => {
-      const cond = tpl.dataset.else;
-      const show = !evalCond(cond);
+      // 3. Evaluar EACHs (Mantenemos los templates hijos dormidos en el DOM)
+      document.querySelectorAll('template[data-each]').forEach(tpl => {
+          const [listExprRaw, aliasRaw] = tpl.dataset.each.split(':');
+          const listExpr = listExprRaw ? listExprRaw.trim() : '';
+          const alias    = aliasRaw ? aliasRaw.trim() : 'this';
 
-      if (show && !tpl._nodes) { 
-          mount(tpl); 
-          mountedAny = true; 
-      }
-      if (!show && tpl._nodes) { 
-          unmount(tpl); 
-          mountedAny = true; 
-      }
-    });
-    
-    depth++;
+          // Usar resolveExpr con el template para buscar contextos anidados
+          let raw = resolveExpr(listExpr, tpl);
+          const data = Array.isArray(raw) ? raw : [];
+
+          if (!tpl._start || !tpl._start.parentNode) {
+            tpl._start = document.createComment('each-start');
+            tpl._end   = document.createComment('each-end');
+            tpl.after(tpl._end);
+            tpl.after(tpl._start);
+            tpl._keyMap = new Map();
+          }
+          const prev = tpl._keyMap || new Map();
+          const next = new Map();
+          const frag = document.createDocumentFragment();
+
+          let rowChanged = false;
+
+          data.forEach((item, idx) => {
+            let key = getKey(item, idx); 
+            if (next.has(key)) key = key + '_dup_' + idx;
+            
+            let entry = prev.get(key);
+
+            // Si el objeto mutó por completo (ej: SET en la lista), lo regeneramos
+            if (entry && entry.item !== item) {
+                entry.nodes.forEach(n => n.remove());
+                entry = null; 
+            }
+
+            if (!entry) {
+              const html = renderTemplate(tpl.innerHTML, item, idx, alias);
+              
+              const cleanHtml = html.trim();
+              const isCell = /^<(td|th)/i.test(cleanHtml);
+              const isTablePart = /^<(tr|thead|tbody|tfoot)/i.test(cleanHtml);
+              
+              const tempContainer = document.createElement(isCell || isTablePart ? 'table' : 'div');
+              if (isCell) tempContainer.innerHTML = `<tbody><tr>${cleanHtml}</tr></tbody>`;
+              else tempContainer.innerHTML = cleanHtml;
+
+              const searchRoot = isCell ? tempContainer.querySelector('tr') : 
+                                 (isTablePart && tempContainer.querySelector('tbody')) ? tempContainer.querySelector('tbody') : 
+                                 tempContainer;
+
+              const nodes = Array.from(searchRoot.childNodes);
+
+              // Inyectar el SCOPE (alias) a los nodos de esta fila para que la recursividad los encuentre
+              nodes.forEach(n => {
+                if (n.nodeType === 1) { 
+                  n._jrxScope = { [alias]: item };
+                  hydrateEventDirectives(n); 
+                  setupEventBindings(n); 
+                }
+              });
+
+              entry = { nodes, item };
+              rowChanged = true;
+            }
+
+            frag.append(...entry.nodes);
+            next.set(key, entry);
+            prev.delete(key);
+          });
+          
+          if (prev.size > 0) rowChanged = true;
+          prev.forEach(e => e.nodes.forEach(n => n.remove()));
+
+          // 🔥 EL FIX ESTÁ AQUÍ: SIEMPRE debemos devolver los nodos al DOM, hayan cambiado o no.
+          tpl._end.before(frag);
+
+          if (rowChanged) {
+              changed = true; // Forzamos otra vuelta del bucle maestro para que evalúe anidados
+          }
+          
+          tpl._keyMap = next;
+          
+          if (tpl.parentElement && tpl.parentElement.tagName === 'SELECT') {
+              const modelKey = tpl.parentElement.getAttribute('name');
+              if (modelKey) {
+                  const val = resolveExpr(modelKey, tpl.parentElement);
+                  if (val !== undefined && val !== null) {
+                      tpl.parentElement.value = val;
+                  }
+              }
+          }
+      });
+      
+      depth++;
+    }
   }
-}
+
+  // Vacío, todo ocurre mágicamente en cascada desde updateIfBlocks
+  function updateEachBlocks() {}
 
 
 /* ================================================================
@@ -944,131 +1016,8 @@ function resolveInContext(expr, alias, item) {
 /* ------------------------------------------------------------------
  * #each con diff incremental (keyed) + soporte anidado con alias
  * ------------------------------------------------------------------ */
-function updateEachBlocks() {
-  document.querySelectorAll('template[data-each]').forEach(tpl => {
 
-    /* 1. Extracción de configuración */
-    const [listExprRaw, aliasRaw] = tpl.dataset.each.split(':');
-    const listExpr = listExprRaw ? listExprRaw.trim() : '';
-    const alias    = aliasRaw ? aliasRaw.trim() : 'this';
 
-    let raw = resolveExpr(listExpr);
-    const data = Array.isArray(raw) ? raw : [];
-
-    /* 2. Inicialización de centinelas */
-    if (!tpl._start || !tpl._start.parentNode) {
-      tpl._start = document.createComment('each-start');
-      tpl._end   = document.createComment('each-end');
-      tpl.after(tpl._end);
-      tpl.after(tpl._start);
-	  tpl._keyMap = new Map();
-    }
-    const prev = tpl._keyMap || new Map();
-    const next = new Map();
-    const frag = document.createDocumentFragment();
-
-    /* 3 · recorrido con reuse inteligente --------------------------- */
-    data.forEach((item, idx) => {
-      const key = getKey(item, idx); 
-	  
-	  if (next.has(key)) {
-	     console.warn(`⚠️ [JReactive] ID duplicado detectado en bucle: ${key}. Protegiendo DOM...`);
-	     key = key + '_dup_' + idx;
-	  }
-	  
-      let entry = prev.get(key);
-
-      // 🔥 FIX: Detectar si el contenido real cambió (SET/Update)
-      // Si el nodo existe pero el valor es diferente, forzamos la regeneración.
-      // Esto arregla el "SET" en el Laboratorio de Deltas.
-      if (entry && entry.item !== item) {
-          entry.nodes.forEach(n => n.remove());
-          entry = null; 
-      }
-
-      if (!entry) {
-        const html = renderTemplate(tpl.innerHTML, item, idx, alias);
-        
-        // --- 🛡️ ESCUDO DE TABLAS (Arregla las columnas horizontales) ---
-        const cleanHtml = html.trim();
-        const isCell = /^<(td|th)/i.test(cleanHtml);
-        const isTablePart = /^<(tr|thead|tbody|tfoot)/i.test(cleanHtml);
-        
-        const tempContainer = document.createElement(isCell || isTablePart ? 'table' : 'div');
-        if (isCell) tempContainer.innerHTML = `<tbody><tr>${cleanHtml}</tr></tbody>`;
-        else tempContainer.innerHTML = cleanHtml;
-
-        // Buscador inteligente para que las columnas no salgan verticales
-        const searchRoot = isCell ? tempContainer.querySelector('tr') : 
-                           (isTablePart && tempContainer.querySelector('tbody')) ? tempContainer.querySelector('tbody') : 
-                           tempContainer;
-
-        /* 3-a-1) Procesar #each anidados (Búsqueda profunda) */
-        searchRoot.querySelectorAll('template[data-each]').forEach(innerTpl => {
-            const cfg = (innerTpl.dataset.each || '').split(':');
-            const innerListExprRaw = (cfg[0] || '').trim();
-            const innerAlias = (cfg[1] || '').trim() || 'this';
-            if (!innerListExprRaw || (innerListExprRaw !== alias && !innerListExprRaw.startsWith(alias + '.'))) return;
-
-            const innerData = resolveListInContext(innerListExprRaw, alias, item);
-            const innerFrag = document.createDocumentFragment();
-
-            innerData.forEach((childItem, childIdx) => {
-                const innerHtml = renderTemplate(innerTpl.innerHTML, childItem, childIdx, innerAlias);
-                const innerNodes = htmlToNodes(innerHtml);
-                innerFrag.append(...innerNodes);
-            });
-            innerTpl.replaceWith(innerFrag);
-        });
-
-        /* 3-a-2) Procesar #if / #else anidados (Búsqueda profunda) */
-        searchRoot.querySelectorAll('template[data-if], template[data-else]').forEach(innerTpl => {
-            const cond = innerTpl.dataset.if || innerTpl.dataset.else;
-            const isElse = innerTpl.hasAttribute('data-else');
-            const show = resolveInContext(cond, alias, item);
-            if ((show && !isElse) || (!show && isElse)) mount(innerTpl);
-            else unmount(innerTpl);
-            innerTpl.remove();
-        });
-
-        const nodes = Array.from(searchRoot.childNodes);
-
-        // Activar eventos y alcance (Scope) para el botón Eliminar
-        nodes.forEach(n => {
-          if (n.nodeType === 1) { 
-            n._jrxScope = { [alias]: item };
-            hydrateEventDirectives(n); 
-            setupEventBindings(n); 
-          }
-        });
-
-        entry = { nodes, item };
-      }
-
-      frag.append(...entry.nodes);
-      next.set(key, entry);
-      prev.delete(key);
-    });
-    /* 4. Limpieza de nodos eliminados (Aquí se arregla el bug del último elemento) */
-    prev.forEach(e => e.nodes.forEach(n => n.remove()));
-
-    /* 5. Inserción en el DOM real */
-    tpl._end.before(frag);
-    tpl._keyMap = next;
-	
-	if (tpl.parentElement && tpl.parentElement.tagName === 'SELECT') {
-	        const selectEl = tpl.parentElement;
-	        const modelKey = selectEl.getAttribute('name');
-	        if (modelKey) {
-	            const val = resolveExpr(modelKey);
-	            if (val !== undefined && val !== null) {
-	                selectEl.value = val;
-	            }
-	        }
-	  }
-	
-  });
-}
 
 
 
@@ -1611,6 +1560,10 @@ function reindexBindings() {
 	        const keyToSave = el.name || el.id || k;
 	        lastEdits.delete(keyToSave); 
 	    });
+		
+		if (state[k] === undefined && el.value !== undefined && el.value !== '') {
+		    state[k] = el.type === 'checkbox' || el.type === 'radio' ? el.checked : el.value;
+		}
 	    
 	    // Bindeamos todos los eventos pertinentes
 	    evts.forEach(evt => {
