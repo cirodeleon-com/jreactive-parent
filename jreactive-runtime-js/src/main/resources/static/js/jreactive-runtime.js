@@ -1922,6 +1922,9 @@ function setupEventBindings(root = document) {
 		                    }
 		                    target[realKey] = value;
 		                    updateDomForKey(realKey, value); 
+							updateIfBlocks();
+							updateEachBlocks();
+							
 		                    return true;
 		                }
 		            });
