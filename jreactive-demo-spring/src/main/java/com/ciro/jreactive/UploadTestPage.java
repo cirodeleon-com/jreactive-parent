@@ -29,7 +29,8 @@ public class UploadTestPage extends AppPage {
                 />
             
             <p>Último archivo: <strong>{{state.name}}</strong></p>
-            <p>Tamaño: {{state.size}} bytes</p>
+            <p>Tamaño: {{state.formattedSize}}</p>
+            
             <p>clicks: {{clickCount}}</p>
             <p>Ruta Temporal Segura: <code style="color: green;">{{state.tempPath}}</code></p>
             """;
