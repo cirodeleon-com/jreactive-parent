@@ -127,4 +127,26 @@ public class PageController {
         }
     }
     
+ // 🔥 EL RECOLECTOR DE BASURA (Evita que el disco duro explote)
+    @org.springframework.scheduling.annotation.Scheduled(fixedRate = 3600000) // Se ejecuta cada 1 hora
+    public void cleanupTempFiles() {
+        try {
+            java.io.File tempDir = new java.io.File(System.getProperty("java.io.tmpdir"));
+            long expirationTime = System.currentTimeMillis() - (2 * 3600 * 1000); // 2 horas de antigüedad
+
+            java.io.File[] files = tempDir.listFiles((dir, name) -> name.startsWith("jrx_") && name.endsWith(".tmp"));
+            
+            if (files != null) {
+                for (java.io.File file : files) {
+                    if (file.lastModified() < expirationTime) {
+                        boolean deleted = file.delete();
+                        if (deleted) System.out.println("🧹 [JReactive] Archivo temporal huérfano eliminado: " + file.getName());
+                    }
+                }
+            }
+        } catch (Exception e) {
+            System.err.println("⚠️ [JReactive] Fallo en la limpieza de archivos temporales: " + e.getMessage());
+        }
+    }
+    
 }

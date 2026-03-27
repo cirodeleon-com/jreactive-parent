@@ -1175,7 +1175,6 @@ function applySetChange(arr, ch) {
  * 8. CLIENT HOOKS (Vigilante del DOM + Escudo Idiomorph)
  * ------------------------------------------------------------------ */
 
-// 🔥 NUEVO: Callback maestro para Idiomorph (El Escudo)
 function jrxMorphCallback(fromEl, toEl) {
     if (fromEl.nodeType !== 1) return true;
 
@@ -1188,23 +1187,35 @@ function jrxMorphCallback(fromEl, toEl) {
             }
         });
         // 2. Remover atributos viejos
-		const protectedAttrs = ['style', 'width', 'height', 'class'];
-		        Array.from(fromEl.attributes).forEach(attr => {
-		            if (!toEl.hasAttribute(attr.name) && !protectedAttrs.includes(attr.name)) {
-		                fromEl.removeAttribute(attr.name);
-		            }
-		        });
+        const protectedAttrs = ['style', 'width', 'height', 'class'];
+        Array.from(fromEl.attributes).forEach(attr => {
+            if (!toEl.hasAttribute(attr.name) && !protectedAttrs.includes(attr.name)) {
+                fromEl.removeAttribute(attr.name);
+            }
+        });
         // 🛑 Detiene la mutación de los hijos (Idiomorph ignora el innerHTML)
         return false; 
     }
 
-	// 🛡️ PROTECCIÓN DE FOCO: No interrumpir al usuario mientras escribe
-	    if (fromEl === document.activeElement && (fromEl.tagName === 'INPUT' || fromEl.tagName === 'TEXTAREA' || fromEl.tagName === 'SELECT' || fromEl.tagName.includes('-'))) {
-	        if (fromEl.className !== toEl.className) {
-	            fromEl.className = toEl.className;
-	        }
-	        return false; 
-	    }
+    // 🛡️ PROTECCIÓN DE FOCO MEJORADA: No interrumpir al usuario mientras escribe
+    if (fromEl === document.activeElement && (fromEl.tagName === 'INPUT' || fromEl.tagName === 'TEXTAREA' || fromEl.tagName === 'SELECT' || fromEl.tagName.includes('-'))) {
+        
+        // 1. Copiamos los estilos y clases que el servidor haya inyectado (Ej: validaciones rojas)
+        if (fromEl.className !== toEl.className) fromEl.className = toEl.className;
+        if (fromEl.style.cssText !== toEl.style.cssText) fromEl.style.cssText = toEl.style.cssText;
+        
+        // 2. Copiamos estados de control vitales que el servidor puede cambiar al vuelo
+        ['disabled', 'readonly', 'required'].forEach(attr => {
+            if (toEl.hasAttribute(attr)) {
+                fromEl.setAttribute(attr, toEl.getAttribute(attr) || '');
+            } else {
+                fromEl.removeAttribute(attr);
+            }
+        });
+        
+        // 3. Abortamos la mutación interna de Idiomorph para que el cursor no salte
+        return false; 
+    }
 
     return true;
 }
