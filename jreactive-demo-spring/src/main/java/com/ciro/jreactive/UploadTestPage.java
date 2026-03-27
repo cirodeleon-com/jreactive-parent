@@ -20,7 +20,13 @@ public class UploadTestPage extends AppPage {
     protected String template() {
         return """
             <h1>Subir archivo reactivo</h1>
-            <input type="file" name="file" @change="handleUpload(file)" @click="trackClick(file)"/>
+            
+            <JFileUpload 
+                    label="Sube tu documento pesado" 
+                    field="state" 
+                    onChange="handleUpload(state)" 
+                    onClick="trackClick(state)" 
+                />
             
             <p>Último archivo: <strong>{{state.name}}</strong></p>
             <p>Tamaño: {{state.size}} bytes</p>
@@ -33,8 +39,7 @@ public class UploadTestPage extends AppPage {
     public void handleUpload(JrxFile file) {
         if (file == null) return;
         
-        // ¡Magia! El developer ya lo tiene listo para guardar
-        System.out.println("Archivo listo en: " + file.tempPath());
+        System.out.println("✅ Archivo recibido en Java: " + file.tempPath());
         this.state = file;
     }
     

@@ -1249,12 +1249,27 @@ const domObserver = new MutationObserver((mutations) => {
 });
 
 // 2. Ejecutar código JS de forma segura
+// 2. Ejecutar código JS (Soporta Función Global o Código Inline)
 function executeHook(el, attrName) {
     const code = el.getAttribute(attrName);
     if (!code) return;
+
     try {
+        // 1. ¿Es una ruta limpia a una función global? (Ej: "window.Modal.init")
+        // Verificamos que no tenga espacios, ni paréntesis, ni operadores.
+        const cleanPath = code.replace(/^window\./, '').trim();
+        if (/^[a-zA-Z0-9_.]+$/.test(cleanPath)) {
+            const globalFn = resolveDeep(cleanPath, window);
+            if (typeof globalFn === 'function') {
+                globalFn.call(el, el); // Ejecuta seguro pasándole el elemento
+                return;
+            }
+        }
+
+        // 2. Fallback: Es código JS inline (Ej: "this.style.color = 'red'")
         const fn = new Function(code);
-        fn.call(el); 
+        fn.call(el); // 'this' apuntará al elemento del DOM directamente
+
     } catch (e) {
         console.error(`❌ Hook Error (${attrName}):`, e, el);
     }
@@ -1576,12 +1591,14 @@ function reindexBindings() {
 	            lastEdits.set(keyToSave, Date.now());
 
 	          // Soporte para archivos
+			  /*
 	          if (el.type === 'file') {
 	            const file = el.files && el.files[0];
 	            const info = file ? file.name : null;
 	            if (socket && socket.readyState === 1) { socket.send(JSON.stringify({ k, v : info})); return; } 
 	            else { await sendSet(k, info); return; }
 	          }
+			  */
 
 	          // Leemos el valor del componente nativo o Web Component
 	          const v = (el.type === 'checkbox' || el.type === 'radio') ? el.checked : el.value;
@@ -1806,29 +1823,43 @@ async function buildValue(nsRoot, el) {
  *  - un objeto { filename, contentType, size, base64 } si es single
  *  - un array de esos objetos si es multiple
  */
-/**
- * Intercepta los <input type="file">.
- * Sube el archivo pesado por HTTP y devuelve el puntero JSON para el WebSocket.
- */
 async function fileInputToJrx(el) {
   const files = [...(el.files || [])];
   if (!files.length) return null;
 
-  // 🚚 Sube el archivo por HTTP (Camión de carga)
-  const uploadFile = async (f) => {
+  // 🚚 Sube el archivo por HTTP (Camión de carga con velocímetro)
+  const uploadFile = (f) => new Promise((resolve, reject) => {
       const formData = new FormData();
       formData.append("file", f);
       
-      const res = await fetch('/jrx/upload', {
-          method: 'POST',
-          body: formData
-      });
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', '/api/upload', true); // Apuntando al nuevo endpoint seguro
+
+      // 🔥 LA MAGIA: El velocímetro que avisa a la barra de progreso
+      xhr.upload.onprogress = (e) => {
+          if (e.lengthComputable) {
+              const percent = Math.round((e.loaded / e.total) * 100);
+              
+              // Disparamos el evento que el componente JFileUpload está esperando
+              el.dispatchEvent(new CustomEvent('jrx:upload:progress', {
+                  detail: { percent: percent, fileName: f.name },
+                  bubbles: true
+              }));
+          }
+      };
+
+      xhr.onload = () => {
+          if (xhr.status >= 200 && xhr.status < 300) {
+              // 📨 Retorna el JSON {fileId, name, tempPath...}
+              resolve(JSON.parse(xhr.responseText));
+          } else {
+              reject(new Error("Fallo HTTP: " + xhr.status));
+          }
+      };
       
-      if (!res.ok) throw new Error("Fallo la subida del archivo por HTTP");
-      
-      // 📨 Retorna el JSON {fileId, name, tempPath...}
-      return await res.json(); 
-  };
+      xhr.onerror = () => reject(new Error("Error de red subiendo archivo"));
+      xhr.send(formData);
+  });
 
   // Subimos todos los archivos en paralelo
   const mapped = await Promise.all(files.map(uploadFile));
@@ -1989,13 +2020,15 @@ function setupEventBindings(root = document) {
 		    }
 	
 		
-	startLoading();
+	
 
     const paramList = (rawParams || '').split(',').map(p => p.trim()).filter(Boolean);
     const args = [];
     for (const p of paramList) {
       args.push(await buildValue(p, el));
     }
+	
+	startLoading();
 	
 	if (window.JRX && window.JRX.config && window.JRX.config.debug) {
 	  JrxDevTools.logCall(qualified, args);

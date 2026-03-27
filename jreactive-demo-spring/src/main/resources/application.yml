@@ -3,6 +3,12 @@
 # ==========================================
 server:
   port: 8080
+  
+spring:
+  servlet:
+    multipart:
+      max-file-size: -1
+      max-request-size: -1  
 
 jreactive:
   # En DEV usamos RAM: es rápido, no requiere instalar Redis y limpia todo al reiniciar.
@@ -27,7 +33,7 @@ spring:
       on-profile: prod
   threads:
     virtual:
-      enabled: true    
+      enabled: true     
 
 jreactive:
   # En PROD usamos Híbrido: Velocidad de RAM + Persistencia de Redis

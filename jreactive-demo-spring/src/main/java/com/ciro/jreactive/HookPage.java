@@ -7,20 +7,32 @@ import com.ciro.jreactive.router.Route;
 @Route(path = "/hook-test")
 public class HookPage extends AppPage {
 
-    @Override
+	@Override
     protected String template() {
         return """
-            <h1>Prueba Local (Paquete)</h1>
+            <div style="padding: 20px; font-family: sans-serif; max-width: 600px;">
+                <h1>🪝 Prueba del Escudo Híbrido JS</h1>
 
-            <div 
-                client:mount="HookPage_mount(this)" 
-                client:unmount="HookPage_unmount(this)"
-            >
-                Soy un componente con JS encapsulado.
+                <h3>Prueba 1: Función Global (Modo Estricto CSP)</h3>
+                <div 
+                    client:mount="window.HookPage_mountLimpio" 
+                    client:unmount="window.HookPage_unmountLimpio"
+                    style="background: #f8f9fa; margin-bottom: 20px;"
+                >
+                    Esperando hook global...
+                </div>
+                
+                <h3>Prueba 2: JS Inline crudo (Modo Flexible)</h3>
+                <div 
+                    client:mount="this.style.border='5px dashed red'; this.style.padding='20px'; this.innerHTML += '<br><strong>✅ JS Inline ejecutado usando new Function</strong>';"
+                    style="background: #f8f9fa;"
+                >
+                    Esperando hook inline...
+                </div>
+                
+                <hr style="margin-top: 30px;"/>
+                <a href="/" data-router>⬅️ Volver</a>
             </div>
-            
-            <hr/>
-            <a href="/" data-router>⬅️ Volver</a>
         """;
     }
 }

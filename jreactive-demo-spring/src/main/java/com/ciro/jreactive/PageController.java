@@ -103,7 +103,7 @@ public class PageController {
     
     
  // 🔥 La nueva tubería pesada (HTTP Multipart)
-    @PostMapping(value = "/jrx/upload", produces = MediaType.APPLICATION_JSON_VALUE)
+    @PostMapping(value = "/api/upload", produces = MediaType.APPLICATION_JSON_VALUE)
     @ResponseBody
     public Map<String, Object> handleUpload(@RequestParam("file") org.springframework.web.multipart.MultipartFile file) {
         try {
