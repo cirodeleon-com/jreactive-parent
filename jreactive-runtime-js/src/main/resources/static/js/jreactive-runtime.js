@@ -1799,38 +1799,39 @@ async function buildValue(nsRoot, el) {
 
 
 // Lee un File como base64 (sin el prefijo data:...)
-function readFileAsBase64(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const result = reader.result || '';
-      const commaIdx = result.indexOf(',');
-      // nos quedamos solo con la parte base64 pura
-      const base64 = commaIdx >= 0 ? result.slice(commaIdx + 1) : result;
-      resolve(base64);
-    };
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
-  });
-}
+
 
 /**
  * Convierte un <input type="file"> en:
  *  - un objeto { filename, contentType, size, base64 } si es single
  *  - un array de esos objetos si es multiple
  */
+/**
+ * Intercepta los <input type="file">.
+ * Sube el archivo pesado por HTTP y devuelve el puntero JSON para el WebSocket.
+ */
 async function fileInputToJrx(el) {
   const files = [...(el.files || [])];
   if (!files.length) return null;
 
-  const mapped = await Promise.all(
-    files.map(async f => ({
-      name:    f.name,
-      contentType: f.type || 'application/octet-stream',
-      size:        f.size,
-      base64:      await readFileAsBase64(f)
-    }))
-  );
+  // 🚚 Sube el archivo por HTTP (Camión de carga)
+  const uploadFile = async (f) => {
+      const formData = new FormData();
+      formData.append("file", f);
+      
+      const res = await fetch('/jrx/upload', {
+          method: 'POST',
+          body: formData
+      });
+      
+      if (!res.ok) throw new Error("Fallo la subida del archivo por HTTP");
+      
+      // 📨 Retorna el JSON {fileId, name, tempPath...}
+      return await res.json(); 
+  };
+
+  // Subimos todos los archivos en paralelo
+  const mapped = await Promise.all(files.map(uploadFile));
 
   return el.multiple ? mapped : mapped[0] ?? null;
 }

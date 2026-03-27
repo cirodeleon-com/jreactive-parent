@@ -31,7 +31,7 @@ public abstract class HtmlComponent extends ViewLeaf implements java.io.Serializ
 	private volatile long _version = 0;
 
     private Map<String, ReactiveVar<?>> map;
-    private ComponentEngine.Rendered cached;
+    private transient ComponentEngine.Rendered cached;
     private final List<HtmlComponent> _children = new ArrayList<>();
  
 
@@ -376,24 +376,22 @@ private final  Map<String, String> _childRefAlias = new HashMap<>();
 
     @Override
     public String render() {
-        // 1. Si ya está en caché, lo devolvemos (O(1))
         if (cached != null) return cached.html();
 
-        synchronized (this) {
-            if (cached != null) return cached.html();
+        getLock().lock(); // 🔒 Usamos el cerrojo universal del componente
+        try {
+            // Doble validación por si otro hilo ya lo renderizó mientras esperábamos
+            if (cached != null) return cached.html(); 
 
-            // 🔥 AOT FIX: arrancamos ciclo de render (pool + rebuild children)
             _beginRenderCycle();
             try {
-                // 🔥 Eliminamos todo el bloque de "Fast Path AOT"
-                // Y dejamos que el ComponentEngine haga el trabajo (ahora cacheado y ultra rápido)
-                
                 this.cached = ComponentEngine.render(this);
                 return cached.html();
-
             } finally {
                 _endRenderCycle();
             }
+        } finally {
+            getLock().unlock(); // 🔓 Liberamos siempre, pase lo que pase
         }
     }
 
@@ -531,7 +529,7 @@ private final  Map<String, String> _childRefAlias = new HashMap<>();
                     }
     
                     rx.set(newValue);
-                    
+                    //this.cached = null;
                 } catch (Exception e) {
                     System.err.println("Error Smart-Sync '" + key + "': " + e.getMessage());
                 }

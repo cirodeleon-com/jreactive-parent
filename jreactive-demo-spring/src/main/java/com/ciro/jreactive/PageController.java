@@ -100,4 +100,31 @@ public class PageController {
 
         return path.isBlank() ? "/" : path;
     }
+    
+    
+ // 🔥 La nueva tubería pesada (HTTP Multipart)
+    @PostMapping(value = "/jrx/upload", produces = MediaType.APPLICATION_JSON_VALUE)
+    @ResponseBody
+    public Map<String, Object> handleUpload(@RequestParam("file") org.springframework.web.multipart.MultipartFile file) {
+        try {
+            // 1. Generar ID único y ruta en la carpeta temporal del sistema operativo
+            String fileId = java.util.UUID.randomUUID().toString();
+            java.io.File tempFile = java.io.File.createTempFile("jrx_" + fileId, ".tmp");
+            
+            // 2. Guardar directo a disco (¡Fuera de la RAM de Java!)
+            file.transferTo(tempFile);
+
+            // 3. Devolver la "mochila" JSON que el JS empujará por el WebSocket
+            return Map.of(
+                "fileId", fileId,
+                "name", file.getOriginalFilename() != null ? file.getOriginalFilename() : "unknown",
+                "contentType", file.getContentType() != null ? file.getContentType() : "application/octet-stream",
+                "size", file.getSize(),
+                "tempPath", tempFile.getAbsolutePath()
+            );
+        } catch (Exception e) {
+            throw new RuntimeException("Error subiendo archivo en JReactive", e);
+        }
+    }
+    
 }

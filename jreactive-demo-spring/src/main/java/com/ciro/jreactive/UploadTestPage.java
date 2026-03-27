@@ -8,8 +8,8 @@ import com.ciro.jreactive.router.Route;
 @Route(path = "/uploadTest")
 public class UploadTestPage extends AppPage {
 
-    @State
-    JrxFile state = new JrxFile("","",0,"");
+	@State
+    public JrxFile state = new JrxFile("", "", "", 0, "");
     
     @State
     int clickCount = 0;
@@ -19,32 +19,23 @@ public class UploadTestPage extends AppPage {
     @Override
     protected String template() {
         return """
-            <h1>Subir archivo</h1>
-
-           
-              <input type="file"
-                   name="file"
-                   @change="handleUpload(file)"
-                   @click="trackClick(file)" />
-              
+            <h1>Subir archivo reactivo</h1>
+            <input type="file" name="file" @change="handleUpload(file)" @click="trackClick(file)"/>
             
-
-            <p>Último archivo: {{state.name}}</p>
-            <p>Tamaño: {{state.size}}</p>
-            <p>Content: {{state.base64}}</p>
-            <p><strong>Clicks en el input:</strong> {{clickCount}}</p>
+            <p>Último archivo: <strong>{{state.name}}</strong></p>
+            <p>Tamaño: {{state.size}} bytes</p>
+            <p>clicks: {{clickCount}}</p>
+            <p>Ruta Temporal Segura: <code style="color: green;">{{state.tempPath}}</code></p>
             """;
     }
 
     @Call
     public void handleUpload(JrxFile file) {
-        if (file == null) {
-            return;
-        }
+        if (file == null) return;
         
-        
-        state = new JrxFile(file.name(),file.contentType(),file.size(),file.base64());
-        
+        // ¡Magia! El developer ya lo tiene listo para guardar
+        System.out.println("Archivo listo en: " + file.tempPath());
+        this.state = file;
     }
     
     @Call
@@ -52,6 +43,5 @@ public class UploadTestPage extends AppPage {
         // el parámetro "file" aquí te puede llegar null la primera vez,
         // pero no lo necesitamos; solo contamos clicks
         clickCount++;
-        updateState("clickCount");
     }
 }
