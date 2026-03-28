@@ -96,6 +96,7 @@ public class HomePage extends AppPage {
               <div class="grid-dashboard">
                   
                   <JCard title="🕹️ Core & Estado" subtitle="Manejo de reactividad base">
+                      <a class="nav-link" href="/multiplayer" data-router><span class="nav-icon">🌐</span> Sala Multijugador</a>
                       <a class="nav-link" href="/two" data-router><span class="nav-icon">🪆</span> Slots Anidados</a>
                       <a class="nav-link" href="/newStateTest" data-router><span class="nav-icon">📦</span> Estado Clásico</a>
                       <a class="nav-link" href="/store-test" data-router><span class="nav-icon">🌍</span> Store Global</a>

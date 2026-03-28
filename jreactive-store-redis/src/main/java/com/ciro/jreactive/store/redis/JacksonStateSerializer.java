@@ -23,6 +23,17 @@ public class JacksonStateSerializer implements StateSerializer {
                 .build();
         
         this.mapper.activateDefaultTyping(ptv, ObjectMapper.DefaultTyping.NON_FINAL, JsonTypeInfo.As.PROPERTY);
+        
+        this.mapper.setAnnotationIntrospector(new com.fasterxml.jackson.databind.introspect.JacksonAnnotationIntrospector() {
+            @Override
+            public boolean hasIgnoreMarker(com.fasterxml.jackson.databind.introspect.AnnotatedMember m) {
+                if (m.hasAnnotation(com.ciro.jreactive.annotations.Shared.class)) {
+                    return true; // Lo trata como si tuviera un @JsonIgnore
+                }
+                return super.hasIgnoreMarker(m);
+            }
+        });
+        
     }
 
     @Override

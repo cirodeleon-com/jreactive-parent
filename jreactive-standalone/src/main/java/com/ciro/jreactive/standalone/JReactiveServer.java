@@ -2,6 +2,7 @@ package com.ciro.jreactive.standalone;
 
 import com.ciro.jreactive.CallGuard;
 import com.ciro.jreactive.JrxHubManager; // <--- Importar
+import com.ciro.jreactive.LocalMessageBroker;
 import com.ciro.jreactive.PageResolver;
 import com.ciro.jreactive.store.CaffeineStateStore;
 import com.ciro.jreactive.store.StateStore;
@@ -48,7 +49,7 @@ public class JReactiveServer {
         this.mapper = ObjectMapperFactory.create();
 
         // 👇 Inicializar el HubManager aquí
-        this.hubManager = new JrxHubManager(pageResolver, mapper, null);
+        this.hubManager = new JrxHubManager(pageResolver, mapper, new LocalMessageBroker());
 
         Validator validator;
         try {

@@ -19,6 +19,7 @@ public class RedisMessageBroker implements JrxMessageBroker {
 
     private static final String CHANNEL_PREFIX = "jrx:upd:";
     private static final String CHANNEL_PATTERN = "jrx:upd:*";
+    private static final String SHARED_PREFIX = "jrx:shared:"; // Para la Base de Datos
 
     public RedisMessageBroker(String host, int port) {
         this.pool = new JedisPool(host, port);
@@ -77,5 +78,49 @@ public class RedisMessageBroker implements JrxMessageBroker {
     @Override
     public void onMessage(BiConsumer<String, String> handler) {
         this.handler = handler;
+    }
+    
+    @Override
+    public void publishShared(String topic, String message) {
+        try (Jedis jedis = pool.getResource()) {
+            // Publicamos a la red Pub/Sub. El canal será "jrx:upd:shared:{topic}"
+            // para que el hilo escuchador lo reciba y lo dirija al distributeRemoteMessage.
+            String envelope = serverId + "|" + message;
+            jedis.publish(CHANNEL_PREFIX + "shared:" + topic, envelope);
+        } catch (Exception e) {
+            System.err.println("❌ Error publicando a tópico compartido: " + e.getMessage());
+        }
+    }
+
+    @Override
+    public void saveSharedState(String topic, String varName, Object value) {
+        try (Jedis jedis = pool.getResource()) {
+            // 💾 Guardamos la copia maestra en un Hash de Redis
+            // HSET jrx:shared:sala-1 chat "[...]"
+            
+            // Usamos un serializador de JSON crudo (o FST si lo tuviéramos)
+            // Por simplicidad, asumo que el valor ya puede ser JSON o string,
+            // pero para estar seguros, lo convertiremos a String (Jackson)
+            com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+            String jsonValue = mapper.writeValueAsString(value);
+            
+            jedis.hset(SHARED_PREFIX + topic, varName, jsonValue);
+            
+            // Le damos una vida de 24 horas por si la sala queda inactiva
+            jedis.expire(SHARED_PREFIX + topic, 86400);
+        } catch (Exception e) {
+            System.err.println("❌ Error guardando estado compartido: " + e.getMessage());
+        }
+    }
+
+    @Override
+    public java.util.Map<String, String> getSharedState(String topic) {
+        try (Jedis jedis = pool.getResource()) {
+            // 🔄 Obtenemos todas las variables de la sala de un solo golpe
+            return jedis.hgetAll(SHARED_PREFIX + topic);
+        } catch (Exception e) {
+            System.err.println("❌ Error leyendo estado compartido: " + e.getMessage());
+            return java.util.Map.of();
+        }
     }
 }

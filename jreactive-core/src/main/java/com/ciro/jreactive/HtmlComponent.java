@@ -20,6 +20,7 @@ import java.util.Collection;
 import java.util.Objects;
 
 import com.ciro.jreactive.annotations.Prop;
+import com.ciro.jreactive.annotations.Shared;
 import com.ciro.jreactive.smart.SmartList;
 import com.ciro.jreactive.smart.SmartSet;
 import com.ciro.jreactive.spi.AccessorRegistry;
@@ -433,6 +434,7 @@ private final  Map<String, String> _childRefAlias = new HashMap<>();
                     // 🔥 MODO DUAL: Escaneamos las 3 anotaciones
                     if (f.isAnnotationPresent(Bind.class) || 
                         f.isAnnotationPresent(State.class) || 
+                        f.isAnnotationPresent(Shared.class) ||
                         f.isAnnotationPresent(Prop.class)) {
                         f.setAccessible(true);
                         list.add(f);
@@ -447,6 +449,7 @@ private final  Map<String, String> _childRefAlias = new HashMap<>();
             Bind bindAnn = f.getAnnotation(Bind.class);
             State stateAnn = f.getAnnotation(State.class);
             Prop propAnn = f.getAnnotation(Prop.class); 
+            Shared sharedAnn = f.getAnnotation(Shared.class);
 
             try {
                 Object raw = f.get(this);
@@ -482,7 +485,7 @@ private final  Map<String, String> _childRefAlias = new HashMap<>();
                 }
 
                 // --- 3. MODO ESTADO: @State (Estado interno) ---
-                if (stateAnn != null) {
+                if (stateAnn != null || sharedAnn != null) {
                     Object smartValue = wrapInSmartType(raw);
                     if (smartValue != raw) {
                         f.set(this, smartValue);
@@ -491,6 +494,29 @@ private final  Map<String, String> _childRefAlias = new HashMap<>();
                     ReactiveVar<Object> srx = new ReactiveVar<>(raw);
                     srx.setGenericType(extractRealType(f.getGenericType()));
                     srx.setActiveGuard(() -> _state() == ComponentState.MOUNTED);
+                    
+                    if (sharedAnn != null) {
+                        String topic = sharedAnn.value().isBlank() ? f.getName() : sharedAnn.value();
+                        
+                        // 🔥 MAGIA: Soporte para salas dinámicas leyendo el estado pre-inyectado
+                        if (topic.contains("{{")) {
+                            java.util.regex.Matcher m = java.util.regex.Pattern.compile("\\{\\{\\s*([\\w.-]+)\\s*}}").matcher(topic);
+                            StringBuilder sb = new StringBuilder();
+                            while (m.find()) {
+                                try {
+                                    Object val = getFieldValueByName(m.group(1));
+                                    // Si la variable existe, la usamos; si no, caemos en un fallback seguro
+                                    m.appendReplacement(sb, val != null ? val.toString() : "global");
+                                } catch (Exception e) {
+                                    m.appendReplacement(sb, "global");
+                                }
+                            }
+                            m.appendTail(sb);
+                            topic = sb.toString();
+                        }
+
+                        srx.setSharedTopic(topic);
+                    }
 
                     srx.onChange(newValue -> {
                         try {
@@ -500,7 +526,10 @@ private final  Map<String, String> _childRefAlias = new HashMap<>();
                         } catch (Exception e) {}
                     });
 
-                    String key = stateAnn.value().isBlank() ? f.getName() : stateAnn.value();
+                    String key = f.getName();
+                    if (stateAnn != null && !stateAnn.value().isBlank()) key = stateAnn.value();
+                    //else if (sharedAnn != null && !sharedAnn.value().isBlank()) key = sharedAnn.value();
+                    
                     map.put(key, srx);
                     stateKeys.add(key); // ✅ Este SÍ va al escáner de cambios
                 }
@@ -572,12 +601,14 @@ private final  Map<String, String> _childRefAlias = new HashMap<>();
                 State stateAnn = f.getAnnotation(State.class);
                 Bind bindAnn = f.getAnnotation(Bind.class);
                 Prop propAnn = f.getAnnotation(Prop.class); // 🔥
+                Shared sharedAnn = f.getAnnotation(Shared.class);
                 
-                if (stateAnn != null || bindAnn != null || propAnn != null) {
+                if (stateAnn != null || bindAnn != null || propAnn != null || sharedAnn != null) {
                     String annVal = "";
                     if (stateAnn != null && !stateAnn.value().isBlank()) annVal = stateAnn.value();
                     else if (bindAnn != null && !bindAnn.value().isBlank()) annVal = bindAnn.value();
                     else if (propAnn != null && !propAnn.value().isBlank()) annVal = propAnn.value();
+                    //else if (sharedAnn != null && !sharedAnn.value().isBlank()) annVal = sharedAnn.value();
                     else annVal = f.getName();
 
                     if (annVal.equals(key)) {

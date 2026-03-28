@@ -14,12 +14,16 @@ public class SmartMap<K, V> extends HashMap<K, V> {
     public SmartMap(Map<? extends K, ? extends V> m) { super(m); }
 
     public record Change(String op, Object key, Object value) {}
+    
+    private transient boolean muted = false;
+    public void mute() { this.muted = true; }
+    public void unmute() { this.muted = false; }
 
     public void subscribe(Consumer<Change> listener) { listeners.add(listener); }
     public void unsubscribe(Consumer<Change> listener) { listeners.remove(listener); }
 
     private void fire(String op, Object key, Object value) {
-        if (listeners.isEmpty()) return;
+        if (muted || listeners.isEmpty()) return;
         Change c = new Change(op, key, value);
         for (Consumer<Change> l : listeners) {
             try { l.accept(c); } catch (Exception e) { e.printStackTrace(); }

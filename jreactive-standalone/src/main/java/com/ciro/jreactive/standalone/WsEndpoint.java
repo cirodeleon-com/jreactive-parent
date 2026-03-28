@@ -90,7 +90,8 @@ public class WsEndpoint {
                     } catch (Exception e) {
                         e.printStackTrace();
                     }
-                }
+                },
+                hubManager != null ? hubManager.getBroker() : null
             );
 
             // Pasamos la sesión genérica

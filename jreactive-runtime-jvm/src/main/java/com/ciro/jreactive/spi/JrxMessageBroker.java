@@ -1,5 +1,6 @@
 package com.ciro.jreactive.spi;
 
+import java.util.Map;
 import java.util.function.BiConsumer;
 
 public interface JrxMessageBroker {
@@ -10,4 +11,8 @@ public interface JrxMessageBroker {
     // Registrar un callback global para procesar mensajes entrantes de cualquier sesión
     // handler.accept(sessionId, messagePayload)
     void onMessage(BiConsumer<String, String> handler);
+    
+    void publishShared(String topic, String message);
+    void saveSharedState(String topic, String varName, Object value);
+    Map<String, String> getSharedState(String topic);
 }

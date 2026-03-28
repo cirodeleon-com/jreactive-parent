@@ -46,5 +46,12 @@ public class JReactiveAutoConfiguration {
     		@Autowired(required = false) com.ciro.jreactive.spi.JrxMessageBroker broker) {
         return new JrxHubManager(pageResolver, mapper,broker);
     }
+    
+    @Bean
+    @ConditionalOnMissingBean(com.ciro.jreactive.spi.JrxMessageBroker.class)
+    public com.ciro.jreactive.spi.JrxMessageBroker localMessageBroker() {
+        System.out.println("🚀 JReactive: Iniciando LocalMessageBroker (RAM Multijugador)");
+        return new com.ciro.jreactive.LocalMessageBroker(); // 👈 Cambio de paquete
+    }
 
 }

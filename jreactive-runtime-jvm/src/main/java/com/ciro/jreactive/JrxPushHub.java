@@ -52,6 +52,7 @@ public class JrxPushHub {
     private final String sessionId;
     private HtmlComponent pageInstance;
     private final transient Runnable persistenceCallback;
+    
 
     public JrxPushHub(HtmlComponent root, ObjectMapper mapper, int maxBuffer, JrxMessageBroker broker, String sessionId, Runnable persistenceCallback) {
     	this.pageInstance = root;
@@ -62,6 +63,9 @@ public class JrxPushHub {
         this.persistenceCallback = persistenceCallback;
         // 👇 Esto llenará bindings Y owners
         this.bindings = collect(root); 
+        
+        hydrateFromBroker();
+        
         setupListeners();
         
     }
@@ -73,6 +77,22 @@ public class JrxPushHub {
 
             Runnable unsub = rv.onChange(val -> {
                 updateSmartSubscription(k, val);
+                
+             // 📢 MAGIA MULTIJUGADOR: Sincronización Global
+                String topic = rv.getSharedTopic(); // Usamos 'rv' porque 'v' de la firma es el valor inicial
+                if (topic != null) {
+                    try {
+                        String payload = mapper.writeValueAsString(Map.of("k", k, "v", val));
+                        if (broker != null) {
+                            // 1. Publicar a todos los conectados
+                            broker.publishShared(topic, payload);
+                            // 2. Guardar la copia maestra
+                            broker.saveSharedState(topic, k, val);
+                        }
+                    } catch (Exception e) {
+                        System.err.println("Error serializando variable compartida: " + k);
+                    }
+                }
                 
                 // 🔥 FIX PARETO: Fuera el if/else.
                 // Enviamos el cambio tal cual (k, val).
@@ -426,6 +446,156 @@ public class JrxPushHub {
         return true; // Changed
     }
 
-    // ... findField remains the same ...
+    public void injectSharedState(String topicName, String messagePayload) {
+        try {
+            Map<String, Object> m = mapper.readValue(messagePayload, Map.class);
+            String varName = (String) m.get("k");
+            Object newValue = m.get("v");
+
+            // Limpiamos el namespace si viene largo ("Componente.variable" -> "variable")
+            String cleanVarName = varName;
+            if (cleanVarName.contains(".")) {
+                cleanVarName = cleanVarName.substring(cleanVarName.lastIndexOf('.') + 1);
+            }
+
+            for (Map.Entry<String, ReactiveVar<?>> entry : bindings.entrySet()) {
+                @SuppressWarnings("unchecked")
+                ReactiveVar<Object> rv = (ReactiveVar<Object>) entry.getValue();
+
+                if (topicName.equals(rv.getSharedTopic()) && entry.getKey().endsWith(cleanVarName)) {
+                    java.lang.reflect.Type targetType = rv.getGenericType();
+                    Object currentVal = rv.get();
+                    if (targetType == null) targetType = (currentVal != null) ? currentVal.getClass() : Object.class;
+
+                    Object converted = mapper.convertValue(newValue, mapper.constructType(targetType));
+
+                    if (currentVal instanceof SmartList currentList && converted instanceof java.util.List list) {
+                        if (!currentList.equals(list)) {
+                            currentList.mute();
+                            currentList.clear();
+                            @SuppressWarnings("unchecked")
+                            java.util.List<Object> safeList = (java.util.List<Object>) list;
+                            currentList.addAll(safeList);
+                            currentList.unmute();
+
+                            rv.set(currentList);
+                        }
+                    }
+                    else if (currentVal instanceof SmartMap currentMap && converted instanceof java.util.Map map) {
+                        if (!currentMap.equals(map)) {
+                            currentMap.mute();
+                            currentMap.clear();
+                            @SuppressWarnings("unchecked")
+                            java.util.Map<Object, Object> safeMap = (java.util.Map<Object, Object>) map;
+                            currentMap.putAll(safeMap);
+                            currentMap.unmute();
+
+                            rv.set(currentMap);
+                        }
+                    }
+                    else if (currentVal instanceof SmartSet currentSet && converted instanceof java.util.Collection col) {
+                        if (!currentSet.equals(col)) {
+                            currentSet.mute();
+                            currentSet.clear();
+                            @SuppressWarnings("unchecked")
+                            java.util.Collection<Object> safeCol = (java.util.Collection<Object>) col;
+                            currentSet.addAll(safeCol);
+                            currentSet.unmute();
+
+                            rv.set(currentSet);
+                        }
+                    }
+                    else {
+                        if (!Objects.equals(currentVal, converted)) {
+                            rv.set(converted);
+                        }
+                    }
+                }
+            }
+        } catch (Exception e) {
+            System.err.println("⚠️ Error inyectando estado compartido: " + e.getMessage());
+        }
+    }
+    
+    private void hydrateFromBroker() {
+        if (this.broker == null) return;
+
+        Set<String> topics = new HashSet<>();
+        bindings.values().forEach(rv -> {
+            if (rv.getSharedTopic() != null) topics.add(rv.getSharedTopic());
+        });
+
+        for (String topic : topics) {
+            Map<String, String> history = broker.getSharedState(topic);
+            if (history == null || history.isEmpty()) continue;
+
+            for (Map.Entry<String, ReactiveVar<?>> entry : bindings.entrySet()) {
+                @SuppressWarnings("unchecked")
+                ReactiveVar<Object> rv = (ReactiveVar<Object>) entry.getValue();
+
+                if (topic.equals(rv.getSharedTopic())) {
+                    String varName = entry.getKey();
+
+                    String savedJson = history.get(varName);
+                    if (savedJson == null && varName.contains(".")) {
+                        savedJson = history.get(varName.substring(varName.lastIndexOf('.') + 1));
+                    }
+
+                    if (savedJson != null) {
+                        try {
+                            java.lang.reflect.Type targetType = rv.getGenericType();
+                            Object currentVal = rv.get();
+                            if (targetType == null) {
+                                targetType = (currentVal != null) ? currentVal.getClass() : Object.class;
+                            }
+
+                            Object converted = mapper.readValue(savedJson, mapper.constructType(targetType));
+
+                            // ═══════════════════════════════════════════════
+                            // FIX: Mutar el SmartList/Map/Set existente
+                            // en lugar de reemplazarlo con un ArrayList de Jackson.
+                            // Así setupListeners() encontrará el SmartList real
+                            // y podrá suscribirse a sus eventos correctamente.
+                            // ═══════════════════════════════════════════════
+
+                            if (currentVal instanceof SmartList currentList && converted instanceof java.util.List newList) {
+                                currentList.mute();
+                                currentList.clear();
+                                @SuppressWarnings("unchecked")
+                                java.util.List<Object> safeList = (java.util.List<Object>) newList;
+                                currentList.addAll(safeList);
+                                currentList.unmute();
+                                // NO llamamos rv.set() — la referencia no cambió,
+                                // y setupListeners() aún no se ejecutó.
+
+                            } else if (currentVal instanceof SmartMap currentMap && converted instanceof java.util.Map newMap) {
+                                currentMap.mute();
+                                currentMap.clear();
+                                @SuppressWarnings("unchecked")
+                                java.util.Map<Object, Object> safeMap = (java.util.Map<Object, Object>) newMap;
+                                currentMap.putAll(safeMap);
+                                currentMap.unmute();
+
+                            } else if (currentVal instanceof SmartSet currentSet && converted instanceof java.util.Collection newCol) {
+                                currentSet.mute();
+                                currentSet.clear();
+                                @SuppressWarnings("unchecked")
+                                java.util.Collection<Object> safeCol = (java.util.Collection<Object>) newCol;
+                                currentSet.addAll(safeCol);
+                                currentSet.unmute();
+
+                            } else {
+                                // Tipos simples (int, String, boolean): set normal
+                                rv.set(converted);
+                            }
+
+                        } catch (Exception e) {
+                            System.err.println("⚠️ Error hidratando historial de sala: " + e.getMessage());
+                        }
+                    }
+                }
+            }
+        }
+    }
 
 }

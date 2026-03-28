@@ -60,13 +60,24 @@ public class JrxHubManager {
     }
     
     // Este método se dispara cuando Redis dice: "Hubo cambio en la sesión X"
-    private void distributeRemoteMessage(String sessionId, String message) {
-        // Buscamos si tenemos algún Hub local conectado para esa sesión.
-        // Caffeine no indexa por sessionId, así que iteramos (rápido en RAM).
+ // Este método se dispara cuando Redis Pub/Sub recibe un mensaje
+ // Este método se dispara cuando Redis Pub/Sub recibe un mensaje
+    private void distributeRemoteMessage(String targetId, String message) {
+        
+        // 1. MODO MULTIJUGADOR: El destino es una sala pública (Ej: "shared:chat-global")
+        if (targetId.startsWith("shared:")) {
+            String topicName = targetId.substring("shared:".length());
+            
+            // Le pasamos el mensaje a TODOS los WebSockets (Hubs) de este servidor.
+            hubs.asMap().values().forEach(hub -> {
+                hub.injectSharedState(topicName, message);
+            });
+            return; 
+        }
+
+        // 2. MODO SINGLE-PLAYER: El destino es una sesión individual
         hubs.asMap().forEach((key, hub) -> {
-            if (key.sessionId().equals(sessionId)) {
-                // ¡Bingo! El usuario está conectado a este servidor.
-                // Inyectamos el mensaje directo al socket (Fast Path).
+            if (key.sessionId().equals(targetId)) {
                 hub.emitRaw(message);
             }
         });
@@ -127,6 +138,10 @@ public class JrxHubManager {
         JrxPushHub hub = hubs.getIfPresent(key);
         if (hub != null) hub.close();
         hubs.invalidate(key);
+    }
+    
+    public JrxMessageBroker getBroker() {
+        return this.broker;
     }
 
 }

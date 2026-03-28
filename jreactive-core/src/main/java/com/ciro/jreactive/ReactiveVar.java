@@ -15,6 +15,7 @@ public final class ReactiveVar<T> implements java.io.Serializable {
     private volatile BooleanSupplier activeGuard = () -> true;
     
     private transient java.lang.reflect.Type genericType;
+    private transient String sharedTopic = null;
     public java.lang.reflect.Type getGenericType() { return genericType; }
     public void setGenericType(java.lang.reflect.Type genericType) { this.genericType = genericType; }
 
@@ -35,6 +36,11 @@ public final class ReactiveVar<T> implements java.io.Serializable {
         }
     }
     
+    public void setSilent(T newValue) {
+        this.value = newValue;
+        // 🛑 NO disparamos los listeners
+    }
+    
     public void setActiveGuard(BooleanSupplier guard) {
         this.activeGuard = (guard != null) ? guard : () -> true;
     }
@@ -47,4 +53,8 @@ public final class ReactiveVar<T> implements java.io.Serializable {
         listeners.add(listener);
         return () -> listeners.remove(listener);
     }
+    
+    
+    public String getSharedTopic() { return sharedTopic; }
+    public void setSharedTopic(String topic) { this.sharedTopic = topic; }
 }

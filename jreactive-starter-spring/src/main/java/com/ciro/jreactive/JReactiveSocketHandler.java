@@ -63,7 +63,8 @@ public class JReactiveSocketHandler extends TextWebSocketHandler {
             cfg.isEnabledBackpressure(),
             cfg.getMaxQueue(),
             cfg.getFlushIntervalMs(),
-            saveStrategy
+            saveStrategy,
+            hubManager != null ? hubManager.getBroker() : null
         );
     }
 

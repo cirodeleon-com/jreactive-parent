@@ -14,12 +14,16 @@ public class SmartSet<E> extends HashSet<E> {
     public SmartSet(Collection<? extends E> c) { super(c); }
 
     public record Change(String op, Object item) {}
+    
+    private transient boolean muted = false;
+    public void mute() { this.muted = true; }
+    public void unmute() { this.muted = false; }
 
     public void subscribe(Consumer<Change> listener) { listeners.add(listener); }
     public void unsubscribe(Consumer<Change> listener) { listeners.remove(listener); }
 
     private void fire(String op, Object item) {
-        if (listeners.isEmpty()) return;
+        if (muted || listeners.isEmpty()) return;
         Change c = new Change(op, item);
         for (Consumer<Change> l : listeners) {
             try { l.accept(c); } catch (Exception e) { e.printStackTrace(); }

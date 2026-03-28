@@ -1,6 +1,7 @@
 package com.ciro.jreactive;
 
 import com.ciro.jreactive.smart.*;
+import com.ciro.jreactive.spi.JrxMessageBroker;
 import com.ciro.jreactive.spi.JrxSession;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
@@ -25,6 +26,7 @@ public class JrxProtocolHandler {
     private final boolean backpressureEnabled;
     private final int maxQueue, flushIntervalMs;
     private final transient Runnable persistenceCallback;
+    private final JrxMessageBroker broker;
     
     // Backpressure Queues
     private final ConcurrentLinkedQueue<Event> queue = new ConcurrentLinkedQueue<>();
@@ -45,7 +47,7 @@ public class JrxProtocolHandler {
 
     public JrxProtocolHandler(ViewNode root, ObjectMapper m,
                               ScheduledExecutorService s, boolean bp, int mq, int fi, 
-                              Runnable persistenceCallback) {
+                              Runnable persistenceCallback, JrxMessageBroker broker) {
         
         this.mapper = m; 
         this.scheduler = s; 
@@ -53,6 +55,7 @@ public class JrxProtocolHandler {
         this.maxQueue = mq; 
         this.flushIntervalMs = fi;
         this.persistenceCallback = persistenceCallback;
+        this.broker = broker;
         
         // 1. Collect bindings & map owners
         this.bindings = collect(root); 
@@ -65,6 +68,18 @@ public class JrxProtocolHandler {
             // 🔥 FIX: Flujo unificado SSR y CSR.
             disposables.add(v.onChange(val -> {
                 updateSmartSubscription(k, val);
+                
+                String topic = v.getSharedTopic();
+                if (topic != null && this.broker != null) {
+                    try {
+                        String payload = mapper.writeValueAsString(Map.of("k", k, "v", val));
+                        this.broker.publishShared(topic, payload);
+                        this.broker.saveSharedState(topic, k, val);
+                    } catch (Exception e) {
+                        log.error("Error serializando variable compartida: " + k, e);
+                    }
+                }
+                
                 broadcast(k, val); // Snapshot normal
                 
                 if (this.persistenceCallback != null) {
@@ -86,23 +101,49 @@ public class JrxProtocolHandler {
         
         Runnable next = null;
         if (val instanceof SmartList<?> l) { 
-            Consumer<SmartList.Change> c = ch -> broadcastDelta(key, "list", ch); 
+        	Consumer<SmartList.Change> c = ch -> {
+                publishSmartCollectionToBroker(key, val); // 📢 NUEVO: Avisa al Multijugador
+                broadcastDelta(key, "list", ch); 
+            }; 
             l.subscribe(c); 
             next = () -> l.unsubscribe(c); 
         }
         else if (val instanceof SmartMap<?,?> m) { 
-            Consumer<SmartMap.Change> c = ch -> broadcastDelta(key, "map", ch); 
+        	Consumer<SmartMap.Change> c = ch -> {
+                publishSmartCollectionToBroker(key, val);
+                broadcastDelta(key, "map", ch); 
+            }; 
             m.subscribe(c); 
             next = () -> m.unsubscribe(c); 
         }
         else if (val instanceof SmartSet<?> s) { 
-            Consumer<SmartSet.Change> c = ch -> broadcastDelta(key, "set", ch); 
+        	Consumer<SmartSet.Change> c = ch -> {
+                publishSmartCollectionToBroker(key, val);
+                broadcastDelta(key, "set", ch); 
+            };
             s.subscribe(c); 
             next = () -> s.unsubscribe(c); 
         }
         
         if (next != null) activeSmartCleanups.put(key, next);
     }
+    
+    private void publishSmartCollectionToBroker(String key, Object fullCollection) {
+        if (this.broker == null) return;
+        ReactiveVar<?> rv = bindings.get(key);
+        if (rv == null) return;
+        
+        String topic = rv.getSharedTopic();
+        if (topic != null) {
+            try {
+                String payload = mapper.writeValueAsString(Map.of("k", key, "v", fullCollection));
+                this.broker.publishShared(topic, payload);
+                this.broker.saveSharedState(topic, key, fullCollection);
+            } catch (Exception e) {}
+        }
+    }
+    
+    
 
     // --- Incoming Message Handling ---
 
