@@ -10,6 +10,7 @@ public class TemplateContext {
     private final Map<String, Object> localVars;
     private final TemplateContext parent;
     private final HtmlComponent component; 
+    private static final java.util.Set<Class<?>> WARNED_CLASSES = java.util.concurrent.ConcurrentHashMap.newKeySet();
 
     public TemplateContext(HtmlComponent component) {
         this.component = component;
@@ -68,6 +69,31 @@ public class TemplateContext {
                 return checkSize(baseVal, path);
             }
             return val; // Null si no existe o es nulo
+        }
+        
+     // ------------------------------------------------------------------
+        // 2.5 🔥 FALLBACK DE REFLEXIÓN (Plan B Amigable)
+        // ------------------------------------------------------------------
+        ReactiveVar<?> rx = component.getRawBindings().get(root);
+        if (rx != null) {
+            if (WARNED_CLASSES.add(component.getClass())) {
+                System.err.println("⚠️ [JReactive] ADVERTENCIA: Ejecutando '" + component.getClass().getSimpleName() + "' en modo Reflexión (Lento). Activa el procesador AOT para producción.");
+            }
+
+            Object value = rx.get();
+            if (parts.length > 1) {
+                for (int i = 1; i < parts.length; i++) {
+                    // 🔥 NUEVO: Interceptar .size y .length antes de buscar la propiedad
+                    String part = parts[i];
+                    if (i == parts.length - 1 && (part.equals("size") || part.equals("length"))) {
+                        return getSize(value);
+                    }
+                    
+                    value = getProperty(value, part);
+                    if (value == null) break;
+                }
+            }
+            return checkSize(value, path);
         }
 
         // 3. Fallback a padres (Por si usas variables heredadas en Slots)

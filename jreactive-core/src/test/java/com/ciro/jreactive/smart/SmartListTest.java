@@ -66,4 +66,53 @@ class SmartListTest {
         assertThat(events.get(0).index()).isEqualTo(0);
         assertThat(events.get(0).item()).isEqualTo("Z");
     }
+    
+    @Test
+    @DisplayName("Debe emitir eventos REMOVE individuales al usar removeIf")
+    void testRemoveIf() {
+        SmartList<Integer> list = new SmartList<>(List.of(1, 2, 3, 4, 10));
+        List<SmartList.Change> eventos = new ArrayList<>();
+        list.subscribe(eventos::add);
+
+        // Act: Removemos los números pares (2, 4, 10)
+        list.removeIf(n -> n % 2 == 0);
+
+        // Assert: Debió disparar 3 eventos REMOVE
+        assertThat(list).containsExactly(1, 3);
+        assertThat(eventos).filteredOn(e -> e.op().equals("REMOVE")).hasSize(3);
+    }
+
+    @Test
+    @DisplayName("Debe emitir eventos correctos al usar addAll y removeAll")
+    void testBulkOperations() {
+        SmartList<String> list = new SmartList<>(List.of("A", "B"));
+        List<SmartList.Change> eventos = new ArrayList<>();
+        list.subscribe(eventos::add);
+
+        // Act 1: Agregar varios elementos
+        list.addAll(List.of("C", "D"));
+        assertThat(eventos).filteredOn(e -> e.op().equals("ADD")).hasSize(2);
+
+        // Act 2: Remover varios elementos
+        list.removeAll(List.of("A", "C"));
+        assertThat(list).containsExactly("B", "D");
+        assertThat(eventos).filteredOn(e -> e.op().equals("REMOVE")).hasSize(2);
+    }
+    
+    @Test
+    @DisplayName("No debe emitir eventos si la lista está muteada")
+    void testMuteUnmute() {
+        SmartList<String> list = new SmartList<>();
+        List<SmartList.Change> eventos = new ArrayList<>();
+        list.subscribe(eventos::add);
+
+        list.mute(); // Silencio total 🤫
+        list.add("Invisible");
+
+        assertThat(eventos).isEmpty();
+        
+        list.unmute();
+        list.add("Visible");
+        assertThat(eventos).hasSize(1);
+    }
 }
