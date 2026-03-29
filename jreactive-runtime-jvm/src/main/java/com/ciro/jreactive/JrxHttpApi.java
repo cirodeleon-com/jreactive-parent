@@ -43,7 +43,9 @@ public class JrxHttpApi {
         String urlParamsJson = "{}";
         try {
             urlParamsJson = objectMapper.writeValueAsString(page._getUrlBindings());
-        } catch (Exception ignored) {}
+        } catch (Exception e) {
+        	System.err.println("⚠️ [JReactive] Error serializando los @UrlParam de la página: " + e.getMessage());
+        }
         String script = "<script>window.__JRX_URL_PARAMS__ = " + urlParamsJson + ";</script>";
 
         // 1. Si es petición parcial (AJAX/SPA), devolvemos el script + la página
@@ -405,7 +407,7 @@ public class JrxHttpApi {
                         field.setAccessible(true);
                         field.set(owner, arg); // 🔄 Inyección Quirúrgica
                         inyectado = true;
-                        System.out.println("✅ [JRX-BIND] Inyección segura por nombre en: " + field.getName() + " (Clase: " + clazz.getSimpleName() + ")");
+                        //System.out.println("✅ [JRX-BIND] Inyección segura por nombre en: " + field.getName() + " (Clase: " + clazz.getSimpleName() + ")");
                         break; 
                     }
                 } catch (NoSuchFieldException e) {
@@ -418,10 +420,11 @@ public class JrxHttpApi {
                 // ⬆️ Subimos un nivel en la jerarquía
                 clazz = clazz.getSuperclass();
             }
-            
+            /*
             if (!inyectado) {
                 System.err.println("⚠️ [JRX-BIND] No se inyectó el argumento '" + targetName + "' (No se encontró un @State con ese nombre exacto o los tipos no coinciden).");
             }
+            */
         }
     }
 

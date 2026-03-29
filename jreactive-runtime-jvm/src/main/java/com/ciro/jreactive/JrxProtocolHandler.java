@@ -139,7 +139,9 @@ public class JrxProtocolHandler {
                 String payload = mapper.writeValueAsString(Map.of("k", key, "v", fullCollection));
                 this.broker.publishShared(topic, payload);
                 this.broker.saveSharedState(topic, key, fullCollection);
-            } catch (Exception e) {}
+            } catch (Exception e) {
+            	log.error("❌ [JReactive] Error publicando colección inteligente al Broker para topic '{}': {}", topic, e.getMessage());
+            }
         }
     }
     
@@ -176,7 +178,7 @@ public class JrxProtocolHandler {
                 }
             }
         } catch (Exception e) { 
-            log.error("Protocol error processing message", e); 
+        	log.error("❌ [JReactive Protocol] Error crítico procesando mensaje entrante (Payload: " + payload + ")", e);
         }
     }
 
@@ -359,10 +361,13 @@ public class JrxProtocolHandler {
                     s.sendText(m); 
                     return false; 
                 } catch(Exception e){
+                	log.warn("⚠️ Error enviando texto a sesión {}: {}", s.getId(), e.getMessage());
                     return true;
                 } 
             }); 
-        } catch(Exception e){}
+        } catch(Exception e){
+        	log.error("❌ Error CRÍTICO serializando payload para la clave '{}'", k, e);
+        }
     }
 
     private String buildM(String k, Object v, DeltaPacket dp) throws IOException {
@@ -445,10 +450,12 @@ public class JrxProtocolHandler {
             sessions.removeIf(s -> {
                 if (!s.isOpen()) return true;
                 try {
-                    // 🔥 Non-blocking send here too
                     s.sendText(pay);
                     return false;
-                } catch (Exception ex) { return true; }
+                } catch (Exception ex) { 
+                    log.warn("⚠️ [JReactive] Error en flush(): No se pudo enviar el lote a la sesión {}. Desconectando. Causa: {}", s.getId(), ex.getMessage());
+                    return true; 
+                }
             });
         } catch (Exception ex) {
             log.error("Flush failed", ex);

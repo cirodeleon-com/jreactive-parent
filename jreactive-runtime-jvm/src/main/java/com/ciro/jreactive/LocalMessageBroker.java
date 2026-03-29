@@ -39,7 +39,9 @@ public class LocalMessageBroker implements JrxMessageBroker {
     public void saveSharedState(String topic, String varName, Object value) {
         try {
             sharedDb.put(topic + "::" + varName, mapper.writeValueAsString(value));
-        } catch (Exception e) {}
+        } catch (Exception e) {
+        	System.err.println("❌ [JReactive LocalBroker] Error guardando estado compartido para '" + varName + "': " + e.getMessage());
+        }
     }
 
     @Override

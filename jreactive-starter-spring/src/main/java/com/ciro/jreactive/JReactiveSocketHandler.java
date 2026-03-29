@@ -147,7 +147,7 @@ public class JReactiveSocketHandler extends TextWebSocketHandler {
                     session.sendMessage(new TextMessage(json));
                 }
             } catch (IOException e) {
-                // Log or ignore
+            	System.err.println("⚠️ [JReactive] Error de E/S enviando texto por Spring WebSocket: " + e.getMessage());
             } finally {
                 lock.unlock();
             }
@@ -158,7 +158,7 @@ public class JReactiveSocketHandler extends TextWebSocketHandler {
             try {
                 session.close();
             } catch (IOException e) {
-                // ignore
+            	System.err.println("⚠️ [JReactive] Error de E/S al llamar a SpringWsWrapper.close : " + e.getMessage());
             }
         }
 

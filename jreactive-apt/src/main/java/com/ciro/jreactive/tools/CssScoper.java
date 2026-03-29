@@ -40,8 +40,9 @@ public class CssScoper {
         try {
             return new CSSWriter(settings).getCSSAsString(aCSS);
         } catch (Exception e) {
-            e.printStackTrace();
-            return "";
+        	throw new RuntimeException("❌ [JReactive APT] Error crítico al minificar o scopear el CSS: " + e.getMessage(), e);
+            //e.printStackTrace();
+            //return "";
         }
     }
 

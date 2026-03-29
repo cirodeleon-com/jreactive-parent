@@ -176,7 +176,9 @@ public class JrxPushHub {
             if (sink.isOpen()) {
                 try {
                     sink.send(json);
-                } catch (Exception ignored) {}
+                } catch (Exception e) {
+                	System.err.println("⚠️ [JReactive] Error en emitRaw() al enviar mensaje a un cliente. Causa: " + e.getMessage());
+                }
             }
         });
     }
@@ -220,7 +222,12 @@ public class JrxPushHub {
             String json = mapper.writeValueAsString(toEnvelope(initial));
             sink.send(json);
         } catch (Exception e) {
-            try { sink.close(); } catch (Exception ignored) {}
+            System.err.println("⚠️ [JReactive] Error al suscribir cliente al Hub. Cerrando conexión inicial. Causa: " + e.getMessage());
+            try { 
+            	sink.close(); 
+            } catch (Exception ex) {
+            	System.err.println("⚠️ [JReactive] Error secundario al forzar cierre del socket defectuoso: " + ex.getMessage());
+            }
             sinks.remove(sink);
             activeSinks.decrementAndGet();
         }
@@ -266,6 +273,7 @@ public class JrxPushHub {
                     "batch", List.of(msg)
             ));
         } catch (Exception ex) {
+        	System.err.println("❌ [JReactive] Error CRÍTICO en JrxPushHub: Falló la serialización JSON de un Delta. ¿Metiste un objeto con referencias circulares en el @State? Error: " + ex.getMessage());
             return;
         }
         

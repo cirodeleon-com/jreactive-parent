@@ -1596,6 +1596,8 @@ function reindexBindings() {
 	        el.addEventListener(evt, async (e) => {
 	            // Evitamos envíos duplicados si el evento nativo burbujea
 	            if (e && e.target !== el) return;
+				
+				if (el.type === 'file') return;
 
 	            el._jrxLastEdit = Date.now();
 	            const keyToSave = el.name || el.id || k; 

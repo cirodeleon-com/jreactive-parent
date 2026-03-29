@@ -38,6 +38,6 @@ public class SimpleRouteRegistry implements RouteProvider {
             }
         }
         // Si llegamos aquí, es un 404
-        throw new RuntimeException("No route found for path: " + path);
+        throw new RuntimeException("❌ [JReactive] Error 404: No route found for path: '" + path + "'. ¿Olvidaste registrarla con server.addRoute()?");
     }
 }

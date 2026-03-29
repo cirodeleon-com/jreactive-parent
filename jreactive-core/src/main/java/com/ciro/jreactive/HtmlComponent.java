@@ -475,9 +475,16 @@ private final  Map<String, String> _childRefAlias = new HashMap<>();
                     prx.onChange(newValue -> {
                         try {
                             f.setAccessible(true);
-                            Object smartNew = wrapInSmartType(newValue);
+                            Object coerced = coerceValue(newValue, f.getType());
+                            Object smartNew = wrapInSmartType(coerced);
                             f.set(this, smartNew);
-                        } catch (Exception e) {}
+                        } catch (IllegalArgumentException ex) {
+                            // 🔥 BLINDAJE: Si el navegador manda basura (ej. "C:\fakepath...") a un objeto complejo, lo descartamos con elegancia.
+                            System.err.println("🛡️ [JReactive] Descartando actualización de '@Prop " + key + "': Incompatibilidad de tipos (" + ex.getMessage() + ")");
+                        } catch (Exception e) {
+                            System.err.println("❌ [JReactive] Error crítico inyectando @Prop '" + key + "': " + e.getMessage());
+                            e.printStackTrace();
+                        }
                     });
                     
                     map.put(key, prx);
@@ -517,27 +524,50 @@ private final  Map<String, String> _childRefAlias = new HashMap<>();
 
                         srx.setSharedTopic(topic);
                     }
+                    
+                    String tempKey = f.getName();
+                    if (stateAnn != null && !stateAnn.value().isBlank()) tempKey = stateAnn.value();
+                    final String stateKey = tempKey;
 
                     srx.onChange(newValue -> {
                         try {
                             f.setAccessible(true); 
-                            Object smartNew = wrapInSmartType(newValue);
+                            Object coerced = coerceValue(newValue, f.getType());
+                            Object smartNew = wrapInSmartType(coerced);
                             f.set(this, smartNew);
-                        } catch (Exception e) {}
+                        } catch (IllegalArgumentException ex) {
+                            // 🔥 BLINDAJE: Si el tipo es incompatible, simplemente ignoramos el dato
+                            System.err.println("🛡️ [JReactive] Descartando actualización de '@State " + stateKey + "': Incompatibilidad de tipos (" + ex.getMessage() + ")");
+                        } catch (Exception e) {
+                            System.err.println("❌ [JReactive] Error crítico inyectando @State '" + stateKey + "': " + e.getMessage());
+                            e.printStackTrace();
+                        }
                     });
 
-                    String key = f.getName();
-                    if (stateAnn != null && !stateAnn.value().isBlank()) key = stateAnn.value();
+                    //String key = f.getName();
+                    //if (stateAnn != null && !stateAnn.value().isBlank()) key = stateAnn.value();
                     //else if (sharedAnn != null && !sharedAnn.value().isBlank()) key = sharedAnn.value();
                     
-                    map.put(key, srx);
-                    stateKeys.add(key); // ✅ Este SÍ va al escáner de cambios
+                    map.put(stateKey, srx);
+                    stateKeys.add(stateKey); // ✅ Este SÍ va al escáner de cambios
                 }
 
             } catch (IllegalAccessException e) {
                 throw new RuntimeException(e);
             }
         }
+    }
+    
+ // 🔥 HELPER: Convierte Strings crudos (del HTML/JS) al tipo real de Java
+    private Object coerceValue(Object value, Class<?> targetType) {
+        if (value instanceof String str) {
+            if (targetType == int.class || targetType == Integer.class) return Integer.valueOf(str);
+            if (targetType == boolean.class || targetType == Boolean.class) return Boolean.valueOf(str);
+            if (targetType == long.class || targetType == Long.class) return Long.valueOf(str);
+            if (targetType == double.class || targetType == Double.class) return Double.valueOf(str);
+            // Puedes agregar Float, Short, etc., si los necesitas en el futuro
+        }
+        return value;
     }
 
     public void _syncState() {

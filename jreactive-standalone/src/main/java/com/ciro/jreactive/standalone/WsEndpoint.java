@@ -47,7 +47,7 @@ public class WsEndpoint {
             try {
                 since = Long.parseLong(sinceParam);
             } catch (NumberFormatException e) {
-                // ignorar
+            	System.err.println("⚠️ [JReactive Standalone] El parámetro 'since' en la conexión WS no es un número válido: " + sinceParam);
             }
         }
 

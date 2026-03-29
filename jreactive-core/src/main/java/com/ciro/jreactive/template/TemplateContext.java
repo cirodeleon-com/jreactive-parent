@@ -150,13 +150,16 @@ public class TemplateContext {
 
     private Method findMethod(Class<?> c, String name) {
         // 1. Nombre exacto (Records: "street()")
-        try { return c.getMethod(name); } catch (Exception e) {}
+        try { return c.getMethod(name); } catch (Exception e) { /* Ignorado por diseño (fallback) */ }
         // 2. Estilo Bean: "getStreet()"
         String getter = "get" + Character.toUpperCase(name.charAt(0)) + name.substring(1);
-        try { return c.getMethod(getter); } catch (Exception e) {}
+        try { return c.getMethod(getter); } catch (Exception e) { /* Ignorado por diseño (fallback) */ }
         // 3. Estilo Boolean: "isUrgent()"
         String isser = "is" + Character.toUpperCase(name.charAt(0)) + name.substring(1);
-        try { return c.getMethod(isser); } catch (Exception e) {}
+        try { return c.getMethod(isser); } catch (Exception e) { /* Ignorado por diseño (fallback) */ }
+        
+        // 🔥 Si llegamos aquí, ninguno funcionó. Dejamos un registro ligero.
+        System.out.println("ℹ️ [JReactive] No se encontró método (getter/record) para '" + name + "' en " + c.getSimpleName());
         return null;
     }
     

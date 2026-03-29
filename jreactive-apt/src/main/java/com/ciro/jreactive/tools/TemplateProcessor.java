@@ -99,12 +99,20 @@ public final class TemplateProcessor extends AbstractProcessor {
                   generateJavaAccessor(clazz, rawHtml, rawCss);
                }
                 
-            } else if (shouldGenerateAccessor(clazz)) {
-            	if (clazz.getAnnotation(Client.class) != null) {
-                    messager.printMessage(Diagnostic.Kind.WARNING, 
-                        "⚠️ [JReactive] No se encontró el HTML para el @Client " + clazz.getSimpleName() + ". El componente aparecerá en blanco.", clazz);
+           } else if (shouldGenerateAccessor(clazz)) {
+                
+                // 1. Verificamos si la clase es abstracta (como AppPage)
+                if (clazz.getModifiers().contains(Modifier.ABSTRACT)) {
+                    // Es normal que no tenga HTML. Generamos su Accessor silenciosamente
+                    // para que sus hijos hereden las propiedades por AOT.
+                    generateJavaAccessor(clazz, rawHtml, rawCss);
+                } else {
+                    // 2. 🔥 AHORA SÍ: Es una clase CONCRETA que el developer va a usar,
+                    // y olvidó su template. ¡Explotamos sin piedad!
+                    messager.printMessage(Diagnostic.Kind.ERROR, 
+                        "❌ [JReactive] ERROR FATAL: No se encontró el template HTML para el componente '" + clazz.getSimpleName() + "'. " +
+                        "Debes sobrescribir el método 'template()' o crear el archivo '" + clazz.getSimpleName() + ".html' en su paquete.", clazz);
                 }
-            	generateJavaAccessor(clazz, rawHtml, rawCss);
             }
         }
         return false;
@@ -327,7 +335,14 @@ public final class TemplateProcessor extends AbstractProcessor {
         }
 
         w.write("            }\n");
-        w.write("        } catch (Exception e) {} // Fallback silencioso si un padre es nulo\n");
+        // 🔥 ELIMINAMOS EL SILENCIO: Si la propiedad no está en el switch, lanzamos error.
+        w.write("            throw new IllegalArgumentException(\"❌ [JReactive] Propiedad '\" + p + \"' no mapeada en \" + t.getClass().getSimpleName());\n");
+        w.write("        } catch (NullPointerException e) {\n");
+        // 🔥 Si intentamos hacer `user.address.street = 'x'` pero `address` es null, explicamos exactamente qué pasó.
+        w.write("            throw new IllegalStateException(\"❌ [JReactive] Intentaste escribir en '\" + p + \"', pero un objeto padre es NULL en \" + t.getClass().getSimpleName(), e);\n");
+        w.write("        } catch (Exception e) {\n");
+        w.write("            throw new RuntimeException(\"❌ [JReactive] Error escribiendo la propiedad '\" + p + \"'\", e);\n");
+        w.write("        }\n");
         w.write("    }\n\n");
     }
 
@@ -345,8 +360,15 @@ public final class TemplateProcessor extends AbstractProcessor {
         }
 
         w.write("            }\n");
-        w.write("        } catch (NullPointerException e) { return null; } // Optional Chaining ultrarrápido\n");
+        // Mantenemos el NullPointerException tragado SOLO para lectura (Esto es el Optional Chaining,
+        // permite que {{user.address.street}} no rompa la pantalla si address es null).
+        w.write("        } catch (NullPointerException e) { return null; } \n");
+        // Pero si es CUALQUIER otro error (ClassCast, IndexOutOfBounds, etc), hacemos ruido en el log.
+        w.write("        catch (Exception e) { \n");
+        w.write("            System.err.println(\"⚠️ [JReactive] Error leyendo la propiedad '\" + p + \"' en \" + t.getClass().getSimpleName() + \": \" + e.getMessage());\n");
+        w.write("        }\n");
         w.write("        return null;\n    }\n");
+        
         w.write("    private Object unwrap(Object v) {\n");
         w.write("        if (v instanceof com.ciro.jreactive.ReactiveVar) return ((com.ciro.jreactive.ReactiveVar)v).get();\n");
         w.write("        if (v instanceof com.ciro.jreactive.Type) return ((com.ciro.jreactive.Type)v).get();\n");
@@ -359,9 +381,26 @@ public final class TemplateProcessor extends AbstractProcessor {
             if (isValidField(e)) {
                 String rootKey = getBindKey(e);
                 String rootAccess = "t." + e.getSimpleName().toString();
-
+                /*
                 if (isWrite) {
-                    map.put(rootKey, rootAccess + " = " + castLogic(e.asType(), "v"));
+                	//map.put(rootKey, rootAccess + " = " + castLogic(e.asType(), "v"));
+
+                    map.put(rootKey, "((com.ciro.jreactive.ReactiveVar<Object>)t.getRawBindings().get(\"" + rootKey + "\")).set(" + castLogic(e.asType(), "v") + ")");
+                } else {
+                    map.put(rootKey, "unwrap(" + rootAccess + ")");
+                }
+                */
+                
+                if (isWrite) {
+                    String typeStr = e.asType().toString();
+                    // 🔥 SI ES UN WRAPPER (Type o ReactiveVar), USAMOS .set()
+                    if (typeStr.contains("com.ciro.jreactive.ReactiveVar") || typeStr.contains("com.ciro.jreactive.Type")) {
+                        javax.lang.model.type.TypeMirror innerType = getInnerType(e.asType());
+                        map.put(rootKey, "if (" + rootAccess + " != null) { " + rootAccess + ".set(" + castLogic(innerType, "v") + "); }");
+                    } else {
+                        // SI ES PRIMITIVO O POJO, ASIGNACIÓN DIRECTA
+                        map.put(rootKey, rootAccess + " = " + castLogic(e.asType(), "v"));
+                    }
                 } else {
                     map.put(rootKey, "unwrap(" + rootAccess + ")");
                 }
@@ -479,6 +518,7 @@ public final class TemplateProcessor extends AbstractProcessor {
         w.write("        }\n    }\n\n");
     }
 
+    /*
     private String castLogic(TypeMirror type, String varName) {
         String t = getErasure(type); // Usamos getErasure que ahora es infalible
         if (type.getKind().isPrimitive()) {
@@ -490,6 +530,35 @@ public final class TemplateProcessor extends AbstractProcessor {
                 default -> "(" + t + ")" + varName;
             };
         }
+        return "(" + t + ")" + varName;
+    }*/
+    private String castLogic(javax.lang.model.type.TypeMirror type, String varName) {
+        String t = getErasure(type);
+        
+        // 1. Manejo de BOOLEAN (Primitivo o Boxed)
+        if (t.equals("java.lang.Boolean") || type.getKind() == javax.lang.model.type.TypeKind.BOOLEAN) {
+            return "(" + varName + " instanceof String ? Boolean.valueOf((String)" + varName + ") : (Boolean)" + varName + ")";
+        }
+        
+        // 2. Manejo de INT (Primitivo o Boxed)
+        if (t.equals("java.lang.Integer") || type.getKind() == javax.lang.model.type.TypeKind.INT) {
+            return "(" + varName + " instanceof String ? Integer.valueOf((String)" + varName + ") : ((Number)" + varName + ").intValue())";
+        }
+
+        // 3. Manejo de LONG (Primitivo o Boxed)
+        if (t.equals("java.lang.Long") || type.getKind() == javax.lang.model.type.TypeKind.LONG) {
+            return "(" + varName + " instanceof String ? Long.valueOf((String)" + varName + ") : ((Number)" + varName + ").longValue())";
+        }
+
+        // 4. Otros primitivos (Double, Float, etc.)
+        if (type.getKind().isPrimitive()) {
+            return switch(type.getKind()) {
+                case DOUBLE -> "((Number)" + varName + ").doubleValue()";
+                default -> "(" + t + ")" + varName;
+            };
+        }
+        
+        // 5. Fallback para objetos normales
         return "(" + t + ")" + varName;
     }
 
@@ -637,24 +706,23 @@ public final class TemplateProcessor extends AbstractProcessor {
         String pkg = processingEnv.getElementUtils().getPackageOf(clazz).getQualifiedName().toString();
         String fileName = clazz.getSimpleName().toString() + ".html";
         
-        // 1. Intento por código fuente
         try {
             FileObject fileObject = filer.getResource(StandardLocation.SOURCE_PATH, pkg, fileName);
             CharSequence content = fileObject.getCharContent(true);
             if (content != null) return content.toString();
-        } catch (Exception ignored) {}
+        } catch (Exception e) {
+            messager.printMessage(Diagnostic.Kind.NOTE, 
+                "ℹ️ [JReactive] No se encontró " + fileName + " en SOURCE_PATH: " + e.getMessage());
+        }
 
-        // 2. Intento por disco duro (Directo, infalible en consola)
         try {
-            java.io.File file = new java.io.File("src/main/java/" + pkg.replace(".", "/") + "/" + fileName);
-            if (!file.exists()) {
-                // Modo multi-módulo (Si compilas desde parent)
-                file = new java.io.File("jreactive-demo-spring/src/main/java/" + pkg.replace(".", "/") + "/" + fileName);
-            }
-            if (file.exists()) {
-                return new String(java.nio.file.Files.readAllBytes(file.toPath()), java.nio.charset.StandardCharsets.UTF_8);
-            }
-        } catch (Exception ignored) {}
+            FileObject fileObject = filer.getResource(StandardLocation.CLASS_PATH, pkg, fileName);
+            CharSequence content = fileObject.getCharContent(true);
+            if (content != null) return content.toString();
+        } catch (Exception e) {
+            messager.printMessage(Diagnostic.Kind.NOTE, 
+                "ℹ️ [JReactive] No se encontró " + fileName + " en CLASS_PATH: " + e.getMessage());
+        }
 
         return null;
     }
@@ -662,24 +730,24 @@ public final class TemplateProcessor extends AbstractProcessor {
     private String tryReadCssFile(TypeElement clazz) {
         String pkg = processingEnv.getElementUtils().getPackageOf(clazz).getQualifiedName().toString();
         String fileName = clazz.getSimpleName().toString() + ".css";
-        try {
-            if (this.trees != null) {
-                com.sun.source.util.TreePath path = trees.getPath(clazz);
-                if (path != null) {
-                    javax.tools.JavaFileObject sourceFile = path.getCompilationUnit().getSourceFile();
-                    java.nio.file.Path javaNioPath = java.nio.file.Paths.get(sourceFile.toUri());
-                    String cssPathStr = javaNioPath.toString().replace(".java", ".css");
-                    java.io.File file = new java.io.File(cssPathStr);
-                    if (file.exists()) return new String(java.nio.file.Files.readAllBytes(file.toPath()), java.nio.charset.StandardCharsets.UTF_8);
-                }
-            }
-        } catch (Throwable ignored) {}
 
         try {
-            java.io.File file = new java.io.File("src/main/java/" + pkg.replace(".", "/") + "/" + fileName);
-            if (!file.exists()) file = new java.io.File("jreactive-demo-spring/src/main/java/" + pkg.replace(".", "/") + "/" + fileName);
-            if (file.exists()) return new String(java.nio.file.Files.readAllBytes(file.toPath()), java.nio.charset.StandardCharsets.UTF_8);
-        } catch (Exception ignored) {}
+            FileObject fileObject = filer.getResource(StandardLocation.SOURCE_PATH, pkg, fileName);
+            CharSequence content = fileObject.getCharContent(true);
+            if (content != null) return content.toString();
+        } catch (Exception e) {
+            messager.printMessage(Diagnostic.Kind.NOTE, 
+                "ℹ️ [JReactive] No se encontró " + fileName + " en SOURCE_PATH: " + e.getMessage());
+        }
+
+        try {
+            FileObject fileObject = filer.getResource(StandardLocation.CLASS_PATH, pkg, fileName);
+            CharSequence content = fileObject.getCharContent(true);
+            if (content != null) return content.toString();
+        } catch (Exception e) {
+            messager.printMessage(Diagnostic.Kind.NOTE, 
+                "ℹ️ [JReactive] No se encontró " + fileName + " en CLASS_PATH: " + e.getMessage());
+        }
 
         return null;
     }
@@ -743,7 +811,9 @@ public final class TemplateProcessor extends AbstractProcessor {
                     w.write(ind + "    falseBranch.add(\n");
                     writeNodeCode(w, child, indent + 2);
                     w.write("\n" + ind + "    );\n");
-                } catch (IOException ignored) {}
+                } catch (IOException e) {
+                	System.err.println("❌ [JReactive APT] Error FATAL escribiendo la rama 'else' del AST en disco: " + e.getMessage());
+                }
             });
             w.write(ind + "}}");
         } else if (n instanceof com.ciro.jreactive.ast.EachNode each) {
