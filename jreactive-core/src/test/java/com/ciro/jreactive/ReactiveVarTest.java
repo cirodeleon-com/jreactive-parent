@@ -78,4 +78,43 @@ class ReactiveVarTest {
         assertThat(texto.get()).isEqualTo("B");
         assertThat(capturas).isEmpty();
     }
+    
+    @Test
+    @DisplayName("Debe permitir setear y recuperar el tópico compartido (Pub/Sub)")
+    void testSharedTopic() {
+        ReactiveVar<String> rx = new ReactiveVar<>("valor");
+        
+        assertThat(rx.getSharedTopic()).isNull();
+        
+        rx.setSharedTopic("sala-123");
+        assertThat(rx.getSharedTopic()).isEqualTo("sala-123");
+    }
+
+    @Test
+    @DisplayName("Debe permitir recuperar el tipo genérico para la serialización")
+    void testGenericType() {
+        ReactiveVar<Integer> rx = new ReactiveVar<>(10);
+        java.lang.reflect.Type tipoInt = Integer.class;
+        
+        rx.setGenericType(tipoInt);
+        assertThat(rx.getGenericType()).isEqualTo(tipoInt);
+    }
+    
+    @Test
+    @DisplayName("Debe permitir cambiar el ActiveGuard dinámicamente")
+    void testChangeActiveGuard() {
+        ReactiveVar<String> rx = new ReactiveVar<>("inicial");
+        java.util.concurrent.atomic.AtomicInteger disparos = new java.util.concurrent.atomic.AtomicInteger(0);
+        rx.onChange(v -> disparos.incrementAndGet());
+
+        // Guard que bloquea
+        rx.setActiveGuard(() -> false);
+        rx.set("bloqueado");
+        assertThat(disparos.get()).isEqualTo(0);
+
+        // Volvemos a activar
+        rx.setActiveGuard(null); // Debería resetear a true por defecto en tu código
+        rx.set("activo");
+        assertThat(disparos.get()).isEqualTo(1);
+    }
 }

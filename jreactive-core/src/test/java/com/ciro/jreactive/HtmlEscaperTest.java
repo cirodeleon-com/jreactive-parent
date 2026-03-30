@@ -28,4 +28,12 @@ class HtmlEscaperTest {
         String seguro = "Hola Mundo 123";
         assertThat(HtmlEscaper.escape(seguro)).isEqualTo(seguro);
     }
+    
+    @Test
+    @DisplayName("Debe escapar correctamente una mezcla compleja de caracteres")
+    void testComplexEscaping() {
+        String input = "if (a < b && c > d) return \"'\"";
+        String expected = "if (a &lt; b &amp;&amp; c &gt; d) return &quot;&#39;&quot;";
+        assertThat(HtmlEscaper.escape(input)).isEqualTo(expected);
+    }
 }

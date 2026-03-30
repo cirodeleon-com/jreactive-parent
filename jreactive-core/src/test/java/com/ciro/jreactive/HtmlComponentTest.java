@@ -12,6 +12,7 @@ import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 @DisplayName("HtmlComponent Unit Tests (Fundacional)")
 class HtmlComponentTest {
@@ -211,4 +212,55 @@ class HtmlComponentTest {
             assertThat(urlMap).containsEntry("activeTab", "tab");
         }
     }
+    
+    @Test
+    @DisplayName("Debe permitir forzar la actualización de un campo @State manualmente")
+    void testManualUpdateState() {
+        component._mountRecursive(); // Encendemos los motores
+        
+        // 1. Cambiamos el valor directamente (saltándonos la reactividad automática)
+        component.texto = "Cambiado a mano";
+        
+        // 2. Registramos un listener para ver si updateState hace su magia
+        java.util.concurrent.atomic.AtomicReference<Object> capturado = new java.util.concurrent.atomic.AtomicReference<>();
+        component.getRawBindings().get("texto").onChange(capturado::set);
+
+        // 3. Act: Forzamos la actualización
+        component.updateState("texto");
+
+        // 4. Assert: El ReactiveVar interno debió recibir el nuevo valor
+        assertThat(capturado.get()).isEqualTo("Cambiado a mano");
+    }
+
+    @Test
+    @DisplayName("Debe fallar si se intenta actualizar un campo que no existe o no es @State")
+    void testUpdateStateInvalidField() {
+        // Tu código envuelve el error real en un RuntimeException, así que eso es lo que esperamos
+        assertThrows(RuntimeException.class, () -> {
+            component.updateState("campo_fantasma");
+        });
+    }
+    
+    @Nested
+    @DisplayName("Tests de Gestión de Slots y Versiones")
+    class SlotsAndVersionsTests {
+        @Test
+        @DisplayName("Debe manejar correctamente la asignación de slots nombrados")
+        void testSlotManagement() {
+            component._setSlots(Map.of("header", "<h1>Titulo</h1>", "footer", "<p>Pie</p>"));
+            
+            assertThat(component._getSlotHtml("header")).isEqualTo("<h1>Titulo</h1>");
+            assertThat(component._getSlotHtml("footer")).isEqualTo("<p>Pie</p>");
+            assertThat(component._getSlotHtml("inexistente")).isEmpty();
+            assertThat(component._getSlotHtml(null)).isEmpty(); // Fallback a default
+        }
+
+        @Test
+        @DisplayName("Debe gestionar correctamente la versión del componente (Optimistic Locking)")
+        void testVersionManagement() {
+            component._setVersion(10L);
+            assertThat(component._getVersion()).isEqualTo(10L);
+        }
+    }
+    
 }

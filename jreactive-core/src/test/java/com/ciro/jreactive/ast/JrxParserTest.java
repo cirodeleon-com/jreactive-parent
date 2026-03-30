@@ -77,4 +77,52 @@ class JrxParserTest {
         
         assertThat(exception.getMessage()).contains("Falta cerrar");
     }
+    
+    @Test
+    @DisplayName("Debe fallar si se intenta cerrar un bloque {{/if}} sin haberlo abierto")
+    void testUnexpectedBlockClose() {
+        String html = "<div> {{/if}} </div>";
+        
+        assertThrows(IllegalStateException.class, () -> {
+            JrxParser.parse(html);
+        }, "Cierre {{/ ... }} inesperado");
+    }
+
+    @Test
+    @DisplayName("Debe fallar si una etiqueta HTML se cierra antes que un bloque de plantilla")
+    void testMismatchedHtmlAndTemplateClosing() {
+        // Estructura cruzada: <div> {{#if}} </div> {{/if}} -> INCORRECTO
+        String html = "<div> {{#if activo}} </div> {{/if}}";
+        
+        assertThrows(IllegalStateException.class, () -> {
+            JrxParser.parse(html);
+        }, "El bloque {{#if}} no ha sido cerrado");
+    }
+
+    @Test
+    @DisplayName("Debe fallar si el HTML termina y faltan etiquetas por cerrar")
+    void testUnclosedTagsAtEnd() {
+        String html = "<div><span>Contenido"; // Falta </span> y </div>
+        
+        assertThrows(IllegalStateException.class, () -> {
+            JrxParser.parse(html);
+        });
+    }
+
+    @Test
+    @DisplayName("Debe parsear correctamente etiquetas de Web Components (Custom Elements)")
+    void testParseCustomElements() {
+        String html = "<my-custom-element attr='1'> <slot/> </my-custom-element>";
+        List<JrxNode> nodes = JrxParser.parse(html);
+        
+        assertThat(nodes).hasSize(1);
+        ElementNode el = (ElementNode) nodes.get(0);
+        assertThat(el.tagName).isEqualTo("my-custom-element");
+    }
+    
+    
+
+    
+
+    
 }
