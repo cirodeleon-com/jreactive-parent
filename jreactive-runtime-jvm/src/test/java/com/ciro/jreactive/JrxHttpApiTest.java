@@ -164,4 +164,51 @@ class JrxHttpApiTest {
         // Debe haber pasado por el catch y usado el guard para devolver el JSON
         assertThat(jsonResponse).contains("Error de negocio simulado");
     }
+    
+    @Test
+    @DisplayName("Debe generar deltas precisos (JsonNode diffing) para componentes @Stateless")
+    void testStatelessDeltaDiffing() throws Exception {
+        ActionPage page = new ActionPage();
+        page.setId("page_stateless");
+        page._initIfNeeded();
+
+        // Simulamos el estado viejo viniendo en el token
+        Map<String, Object> oldState = new HashMap<>();
+        oldState.put("valor", 0);
+        String fakeToken = JrxStateToken.encode(oldState);
+
+        lenient().when(pageResolver.getPage(anyString(), anyString(), any())).thenReturn(page);
+        lenient().when(guard.tryConsume(anyString())).thenReturn(true);
+        lenient().when(guard.validateParams(any(), any(), any())).thenReturn(Set.of());
+
+        // Hacemos el call enviando el token (mochila)
+        Map<String, Object> body = Map.of(
+            "args", List.of(42),
+            "stateToken", fakeToken
+        );
+
+        String response = api.call("sid", "/action", "sumar", body, new HashMap<>());
+
+        // Assert: Al ser @Stateless, debe devolver el nuevo token y el batch con los deltas calculados
+        assertThat(response).contains("\"newStateToken\"");
+        assertThat(response).contains("\"batch\"");
+        assertThat(response).contains("\"v\":42"); // Delta detectó el cambio de 0 a 42
+    }
+
+    @Test
+    @DisplayName("Debe capturar errores de Invocación internos y extraer la causa raíz")
+    void testInvocationErrorExtraction() {
+        ActionPage page = new ActionPage() {
+            @Call public void explotarFuerte() { 
+                throw new NullPointerException(); // Error sin mensaje
+            }
+        };
+        page._initIfNeeded();
+        lenient().when(pageResolver.getPage(anyString(), anyString(), any())).thenReturn(page);
+        lenient().when(guard.tryConsume(anyString())).thenReturn(true);
+        lenient().when(guard.errorJson(eq("INVOKE_ERROR"), anyString())).thenReturn("ERROR_CAPTURADO");
+
+        String response = api.call("sid", "/action", "explotarFuerte", Map.of(), new HashMap<>());
+        assertThat(response).isEqualTo("ERROR_CAPTURADO");
+    }
 }

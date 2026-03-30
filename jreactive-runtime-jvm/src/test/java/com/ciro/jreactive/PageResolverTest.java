@@ -108,4 +108,22 @@ class PageResolverTest {
         resolver.evictAll("sid");
         verify(store).removeSession("sid");
     }
+    
+    @Test
+    @DisplayName("Debe obtener parámetros de ruta y la instancia de Home directamente")
+    void testGetParamsAndHome() {
+        DummyPage homePage = new DummyPage();
+        
+        // Simulamos la resolución de rutas
+        when(registry.resolve("/ruta")).thenReturn(new RouteProvider.Result(homePage, Map.of("clave", "valor")));
+        when(registry.resolve("/")).thenReturn(new RouteProvider.Result(homePage, Map.of()));
+
+        // Act & Assert 1: getParams
+        Map<String, String> params = resolver.getParams("sid", "/ruta");
+        assertThat(params).containsEntry("clave", "valor");
+
+        // Act & Assert 2: getHomePageInstance
+        HtmlComponent home = resolver.getHomePageInstance("sid");
+        assertThat(home).isNotNull();
+    }
 }

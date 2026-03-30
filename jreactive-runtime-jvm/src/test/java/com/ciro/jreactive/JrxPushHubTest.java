@@ -18,6 +18,8 @@ import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.*;
+import static org.mockito.ArgumentMatchers.*;
 
 @ExtendWith(MockitoExtension.class)
 @DisplayName("JrxPushHub - Cobertura Extrema de Colecciones y Buffer")
@@ -181,4 +183,116 @@ class JrxPushHubTest {
 
         hub.close();
     }
+    
+    @Test
+    @DisplayName("Debe emitir deltas al remover o limpiar SmartCollections")
+    void testSmartCollectionRemovals() {
+        ColeccionesPage page = new ColeccionesPage();
+        page._initIfNeeded(); page._mountRecursive();
+        // Llenamos datos primero
+        page.lista.add("A"); page.mapa.put("K", "V"); page.set.add("S");
+        page._syncState(); // Limpiamos la cola inicial
+
+        JrxPushHub hub = new JrxPushHub(page, mapper, 100, broker, "sid-1", null);
+        MockSink sink = new MockSink();
+        hub.subscribe(sink, 0);
+
+        // Disparamos removes
+        page.lista.remove("A");
+        page.mapa.remove("K");
+        page.set.remove("S");
+        page._syncState();
+
+        // Verificamos que los removes generaron eventos JSON
+        assertThat(sink.sentMessages.toString()).contains("lista").contains("mapa").contains("set");
+
+        // Disparamos clears (vaciar todo)
+        page.lista.clear();
+        page.mapa.clear();
+        page.set.clear();
+        page._syncState();
+
+        // Verificamos que los clears generaron eventos JSON
+        assertThat(sink.sentMessages.toString()).contains("lista").contains("mapa").contains("set");
+    }
+    
+    @Test
+    @DisplayName("Debe capturar errores de socket al suscribir un cliente y forzar su cierre")
+    void testSubscriptionSocketErrors() throws Exception {
+        ColeccionesPage page = new ColeccionesPage();
+        page._initIfNeeded(); 
+        page._mountRecursive();
+        JrxPushHub hub = new JrxPushHub(page, mapper, 100, broker, "sid", null);
+        
+        JrxPushHub.JrxSink badSink = mock(JrxPushHub.JrxSink.class);
+        lenient().when(badSink.isOpen()).thenReturn(true);
+        // Hacemos que el envío inicial falle miserablemente
+        doThrow(new java.io.IOException("Socket desconectado abruptamente")).when(badSink).send(anyString());
+
+        // Act: Forzamos la excepción
+        hub.subscribe(badSink, 0); 
+        
+        // Assert: El framework debe atrapar el error, imprimirlo (lo verás en consola) y llamar a close()
+        verify(badSink, atLeastOnce()).close();
+    }
+
+    @Test
+    @DisplayName("Debe inyectar tipos simples (primitivos/strings) desde el estado compartido (Redis)")
+    void testInjectSharedSimpleTypes() {
+        ColeccionesPage page = new ColeccionesPage();
+        page._initIfNeeded(); 
+        page._mountRecursive();
+        
+        // Simulamos un tópico en una variable tipo String
+        ((ReactiveVar<?>) page.getRawBindings().get("texto")).setSharedTopic("topic-txt");
+        
+        JrxPushHub hub = new JrxPushHub(page, mapper, 100, null, "sid", null);
+        
+        // Inyectamos el payload simulando un mensaje de Redis Pub/Sub
+        hub.injectSharedState("topic-txt", "{\"k\":\"texto\", \"v\":\"ValorDesdeRedis\"}");
+        
+        // El bloque `else` de tu método injectSharedState debe encargarse de esto
+        assertThat(page.texto).isEqualTo("ValorDesdeRedis");
+    }
+    
+    @Test
+    @DisplayName("Debe manejar desbordes y polling antiguo forzando snapshot")
+    void testPushHubEdgeCases() {
+        ColeccionesPage page = new ColeccionesPage();
+        page._initIfNeeded(); 
+        page._mountRecursive();
+        // Buffer diminuto (2) para forzar que los mensajes viejos se borren
+        JrxPushHub hub = new JrxPushHub(page, mapper, 2, null, "sid", null);
+        
+        page.texto = "1"; page._syncState();
+        page.texto = "2"; page._syncState();
+        page.texto = "3"; page._syncState();
+        page.texto = "4"; page._syncState();
+        
+        // Pedimos desde el inicio (0). Como el buffer ya borró los primeros, 
+        // el hub debe rendirse y mandar un snapshot completo de la página.
+        JrxPushHub.Batch b = hub.poll(0); 
+        assertThat(b.getBatch()).isNotEmpty();
+    }
+    
+    @Test
+    @DisplayName("Debe ignorar errores de casting al inyectar estado compartido corrupto")
+    void testInjectSharedStateCorrupted() {
+        ColeccionesPage page = new ColeccionesPage();
+        page._initIfNeeded(); 
+        page._mountRecursive();
+        
+        ((ReactiveVar<?>) page.getRawBindings().get("lista")).setSharedTopic("topic-lista");
+        JrxPushHub hub = new JrxPushHub(page, mapper, 100, null, "sid", null);
+        
+        // Clave que no existe en el componente
+        hub.injectSharedState("topic-lista", "{\"k\":\"fantasma\", \"v\":[\"Item1\"]}");
+        
+        // JSON con tipo incorrecto (mandamos un int a una SmartList)
+        hub.injectSharedState("topic-lista", "{\"k\":\"lista\", \"v\": 123}");
+        
+        // Si no crashea, y la lista sigue intacta, el catch interno hizo su trabajo
+        assertThat(page.lista).isEmpty();
+    }
+    
 }

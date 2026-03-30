@@ -109,4 +109,33 @@ class JrxHubManagerTest {
         
         assertThat(hubNuevo).isNotSameAs(hub);
     }
+    
+    @Test
+    @DisplayName("Debe cubrir equals, hashCode y métodos de la clase interna privada Key")
+    void testHubManagerKeyInnerClass() throws Exception {
+        // Obtenemos la clase privada Key
+        Class<?> keyClass = Class.forName("com.ciro.jreactive.JrxHubManager$Key");
+        java.lang.reflect.Constructor<?> constructor = keyClass.getDeclaredConstructor(String.class, String.class);
+        constructor.setAccessible(true);
+        
+        // Instanciamos objetos
+        Object key1 = constructor.newInstance("sid1", "/path");
+        Object key2 = constructor.newInstance("sid1", "/path");
+        Object key3 = constructor.newInstance("sid2", "/path");
+
+        // Probamos equals y hashCode
+        assertThat(key1.equals(key2)).isTrue();
+        assertThat(key1.equals(key3)).isFalse();
+        assertThat(key1.equals(null)).isFalse();
+        assertThat(key1.hashCode()).isEqualTo(key2.hashCode());
+        
+        // Probamos los getters internos
+        java.lang.reflect.Method mSid = keyClass.getDeclaredMethod("sessionId");
+        mSid.setAccessible(true);
+        assertThat(mSid.invoke(key1)).isEqualTo("sid1");
+
+        java.lang.reflect.Method mPath = keyClass.getDeclaredMethod("path");
+        mPath.setAccessible(true);
+        assertThat(mPath.invoke(key1)).isEqualTo("/path");
+    }
 }
