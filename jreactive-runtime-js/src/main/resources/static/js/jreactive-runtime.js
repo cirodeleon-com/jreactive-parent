@@ -1647,6 +1647,24 @@ function reindexBindings() {
 	    });
 	  });
 
+	  
+	  $$('*').forEach(el => {
+	        if (!el.attributes) return;
+	        Array.from(el.attributes).forEach(attr => {
+	            if (attr.value.includes('{{')) {
+	                // Guardamos la plantilla original para no perderla al actualizar
+	                if (!el._jrxAttrTpls) el._jrxAttrTpls = {};
+	                el._jrxAttrTpls[attr.name] = attr.value;
+	                
+	                // Extraemos las variables y registramos el elemento en el mapa global
+	                const matches = attr.value.matchAll(/{{\s*([\w#.-]+)\s*}}/g);
+	                for (const m of matches) {
+	                    const k = m[1];
+	                    (bindings.get(k) || bindings.set(k, []).get(k)).push(el);
+	                }
+	            }
+	        });
+	    });
 
   console.log('[BINDINGS NOW]', [...bindings.keys()]);
 }
@@ -2336,6 +2354,24 @@ function updateDomForKey(k, v) {
       }
       return;
     }
+	
+	if (el._jrxAttrTpls) {
+	        Object.entries(el._jrxAttrTpls).forEach(([attrName, tpl]) => {
+	            const newVal = tpl.replace(/{{\s*([\w#.-]+)\s*}}/g, (m, key) => {
+	                const val = resolveExpr(key, el); 
+	                return (val !== undefined && val !== null) ? val : '';
+	            });
+
+	            if (isBoolAttr(attrName)) {
+	                // Booleanos: si es "true" o cualquier cosa, ponemos el atributo. Si es "false" o "", lo quitamos.
+	                const isTrue = newVal === 'true' || (newVal !== 'false' && newVal !== '');
+	                if (isTrue) el.setAttribute(attrName, '');
+	                else el.removeAttribute(attrName);
+	            } else {
+	                el.setAttribute(attrName, newVal);
+	            }
+	        });
+	    }
 
     // B) Inputs / Selects / TextAreas
 	const isInput = el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.tagName.includes('-');
@@ -2418,6 +2454,10 @@ function applyStateForKey(k, v) {
             const s = document.createElement('script');
             s.src = `/js/jrx/${compName}.jrx.js`;
             s.onload = () => applyStateForKey(k, v);
+			s.onerror = () => {                                    // ← NUEVO
+			        console.error(`❌ Fallo carga CSR: ${compName}`);  // ← NUEVO
+			        loadedCsrScripts.delete(compName);                 // ← NUEVO (permite reintentar)
+			    };
             document.head.appendChild(s);
         }
         return;
@@ -3079,6 +3119,18 @@ function syncInitialState() {
 
 
 
+
+// 🔥 EXPOSICIÓN PARA TESTING (Solo se usa si Jest está corriendo)
+  if (typeof process !== 'undefined' && process.env.NODE_ENV === 'test') {
+      window.JRX_TEST_UTILS = {
+          setNestedProperty,
+		  setupEventBindings,
+          resolveExpr,
+		  loadRoute,
+          tokenize,
+          parseExpr
+      };
+  }
  
 
 

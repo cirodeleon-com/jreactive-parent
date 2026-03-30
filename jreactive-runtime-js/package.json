@@ -1,0 +1,19 @@
+{
+  "name": "jreactive-runtime-js",
+  "version": "0.0.1",
+  "scripts": {
+    "test": "jest --coverage"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0",
+    "jest-environment-jsdom": "^29.7.0"
+  },
+  "jest": {
+    "testEnvironment": "jsdom",
+    "collectCoverage": true,
+    "collectCoverageFrom": [
+      "src/main/resources/static/js/jreactive-runtime.js"
+    ],
+    "coverageDirectory": "target/coverage"
+  }
+}

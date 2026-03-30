@@ -5,7 +5,6 @@
                              https://maven.apache.org/xsd/maven-4.0.0.xsd">
   <modelVersion>4.0.0</modelVersion>
 
-  <!-- Hereda versiones y repos de tu parent -->
   <parent>
     <groupId>com.ciro</groupId>
     <artifactId>jreactive-parent</artifactId>
@@ -16,5 +15,37 @@
   <packaging>jar</packaging>
   <name>jreactive runtime (browser JS)</name>
 
-  <!-- No compila Java; basta el ciclo default‑lifecycle -->
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>com.github.eirslett</groupId>
+        <artifactId>frontend-maven-plugin</artifactId>
+        <version>1.15.0</version>
+        <executions>
+          <execution>
+            <id>install node and npm</id>
+            <goals><goal>install-node-and-npm</goal></goals>
+            <configuration>
+              <nodeVersion>v20.11.0</nodeVersion>
+            </configuration>
+          </execution>
+          <execution>
+            <id>npm install</id>
+            <goals><goal>npm</goal></goals>
+            <configuration>
+              <arguments>install</arguments>
+            </configuration>
+          </execution>
+          <execution>
+            <id>npm test</id>
+            <phase>test</phase>
+            <goals><goal>npm</goal></goals>
+            <configuration>
+              <arguments>test</arguments>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+    </plugins>
+  </build>
 </project>
