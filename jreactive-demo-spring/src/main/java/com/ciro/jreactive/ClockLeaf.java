@@ -3,8 +3,12 @@ package com.ciro.jreactive;
 import java.time.LocalTime;
 import java.util.Timer;
 import java.util.TimerTask;
+
+import com.ciro.jreactive.annotations.Stateful;
+
 import static com.ciro.jreactive.Type.$;
 
+@Stateful
 public class ClockLeaf extends HtmlComponent {
 
 	@Bind public Type<String> greet = $("Hello");

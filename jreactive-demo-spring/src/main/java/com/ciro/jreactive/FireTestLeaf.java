@@ -1,4 +1,3 @@
-/*  src/main/java/com/ciro/jreactive/OrdersLeaf.java  */
 package com.ciro.jreactive;
 
 import static com.ciro.jreactive.Type.$;
@@ -6,6 +5,7 @@ import static com.ciro.jreactive.Type.$;
 import java.util.ArrayList;
 import java.util.List;
 import com.ciro.jreactive.annotations.Call;
+import com.ciro.jreactive.annotations.Stateful;
 
 /* ─────────────────────────────────────────
  *  POJOs (records) para la demo compleja
@@ -17,6 +17,7 @@ record Order   (Address address, List<Item> items, Boolean urgent) {}
 /* ─────────────────────────────────────────
  *  Hoja que itera una lista <Order>
  * ───────────────────────────────────────── */
+@Stateful
 public class FireTestLeaf extends HtmlComponent {
 
     /* ❶  Estado reactivo  (lista mutable) */

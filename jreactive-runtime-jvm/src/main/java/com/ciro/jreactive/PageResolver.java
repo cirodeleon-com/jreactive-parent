@@ -23,7 +23,7 @@ public class PageResolver {
         // 1. Intentar obtener del store (RAM, Redis, etc.)
         HtmlComponent comp = store.get(sessionId, path);
         
-        if (comp != null && comp.getClass().isAnnotationPresent(Stateless.class)) {
+        if (comp != null && comp.isStateless()) {
             store.remove(sessionId, path);
             comp = null;
         }
@@ -37,7 +37,7 @@ public class PageResolver {
             String stableId = generateStableIdFromPath(path);
             comp.setId(stableId);
             
-            if (!comp.getClass().isAnnotationPresent(Stateless.class)) {
+            if (!comp.isStateless()) {
                 store.put(sessionId, path, comp);
             }
         }
@@ -79,7 +79,7 @@ public class PageResolver {
      */
     public void persist(String sessionId, String path, HtmlComponent comp) {
     	
-    	if (!comp.getClass().isAnnotationPresent(Stateless.class)) {
+    	if (!comp.isStateless()) {
             store.put(sessionId, path, comp);
         }
         

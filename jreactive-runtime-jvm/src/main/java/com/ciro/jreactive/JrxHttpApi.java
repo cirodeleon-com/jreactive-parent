@@ -178,7 +178,7 @@ public class JrxHttpApi {
 
         // 5) EJECUCIÓN CRONOLÓGICA PERFECTA
         try {
-            boolean isStateless = page.getClass().isAnnotationPresent(com.ciro.jreactive.annotations.Stateless.class);
+            boolean isStateless = page.isStateless();
             Map<String, Object> oldState = new HashMap<>();
 
             Map<String, ReactiveVar<?>> allBinds = new HashMap<>();

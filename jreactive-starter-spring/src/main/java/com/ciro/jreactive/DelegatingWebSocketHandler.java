@@ -77,6 +77,7 @@ public class DelegatingWebSocketHandler implements WebSocketHandler {
         if (delegate != null) delegate.afterConnectionClosed(session, status);
         
         Boolean isStatefulRam = (Boolean) session.getAttributes().get("isStatefulRam");
+        //boolean isStatefulRam = page.isStatefulRam();
 
         // Si el modo es EFÍMERO (false), limpiamos la RAM al cerrar
         if (Boolean.TRUE.equals(isStatefulRam) || !wsConfig.isPersistentState()) { 

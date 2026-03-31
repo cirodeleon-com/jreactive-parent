@@ -1,4 +1,3 @@
-/* === File: jreactive-runtime-jvm/src/main/java/com/ciro/jreactive/JrxHubManager.java === */
 package com.ciro.jreactive;
 
 import com.ciro.jreactive.spi.JrxMessageBroker;

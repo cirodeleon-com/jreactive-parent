@@ -139,7 +139,7 @@ public class AstComponentEngine extends AbstractComponentEngine {
             html = resources + "<div id=\"" + id + "\" class=\"" + scopeId + "\" data-jrx-client=\"" + safeName + "\"></div>";
             
             // Token stateless incluso en shell client
-            if (ctx.getClass().isAnnotationPresent(Stateless.class)) {
+            if (isRoot && ctx.isStateless()) {
                 html = injectStatelessToken(html, s.allBindings, id);
             }
 
@@ -151,7 +151,7 @@ public class AstComponentEngine extends AbstractComponentEngine {
         }
 
         // Token @Stateless en SSR
-        if (ctx.getClass().isAnnotationPresent(Stateless.class)) {
+        if (isRoot && ctx.isStateless()) {
             html = injectStatelessToken(html, s.allBindings, null);
         }
         

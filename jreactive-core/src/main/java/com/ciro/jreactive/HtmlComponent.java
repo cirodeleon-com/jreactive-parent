@@ -945,6 +945,16 @@ private final  Map<String, String> _childRefAlias = new HashMap<>();
         return declaredType; // Si es una List<UserData> normal, la deja intacta
     }
     
+ // 🔥 NUEVO: Lógica centralizada del modo de ejecución
+    public boolean isStateless() {
+        // Si el desarrollador explícitamente pide memoria (RAM o Redis), NO es stateless
+        if (this.getClass().isAnnotationPresent(com.ciro.jreactive.annotations.Stateful.class)) return false;
+        if (this.getClass().isAnnotationPresent(com.ciro.jreactive.annotations.StatefulRam.class)) return false;
+        
+        // Si tiene la anotación @Stateless explícita o NO tiene ninguna de las anteriores, es Stateless por defecto.
+        return true; 
+    }
+    
    
     
 }

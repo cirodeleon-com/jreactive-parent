@@ -1,4 +1,3 @@
-/* === File: jreactive-runtime-jvm\src\main\java\com\ciro\jreactive\JrxStateToken.java === */
 package com.ciro.jreactive;
 
 import com.fasterxml.jackson.databind.ObjectMapper;

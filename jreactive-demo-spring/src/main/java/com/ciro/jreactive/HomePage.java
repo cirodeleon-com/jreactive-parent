@@ -1,9 +1,12 @@
 package com.ciro.jreactive;
 
+import com.ciro.jreactive.annotations.Stateful;
+import com.ciro.jreactive.annotations.StatefulRam;
 import com.ciro.jreactive.annotations.Stateless;
 import com.ciro.jreactive.router.Route;
 import static com.ciro.jreactive.Type.$;
 
+@Stateful
 @Route(path = "/")
 public class HomePage extends AppPage {
     

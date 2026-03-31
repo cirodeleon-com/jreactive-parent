@@ -1,9 +1,11 @@
 package com.ciro.jreactive;
 
 import com.ciro.jreactive.annotations.Call;
+import com.ciro.jreactive.annotations.Stateless;
 import com.ciro.jreactive.router.Route;
 
 @Route(path = "/two")
+@Stateless
 public class HomeTwoPage extends AppPage {
 
     // 1. Un estado para ver que los botones sí hacen algo

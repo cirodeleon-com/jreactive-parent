@@ -1,11 +1,13 @@
 package com.ciro.jreactive;
 
 import com.ciro.jreactive.annotations.Call;
+import com.ciro.jreactive.annotations.Stateful;
 import com.ciro.jreactive.router.Layout;
 import com.ciro.jreactive.router.Route;
 
 
 @Route(path = "/uploadTest")
+@Stateful
 public class UploadTestPage extends AppPage {
 
 	@State

@@ -3,6 +3,7 @@ package com.ciro.jreactive;
 import com.ciro.jreactive.annotations.Call;
 import com.ciro.jreactive.annotations.Client;
 import com.ciro.jreactive.annotations.Shared;
+import com.ciro.jreactive.annotations.Stateful;
 import com.ciro.jreactive.annotations.StatefulRam;
 import com.ciro.jreactive.router.Route;
 import com.ciro.jreactive.router.UrlParam;
@@ -14,7 +15,7 @@ import java.util.List;
 // 1️⃣ Añadimos {salaId} a la ruta para que sea dinámica
 @Route(path = "/multiplayer")
 //@Client
-@StatefulRam
+@Stateful
 public class MultiplayerTestPage extends AppPage {
 
     // 2️⃣ Capturamos el parámetro de la URL y lo volvemos un @State

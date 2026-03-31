@@ -4,9 +4,11 @@ import static com.ciro.jreactive.Type.$;
 import java.util.ArrayList;
 import java.util.List;
 import com.ciro.jreactive.annotations.Call;
+import com.ciro.jreactive.annotations.Stateful;
 
 import jakarta.validation.constraints.NotBlank;
 
+@Stateful
 public class HelloLeaf extends HtmlComponent {
 
     /* 1️⃣  Haz la lista MUTABLE + reactiva */

@@ -1,5 +1,9 @@
 package com.ciro.jreactive;
 
+import com.ciro.jreactive.annotations.Stateful;
+import com.ciro.jreactive.annotations.StatefulRam;
+
+@StatefulRam
 public class MainLayout extends HtmlComponent {
 
     @Override

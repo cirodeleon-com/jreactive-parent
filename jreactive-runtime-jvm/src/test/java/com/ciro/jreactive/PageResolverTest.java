@@ -1,5 +1,6 @@
 package com.ciro.jreactive;
 
+import com.ciro.jreactive.annotations.Stateful;
 import com.ciro.jreactive.annotations.Stateless;
 import com.ciro.jreactive.router.RouteProvider;
 import com.ciro.jreactive.store.StateStore;
@@ -27,6 +28,7 @@ class PageResolverTest {
 
     @InjectMocks PageResolver resolver;
 
+    @Stateful
     static class DummyPage extends HtmlComponent {
         public int paramsInyectados = 0;
         @Override protected String template() { return ""; }
@@ -34,7 +36,7 @@ class PageResolverTest {
         @Override void _injectQueryParams(Map<String, String> params) { paramsInyectados++; }
     }
 
-    @Stateless
+    
     static class StatelessPage extends HtmlComponent {
         @Override protected String template() { return ""; }
     }
