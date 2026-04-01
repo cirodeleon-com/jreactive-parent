@@ -75,6 +75,31 @@ private final  Map<String, String> _childRefAlias = new HashMap<>();
     // 🔒 Lock para gestión de estado y árbol (Anti-Pinning)
     private transient volatile ReentrantLock lock;
     
+ // 🔥 NUEVO: Lista para limpiar suscripciones viejas al ser reciclado
+    private transient List<Runnable> _bindingCleanups = new ArrayList<>();
+
+    public void _clearBindingCleanups() {
+        getLock().lock();
+        try {
+            if (_bindingCleanups != null) {
+                _bindingCleanups.forEach(Runnable::run);
+                _bindingCleanups.clear();
+            }
+        } finally {
+            getLock().unlock();
+        }
+    }
+
+    public void _addBindingCleanup(Runnable r) {
+        getLock().lock();
+        try {
+            if (_bindingCleanups == null) _bindingCleanups = new ArrayList<>();
+            _bindingCleanups.add(r);
+        } finally {
+            getLock().unlock();
+        }
+    }
+    
  
     private ReentrantLock getLock() {
         ReentrantLock result = lock;

@@ -3109,10 +3109,17 @@ function syncInitialState() {
         
         Object.assign(state, initial);
         
+        // 1. SIEMPRE iteramos para hidratar los valores en el DOM y despertar variables
+        for (const [k, v] of Object.entries(initial)) {
+            applyStateForKey(k, v);
+        }
+        
+        // 2. Si la página es un cascarón CSR puro (@Client), forzamos su renderizado
         if (rootId) {
-            applyStateForKey(rootId, {}); // Despierta el @Client
-        } else {
-            for (const [k, v] of Object.entries(initial)) applyStateForKey(k, v);
+            const el = document.getElementById(rootId);
+            if (el && el.dataset.jrxClient) {
+                applyStateForKey(rootId, {}); 
+            }
         }
     }
 }

@@ -32,7 +32,7 @@ public class NewStateTestPage extends AppPage {
     	items.add("pera");
     	items.add("coca cola");
     	items.add("cero");
-    	newItem="o";
+    	this.newItem="o";
     }
 
     @Call

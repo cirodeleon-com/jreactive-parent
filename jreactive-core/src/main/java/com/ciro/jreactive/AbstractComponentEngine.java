@@ -89,6 +89,7 @@ public abstract class AbstractComponentEngine implements ComponentEngine.Strateg
         if (match.isPresent()) {
             leaf = (ViewLeaf) match.get();
             pool.remove(leaf); 
+            ((HtmlComponent)leaf)._clearBindingCleanups();
         } else {
             leaf = newInstance(parent, className);
             leaf.setId(stableId); 
@@ -163,7 +164,8 @@ public abstract class AbstractComponentEngine implements ComponentEngine.Strateg
                 if (isB) {
                     if (pRx != null) {
                         target.set(pRx.get());
-                        pRx.onChange(target::set); 
+                        Runnable unsub =pRx.onChange(target::set); 
+                        hc._addBindingCleanup(unsub);
                     } else {
                         target.set(coerceLiteral(v));
                     }

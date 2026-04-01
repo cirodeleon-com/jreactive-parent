@@ -79,17 +79,7 @@ public class AstComponentEngine extends AbstractComponentEngine {
         // Recursos una sola vez
         String resources = getResourcesOnce(ctx, s.emittedResources);
 
-        // =============================
-        // CSR (@Client)
-        // =============================
         
-
-        // =============================
-        // SSR
-        // =============================
-     // =============================
-        // SSR
-        // =============================
         String ns = isRoot ? "" : prefix;
         
         // 🔥 AOT ZERO-PARSE: Intentamos sacar el AST directo del Accessor generado
@@ -138,10 +128,7 @@ public class AstComponentEngine extends AbstractComponentEngine {
 
             html = resources + "<div id=\"" + id + "\" class=\"" + scopeId + "\" data-jrx-client=\"" + safeName + "\"></div>";
             
-            // Token stateless incluso en shell client
-            if (isRoot && ctx.isStateless()) {
-                html = injectStatelessToken(html, s.allBindings, id);
-            }
+            
 
             collectBindingsRecursive(ctx, s.allBindings);
             disposeUnused(pool);
@@ -150,10 +137,7 @@ public class AstComponentEngine extends AbstractComponentEngine {
             
         }
 
-        // Token @Stateless en SSR
-        if (isRoot && ctx.isStateless()) {
-            html = injectStatelessToken(html, s.allBindings, null);
-        }
+        
         
         
         
@@ -361,6 +345,8 @@ public class AstComponentEngine extends AbstractComponentEngine {
         boolean fullyResolved = true;
         
         RenderSession session = SESSION.get();
+        // 🔥 EL CEREBRO: Entiende .size, .length y objetos profundos
+        TemplateContext tplCtx = new TemplateContext(ctx);
 
         while (m.find()) {
             String token = m.group(0);
@@ -373,17 +359,18 @@ public class AstComponentEngine extends AbstractComponentEngine {
             }
             if (localKey.startsWith("this.")) localKey = localKey.substring(5);
 
-            ReactiveVar<?> var = ctx.getRawBindings().get(localKey);
+            // 🔥 Usamos el cerebro inteligente
+            Object resolvedVal = tplCtx.resolve(localKey);
 
-            if (var != null && var.get() != null) {
-                currentVal = currentVal.replace(token, HtmlEscaper.escape(String.valueOf(var.get())));
+            if (resolvedVal != null) {
+                currentVal = currentVal.replace(token, HtmlEscaper.escape(String.valueOf(resolvedVal)));
             } else {
                 fullyResolved = false;
             }
         }
 
         if (fullyResolved && !currentVal.equals(namespacedTpl)) {
-            out.append("<!--jrx:").append(escapeComment(namespacedTpl)).append("-->");
+        	out.append("<!--jrx:").append(escapeComment(namespacedTpl)).append("-->");
             out.append(currentVal.isEmpty() ? "\u200B" : currentVal);
         } else {
             out.append(namespacedTpl);
@@ -818,6 +805,8 @@ public class AstComponentEngine extends AbstractComponentEngine {
         boolean changed = false;
         
         RenderSession session = SESSION.get();
+        // 🔥 EL CEREBRO PARA LOS ATRIBUTOS
+        TemplateContext tplCtx = new TemplateContext(ctx);
 
         while (m.find()) {
             String token = m.group(0);
@@ -829,10 +818,11 @@ public class AstComponentEngine extends AbstractComponentEngine {
             }
             if (localKey.startsWith("this.")) localKey = localKey.substring(5);
 
-            ReactiveVar<?> var = ctx.getRawBindings().get(localKey);
-            if (var != null) {
-                Object v = var.get();
-                String strVal = v == null ? "" : HtmlEscaper.escape(String.valueOf(v));
+            // 🔥 Usamos el cerebro inteligente
+            Object resolvedVal = tplCtx.resolve(localKey);
+            
+            if (resolvedVal != null) {
+                String strVal = HtmlEscaper.escape(String.valueOf(resolvedVal));
                 current = current.replace(token, strVal);
                 changed = true;
             }
@@ -962,26 +952,7 @@ public class AstComponentEngine extends AbstractComponentEngine {
         }
     }
 
-    // ------------------------------------------------------------
-    // Token @Stateless (igual a Jsoup)
-    // ------------------------------------------------------------
-    private String injectStatelessToken(String html, Map<String, ReactiveVar<?>> all, String rootIdOrNull) {
-        try {
-            Map<String, Object> tokenState = new HashMap<>();
-            all.forEach((k, v) -> tokenState.put(k, v.get()));
-
-            String token = JrxStateToken.encode(tokenState);
-            String rawJson = JrxStateToken.toJson(tokenState);
-
-            return "<meta name=\"jrx-state\" content=\"" + token + "\">\n" +
-                   "<script>window.__JRX_STATE__ = " + rawJson +
-                   "; window.__JRX_ROOT_ID__ = " + (rootIdOrNull == null ? "null" : ("'" + rootIdOrNull + "'")) +
-                   ";</script>\n" + html;
-        } catch (Exception e) {
-            e.printStackTrace();
-            return html;
-        }
-    }
+   
 
     // ------------------------------------------------------------
     // Resources once (equivalente a Jsoup engine)

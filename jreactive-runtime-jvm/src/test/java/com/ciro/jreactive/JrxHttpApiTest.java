@@ -211,4 +211,25 @@ class JrxHttpApiTest {
         String response = api.call("sid", "/action", "explotarFuerte", Map.of(), new HashMap<>());
         assertThat(response).isEqualTo("ERROR_CAPTURADO");
     }
+    
+    @org.junit.jupiter.api.Test
+    @org.junit.jupiter.api.DisplayName("Debe manejar gracefully la inyección de token Stateless si ocurre un error (Fallback)")
+    void testStatelessTokenException() throws Exception {
+        // 🔥 ACTUALIZADO: Ahora buscamos el método en su nueva casa (JrxHttpApi)
+        java.lang.reflect.Method m = JrxHttpApi.class.getDeclaredMethod(
+            "injectStatelessToken", String.class, java.util.Map.class, String.class
+        );
+        m.setAccessible(true);
+        
+        String htmlOriginal = "<html></html>";
+        
+        // Creamos un API de mentiras solo para probar este método aislado
+        JrxHttpApi dummyApi = new JrxHttpApi(null, null, null, false, null);
+        
+        // Al pasar 'null' en los bindings, el forEach interno lanzará NullPointerException
+        // y nuestro bloque catch devolverá el html intacto.
+        String res = (String) m.invoke(dummyApi, htmlOriginal, null, "id1");
+        
+        org.assertj.core.api.Assertions.assertThat(res).isEqualTo(htmlOriginal);
+    }
 }

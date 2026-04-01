@@ -39,7 +39,7 @@ public class JrxHttpApi {
     public String render(String sessionId, String path, boolean renderLayout, Map<String, String> queryParams) {
         HtmlComponent page = pageResolver.getPage(sessionId, path, queryParams);
         
-        // 🔥 NUEVO: Extraemos el diccionario de @UrlParam del componente actual
+        // 🔥 Lo tuyo intacto: Extraemos el diccionario de @UrlParam del componente actual
         String urlParamsJson = "{}";
         try {
             urlParamsJson = objectMapper.writeValueAsString(page._getUrlBindings());
@@ -48,41 +48,62 @@ public class JrxHttpApi {
         }
         String script = "<script>window.__JRX_URL_PARAMS__ = " + urlParamsJson + ";</script>";
 
+        // 🟢 MODIFICACIÓN: Declaramos variables para guardar el resultado en lugar de retornar de inmediato
+        String finalHtml;
+        HtmlComponent layoutInstance = null;
+
         // 1. Si es petición parcial (AJAX/SPA), devolvemos el script + la página
         if (!renderLayout) {
-            return script + "\n" + page.render();
-        }
-
-        // 2. Si es carga completa, buscamos si tiene @Layout
-        Layout layoutAnn = page.getClass().getAnnotation(Layout.class);
-        
-        if (layoutAnn != null) {
-            try {
-                // Creamos una instancia fresca del Layout
-                HtmlComponent layout = layoutAnn.value().getDeclaredConstructor().newInstance();
-                
-                // Inyección: Renderizamos la página y se la pasamos al layout como slot
-             // Inyección: Renderizamos la página y se la pasamos al layout en el slot por defecto
-                layout._setSlots(java.util.Map.of("default", page.render()));
-                
-                // Renderizamos el layout
-                String fullHtml = layout.render();
-                
-                // 🔥 Inyección quirúrgica: Lo metemos DENTRO del <head> para no romper el <!DOCTYPE>
-                if (fullHtml.contains("</head>")) {
-                    return fullHtml.replaceFirst("</head>", script + "\n</head>");
+            finalHtml = script + "\n" + page.render(); // 👈 Cambio: Asignar en vez de retornar
+        } else {
+            // 2. Si es carga completa, buscamos si tiene @Layout
+            Layout layoutAnn = page.getClass().getAnnotation(Layout.class);
+            
+            if (layoutAnn != null) {
+                try {
+                    // Creamos una instancia fresca del Layout
+                    layoutInstance = layoutAnn.value().getDeclaredConstructor().newInstance(); // 👈 Cambio: Guardar referencia
+                    
+                    // Inyección: Renderizamos la página y se la pasamos al layout en el slot por defecto
+                    layoutInstance._setSlots(java.util.Map.of("default", page.render()));
+                    
+                    // Renderizamos el layout
+                    String fullHtml = layoutInstance.render();
+                    
+                    // 🔥 Inyección quirúrgica: Lo metemos DENTRO del <head> para no romper el <!DOCTYPE>
+                    if (fullHtml.contains("</head>")) {
+                        finalHtml = fullHtml.replaceFirst("</head>", script + "\n</head>"); // 👈 Cambio: Asignar
+                    } else {
+                        finalHtml = script + "\n" + fullHtml; // 👈 Cambio: Asignar
+                    }
+                    
+                } catch (Exception e) {
+                    e.printStackTrace();
+                    // Si falla el layout, devolvemos la página "cruda" como fallback
+                    finalHtml = script + "\n" + page.render(); // 👈 Cambio: Asignar
                 }
-                return script + "\n" + fullHtml;
-                
-            } catch (Exception e) {
-                e.printStackTrace();
-                // Si falla el layout, devolvemos la página "cruda" como fallback
-                return script + "\n" + page.render();
+            } else {
+                // 3. Si no tiene layout, se devuelve cruda con el script arriba
+                finalHtml = script + "\n" + page.render(); // 👈 Cambio: Asignar
             }
         }
 
-        // 3. Si no tiene layout, se devuelve cruda con el script arriba
-        return script + "\n" + page.render();
+        // 🟢 LO NUEVO (EL DEBER SER): Al final, la ruta decide si inyecta el token
+        if (page.isStateless()) {
+            Map<String, ReactiveVar<?>> allBindings = new java.util.HashMap<>();
+            
+            // Extraemos la memoria de la página...
+            collectBindingsRecursive(page, allBindings);
+            // ... y del layout (si el usuario usó uno)
+            if (layoutInstance != null) {
+                collectBindingsRecursive(layoutInstance, allBindings);
+            }
+            
+            // Inyectamos el Token con todo el estado consolidado
+            finalHtml = injectStatelessToken(finalHtml, allBindings, page.getId());
+        }
+
+        return finalHtml; // 👈 Retornamos el producto final ensamblado
     }
 
     /** Ejecuta un @Call (qualified = "CompId.metodo" o "metodo" en raíz) */
@@ -463,9 +484,23 @@ public class JrxHttpApi {
         }
     }
     
- // =========================================================================
-    // AUTO-BINDING MAGICO DE DTOs
-    // =========================================================================
+    private String injectStatelessToken(String html, Map<String, ReactiveVar<?>> all, String rootIdOrNull) {
+        try {
+            Map<String, Object> tokenState = new HashMap<>();
+            all.forEach((k, v) -> tokenState.put(k, v.get()));
+
+            String token = JrxStateToken.encode(tokenState);
+            String rawJson = JrxStateToken.toJson(tokenState);
+
+            return "<meta name=\"jrx-state\" content=\"" + token + "\">\n" +
+                   "<script>window.__JRX_STATE__ = " + rawJson +
+                   "; window.__JRX_ROOT_ID__ = " + (rootIdOrNull == null ? "null" : ("'" + rootIdOrNull + "'")) +
+                   ";</script>\n" + html;
+        } catch (Exception e) {
+            System.err.println("ℹ️ [JReactive] Fallback activado para inyección de Token Stateless.");
+            return html;
+        }
+    }
     
     
 

@@ -332,22 +332,7 @@ class AstComponentEngineTest {
         assertThat(ex.getMessage()).contains("mvn clean install -DskipTests");
     }
 
-    @Test
-    @DisplayName("Debe manejar gracefully la inyección de token Stateless si ocurre un error (Fallback)")
-    void testStatelessTokenException() throws Exception {
-        // Forzamos un error inyectando nulls donde no se espera
-        java.lang.reflect.Method m = AstComponentEngine.class.getDeclaredMethod(
-            "injectStatelessToken", String.class, java.util.Map.class, String.class
-        );
-        m.setAccessible(true);
-        
-        String htmlOriginal = "<html></html>";
-        // Al pasar 'null' en los bindings, el forEach interno lanzará NullPointerException
-        // Tu código tiene un catch genérico que devuelve el html original. ¡Vamos a cubrirlo!
-        String res = (String) m.invoke(new AstComponentEngine(), htmlOriginal, null, "id1");
-        
-        assertThat(res).isEqualTo(htmlOriginal);
-    }
+    
     
     @Test
     @DisplayName("Debe evaluar todas las ramas del parser booleano manual (AST)")
