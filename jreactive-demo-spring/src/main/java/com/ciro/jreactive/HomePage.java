@@ -124,6 +124,8 @@ public class HomePage extends AppPage {
                   <JCard title="🏎️ Rendimiento & UX" subtitle="Llevando el motor al límite">
                       <a class="nav-link" href="/optimistic-test" data-router><span class="nav-icon">⏱️</span> Test Optimistic UI</a>
                       <a class="nav-link" href="/optimistic" data-router><span class="nav-icon">✨</span> Showcase Optimistic</a>
+                      <a class="nav-link" href="/toast" data-router><span class="nav-icon">🍞</span> Notificaciones (JToast)</a>
+                      <a class="nav-link" href="/boss-fight" data-router><span class="nav-icon">⚔️</span> Stress Test: Foco & DOM</a>
                       <a class="nav-link" href="/power" data-router><span class="nav-icon">🔥</span> Prueba de Estrés</a>
                       <a class="nav-link" href="/reliability" data-router><span class="nav-icon">🛡️</span> Falla y Fiabilidad</a>
                   </JCard>
@@ -134,6 +136,7 @@ public class HomePage extends AppPage {
                       <a class="nav-link" href="/editor" data-router><span class="nav-icon">✍️</span> Quill WYSIWYG</a>
                       <a class="nav-link" href="/mapa" data-router><span class="nav-icon">🗺️</span> Leaflet Mapas</a>
                       <a class="nav-link" href="/gsap" data-router><span class="nav-icon">🎬</span> GSAP Animaciones</a>
+                      <a class="nav-link" href="/shoelace" data-router><span class="nav-icon">🥾</span> Web Components Nativos</a>
                   </JCard>
 
               </div>

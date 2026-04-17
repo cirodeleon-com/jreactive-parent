@@ -1598,6 +1598,16 @@ function reindexBindings() {
 	            if (e && e.target !== el) return;
 				
 				if (el.type === 'file') return;
+				
+				if (el.dataset.jrxError) {
+				    el.classList.remove('jrx-error');
+				    delete el.dataset.jrxError;
+				    if (typeof el.setCustomValidity === 'function') el.setCustomValidity('');
+				    if (el._jrxErrorContainer) {
+				        el._jrxErrorContainer.remove();
+				        delete el._jrxErrorContainer;
+				     }
+				 }				
 
 	            el._jrxLastEdit = Date.now();
 	            const keyToSave = el.name || el.id || k; 

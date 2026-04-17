@@ -130,7 +130,7 @@ public class PowerTestPage extends AppPage {
                         
                         <div style="margin-bottom: 15px;">
                             <label style="display: block; font-weight: bold; margin-bottom: 5px;">ID Asignado</label>
-                            <input type="text" name="{{newServerForm.id}}" disabled style="width: 100%; padding: 8px; background: #eee; border: 1px solid #ccc; border-radius: 4px;">
+                            <input type="text" name="newServerForm.id" disabled style="width: 100%; padding: 8px; background: #eee; border: 1px solid #ccc; border-radius: 4px;">
                         </div>
 
                         <JInput :field="newServerForm.name" label="Nombre del Servidor" required="true" placeholder="Ej: Worker de Pagos" />
