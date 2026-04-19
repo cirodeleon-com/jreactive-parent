@@ -66,6 +66,7 @@ private final  Map<String, String> _childRefAlias = new HashMap<>();
   //🔥 Cachés Estáticos de Reflexión (Se ejecutan 1 sola vez en la vida del Servidor)
     private static final Map<Class<?>, List<Field>> FIELDS_CACHE = new ConcurrentHashMap<>();
     private static final Map<Class<?>, Map<String, Method>> CALLABLES_CACHE = new ConcurrentHashMap<>();
+    private static final Map<Class<?>, List<Method>> DEFER_CACHE = new ConcurrentHashMap<>();
 
     private String slotHtml = "";
     private Map<String, String> _slots = new HashMap<>();
@@ -333,6 +334,7 @@ private final  Map<String, String> _childRefAlias = new HashMap<>();
     public void _initIfNeeded() {
         if (!_initialized) {
             onInit();
+            _launchDeferredTasks();
             _initialized = true;
         }
     }
@@ -644,6 +646,10 @@ private final  Map<String, String> _childRefAlias = new HashMap<>();
             int newHash = getPojoHash(newVal);
             Integer oldHash = _structureHashes.get(key);
             return oldHash == null || oldHash != newHash;
+        }
+        
+        if (newVal == null && _structureHashes.containsKey(key)) {
+            return true;
         }
 
         return !Objects.equals(newVal, oldVal);
@@ -978,6 +984,88 @@ private final  Map<String, String> _childRefAlias = new HashMap<>();
         
         // Si tiene la anotación @Stateless explícita o NO tiene ninguna de las anteriores, es Stateless por defecto.
         return true; 
+    }
+    
+    private void _launchDeferredTasks() {
+        List<Method> deferMethods = DEFER_CACHE.computeIfAbsent(this.getClass(), clazz -> {
+            List<Method> list = new ArrayList<>();
+            Class<?> c = clazz;
+            while (c != null && c != Object.class) {
+                for (Method m : c.getDeclaredMethods()) {
+                    if (m.isAnnotationPresent(com.ciro.jreactive.annotations.Defer.class)) {
+                        m.setAccessible(true);
+                        list.add(m);
+                    }
+                }
+                c = c.getSuperclass();
+            }
+            return list;
+        });
+
+        for (Method m : deferMethods) {
+            com.ciro.jreactive.annotations.Defer deferAnn = m.getAnnotation(com.ciro.jreactive.annotations.Defer.class);
+            String targetState = deferAnn.value();
+
+            // 🔥 LA MAGIA: Hilo Virtual de Java 21
+            Thread.startVirtualThread(() -> {
+                try {
+                    // 1. Ejecutamos el método pesado en segundo plano
+                    Object result = m.invoke(this);
+
+                    // 2. Obtenemos el ReactiveVar y le metemos el resultado
+                    @SuppressWarnings("unchecked")
+                    ReactiveVar<Object> rv = (ReactiveVar<Object>) getRawBindings().get(targetState);
+                    
+                    if (rv != null) {
+                        rv.set(wrapInSmartType(result));
+                        
+                        // 3. Forzamos la sincronización para que genere el Delta y lo empuje por WS
+                        this._syncState();
+                    } else {
+                        System.err.println("⚠️ [JReactive] @Defer: No se encontró la variable @State '" + targetState + "'");
+                    }
+                } catch (Exception e) {
+                    System.err.println("❌ [JReactive] Error en tarea @Defer '" + m.getName() + "': " + e.getMessage());
+                }
+            });
+        }
+    }
+    
+    /**
+     * Vuelve a ejecutar la tarea asíncrona asociada a una variable @State marcada con @Defer.
+     * Ideal para botones de "Recargar" o "Refrescar" en la UI.
+     */
+    protected void reloadDeferred(String stateKey) {
+        List<Method> deferMethods = DEFER_CACHE.get(this.getClass());
+        if (deferMethods == null) return;
+
+        for (Method m : deferMethods) {
+            com.ciro.jreactive.annotations.Defer deferAnn = m.getAnnotation(com.ciro.jreactive.annotations.Defer.class);
+            if (stateKey.equals(deferAnn.value())) {
+                
+                // Lanzamos el Hilo Virtual idéntico a la carga inicial
+                Thread.startVirtualThread(() -> {
+                    try {
+                        // 1. Ejecutamos la lógica de negocio (BD, API, etc.)
+                        Object result = m.invoke(this);
+                        
+                        // 2. Inyectamos el resultado en la variable reactiva
+                        @SuppressWarnings("unchecked")
+                        ReactiveVar<Object> rv = (ReactiveVar<Object>) getRawBindings().get(stateKey);
+                        
+                        if (rv != null) {
+                            rv.set(wrapInSmartType(result));
+                            // 3. Forzamos el push del Delta al cliente
+                            //this._syncState(); 
+                        }
+                    } catch (Exception e) {
+                        System.err.println("❌ [JReactive] Error en reloadDeferred para la variable '" + stateKey + "': " + e.getMessage());
+                    }
+                });
+                return; // Encontramos el método y lanzamos el hilo, salimos del bucle.
+            }
+        }
+        System.err.println("⚠️ [JReactive] reloadDeferred: No se encontró ningún método con @Defer(\"" + stateKey + "\")");
     }
     
    

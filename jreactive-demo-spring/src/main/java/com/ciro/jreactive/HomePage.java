@@ -128,6 +128,7 @@ public class HomePage extends AppPage {
                       <a class="nav-link" href="/boss-fight" data-router><span class="nav-icon">⚔️</span> Stress Test: Foco & DOM</a>
                       <a class="nav-link" href="/power" data-router><span class="nav-icon">🔥</span> Prueba de Estrés</a>
                       <a class="nav-link" href="/reliability" data-router><span class="nav-icon">🛡️</span> Falla y Fiabilidad</a>
+                      <a class="nav-link" href="/defer-test" data-router><span class="nav-icon">⏳</span> Deferred State Test</a>
                   </JCard>
 
                   <JCard title="🧩 JS Interop" subtitle="Scripts nativos compatibles">

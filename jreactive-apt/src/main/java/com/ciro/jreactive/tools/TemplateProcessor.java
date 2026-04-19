@@ -10,6 +10,7 @@ import com.google.auto.service.AutoService;
 import com.sun.source.util.TreePath;
 import com.sun.source.util.Trees;
 import com.sun.source.tree.*;
+import com.sun.source.util.TreePathScanner;
 import com.ciro.jreactive.ast.ComponentBlueprintCompiler;
 import javax.tools.StandardLocation;
 import java.io.Reader;
@@ -92,8 +93,9 @@ public final class TemplateProcessor extends AbstractProcessor {
                  
                Element errorLocation = tplMethod != null ? tplMethod : clazz;
                boolean isValid = validateTemplateConnections(rawHtml, clazz, errorLocation);
+               boolean isValidDefer = validateDeferAnnotations(clazz);
                     
-               if(isValid) {
+               if(isValid && isValidDefer) {
                   generateHtmlResource(clazz, rawHtml);
                   generateClientJs(clazz, rawHtml);
                   generateJavaAccessor(clazz, rawHtml, rawCss);
@@ -885,6 +887,88 @@ public final class TemplateProcessor extends AbstractProcessor {
 
         sb.append("</").append(wc.tag()).append(">");
         return sb.toString();
+    }
+    
+ // 🔥 NUEVA FUNCIONALIDAD: Fail-Fast en tiempo de compilación para @Defer y reloadDeferred
+    private boolean validateDeferAnnotations(TypeElement clazz) {
+        boolean isValid = true;
+        Set<String> validStateKeys = new HashSet<>();
+        Set<String> validDeferKeys = new HashSet<>(); // Guardaremos los @Defer que sí existen
+
+        // 1. Recolectar todos los estados válidos de la clase y sus padres
+        for (Element e : getAllMembers(clazz)) {
+            if (isValidField(e)) {
+                validStateKeys.add(getBindKey(e)); 
+            }
+        }
+
+        // 2. Buscar métodos @Defer y asegurar que apunten a algo válido
+        for (Element e : getAllMembers(clazz)) {
+            if (e.getKind() == ElementKind.METHOD) {
+                com.ciro.jreactive.annotations.Defer deferAnn = e.getAnnotation(com.ciro.jreactive.annotations.Defer.class);
+                
+                if (deferAnn != null) {
+                    String targetState = deferAnn.value();
+                    if (!validStateKeys.contains(targetState)) {
+                        messager.printMessage(Diagnostic.Kind.ERROR, 
+                            "❌ [JReactive APT] Error en @Defer: La variable '" + targetState + 
+                            "' no existe o no está anotada con @State/@Bind/@Shared en " + clazz.getSimpleName(), e);
+                        isValid = false;
+                    } else {
+                        // Lo guardamos en la lista de Defer válidos para la siguiente prueba
+                        validDeferKeys.add(targetState);
+                    }
+                }
+            }
+        }
+        
+        if (!isValid) return false;
+
+        // 3. 🔥 AST SCANNER: Buscar llamadas a this.reloadDeferred("...") en el cuerpo de los métodos
+        if (trees != null) {
+            TreePath classPath = trees.getPath(clazz);
+            if (classPath != null) {
+                boolean[] scannerValid = {true}; // Array de 1 para usar dentro de la clase anónima
+                
+                new TreePathScanner<Void, Void>() {
+                    @Override
+                    public Void visitMethodInvocation(MethodInvocationTree node, Void p) {
+                        String methodName = "";
+                        
+                        // Extraemos el nombre del método siendo llamado (ya sea "reloadDeferred" o "this.reloadDeferred")
+                        if (node.getMethodSelect() instanceof IdentifierTree id) {
+                            methodName = id.getName().toString();
+                        } else if (node.getMethodSelect() instanceof MemberSelectTree mst) {
+                            methodName = mst.getIdentifier().toString();
+                        }
+
+                        // Si es nuestro helper, analizamos su argumento
+                        if ("reloadDeferred".equals(methodName) && !node.getArguments().isEmpty()) {
+                            ExpressionTree arg = node.getArguments().get(0);
+                            
+                            // Si el argumento es un String literal (ej: "ventas")
+                            if (arg instanceof LiteralTree literal && literal.getValue() instanceof String strValue) {
+                                
+                                // Si el desarrollador puso un string que no tiene @Defer... ¡BUM!
+                                if (!validDeferKeys.contains(strValue)) {
+                                    trees.printMessage(Diagnostic.Kind.ERROR, 
+                                        "❌ [JReactive APT] Error: Llamada inválida a reloadDeferred(\"" + strValue + "\"). " +
+                                        "No existe ningún método anotado con @Defer(\"" + strValue + "\") en " + clazz.getSimpleName(), 
+                                        node, 
+                                        getCurrentPath().getCompilationUnit());
+                                    scannerValid[0] = false;
+                                }
+                            }
+                        }
+                        return super.visitMethodInvocation(node, p); // Seguir escaneando
+                    }
+                }.scan(classPath, null);
+                
+                if (!scannerValid[0]) isValid = false;
+            }
+        }
+
+        return isValid;
     }
     
 }
