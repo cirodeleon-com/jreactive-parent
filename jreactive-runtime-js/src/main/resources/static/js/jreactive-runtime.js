@@ -2409,6 +2409,17 @@ function applyStateForKey(k, v) {
   // 1. Actualizar memoria global
   state[k] = v;
   
+  const toggleFallback = () => {
+        const shortKey = k.includes('.') ? k.split('.').at(-1) : k;
+        document.querySelectorAll(`[jrx-fallback="${k}"], [jrx-fallback="${shortKey}"]`).forEach(node => {
+            if (v === null || v === undefined) {
+                node.style.display = ''; // Aparece el spinner si la data es null
+            } else {
+                node.style.display = 'none'; // Se oculta si hay datos
+            }
+        });
+    };
+  
   // actualizamos la URL silenciosamente si la variable tiene un equivalente en el Query String.
     // (Este es un enfoque optimista: si escribes "busqueda", busca si existe ?busqueda= en la URL o lo agrega)
 	// 🔥 MAGIA URL (Controlada por el Diccionario de Java)
@@ -2588,6 +2599,7 @@ function applyStateForKey(k, v) {
         setupEventBindings();
         updateIfBlocks();
         updateEachBlocks();
+		toggleFallback();
     };
 
     doRender();
@@ -2601,6 +2613,8 @@ function applyStateForKey(k, v) {
   if (v && typeof v === 'object' && !Array.isArray(v)) {
       Object.keys(v).forEach(subKey => applyStateForKey(`${k}.${subKey}`, v[subKey]));
   }
+  toggleFallback();
+  
 }
 /* ──────────────────────────────────────────────────────────────
  *  Helpers de validación (Bean Validation → inputs HTML)

@@ -52,6 +52,7 @@
     <module>jreactive-standalone</module>
     <module>jreactive-runtime-jvm</module>
     <module>jreactive-store-redis</module>
+    <module>jreactive-webcomponents-maven-plugin</module>
   </modules>
 
   <build>

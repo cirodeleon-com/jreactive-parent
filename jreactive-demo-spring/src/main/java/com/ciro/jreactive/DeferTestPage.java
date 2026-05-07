@@ -17,7 +17,8 @@ public class DeferTestPage extends AppPage {
     public List<String> logs; 
 
     // 2. JReactive lanza esto en un Virtual Thread apenas se monta el componente.
-    @Defer("logs")
+    @Defer(value ="logs",
+    		fallback = "<div style='padding:20px; background:#ffeeba; border-radius:8px; text-align:center; font-weight:bold; color:#856404;'>⏳ Consultando Base de Datos Remota... (Suspense Activo)</div>")
     public List<String> cargarDatosPesados() {
         try {
             // Simulamos 2.5 segundos de latencia de una Base de Datos en la nube

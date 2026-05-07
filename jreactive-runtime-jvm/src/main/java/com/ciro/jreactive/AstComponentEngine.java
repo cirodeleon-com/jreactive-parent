@@ -464,11 +464,24 @@ public class AstComponentEngine extends AbstractComponentEngine {
         out.append(child.render());
     }
 
-    // ------------------------------------------------------------
+ // ------------------------------------------------------------
     // If/EacH blueprints: serialización manual preservando ":" en attrs
     // ------------------------------------------------------------
     private void renderIfBlueprint(IfNode ifNode, StringBuilder out, HtmlComponent ctx, String ns, RenderSession s, Set<String> aliases) {
         String cond = namespaceExpression(ifNode.condition, ns, ctx);
+        String rawExpr = ifNode.condition.trim();
+
+        // 🔥 REACT SUSPENSE KILLER
+        String fallback = ctx._getDeferFallback(rawExpr);
+        boolean isDeferred = fallback != null && !fallback.isBlank();
+        boolean isLoaded = ctx.getRawBindings().containsKey(rawExpr) && ctx.getRawBindings().get(rawExpr).get() != null;
+
+        if (isDeferred) {
+            out.append("<div id=\"jrx-suspense-").append(escapeAttr(cond)).append("\" jrx-suspense=\"true\">");
+            // 🔥 SIEMPRE inyectamos, pero ocultamos si ya está cargado
+            String displayStyle = isLoaded ? " style=\"display: none;\"" : "";
+            out.append("<div jrx-fallback=\"").append(escapeAttr(cond)).append("\"").append(displayStyle).append(">").append(fallback).append("</div>");
+        }
 
         out.append("<template data-if=\"").append(escapeAttr(cond)).append("\">");
         for (JrxNode n : ifNode.trueBranch) {
@@ -483,10 +496,25 @@ public class AstComponentEngine extends AbstractComponentEngine {
             }
             out.append("</template>");
         }
+
+        if (isDeferred) out.append("</div>");
     }
 
     private void renderEachBlueprint(EachNode eachNode, StringBuilder out, HtmlComponent ctx, String ns, RenderSession s, Set<String> aliases) {
         String listExpr = namespaceExpression(eachNode.listExpression, ns, ctx);
+        String rawExpr = eachNode.listExpression.trim();
+
+        // 🔥 REACT SUSPENSE KILLER
+        String fallback = ctx._getDeferFallback(rawExpr);
+        boolean isDeferred = fallback != null && !fallback.isBlank();
+        boolean isLoaded = ctx.getRawBindings().containsKey(rawExpr) && ctx.getRawBindings().get(rawExpr).get() != null;
+
+        if (isDeferred) {
+            out.append("<div id=\"jrx-suspense-").append(escapeAttr(listExpr)).append("\" jrx-suspense=\"true\">");
+            // 🔥 SIEMPRE inyectamos, pero ocultamos si ya está cargado
+            String displayStyle = isLoaded ? " style=\"display: none;\"" : "";
+            out.append("<div jrx-fallback=\"").append(escapeAttr(listExpr)).append("\"").append(displayStyle).append(">").append(fallback).append("</div>");
+        }
 
         out.append("<template data-each=\"")
            .append(escapeAttr(listExpr))
@@ -502,6 +530,8 @@ public class AstComponentEngine extends AbstractComponentEngine {
             out.append(serializeBlueprintNode(n, ctx, ns, childAliases));
         }
         out.append("</template>");
+
+        if (isDeferred) out.append("</div>");
     }
 
     // ------------------------------------------------------------
@@ -981,7 +1011,11 @@ public class AstComponentEngine extends AbstractComponentEngine {
     // ------------------------------------------------------------
     private static boolean isBooleanAttr(String k) {
         return switch (k) {
-            case "disabled", "checked", "required", "selected", "readonly", "multiple", "hidden" -> true;
+            case "disabled", "checked", "required", "selected",
+                 "readonly", "multiple", "hidden",
+                 // Web Components comunes (Shoelace, Material, etc.)
+                 "loading", "pill", "circle", "outline", "caret",
+                 "open", "expanded", "active", "indeterminate" -> true;
             default -> false;
         };
     }

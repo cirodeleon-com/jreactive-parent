@@ -15,6 +15,18 @@ public abstract class AbstractComponentEngine implements ComponentEngine.Strateg
 
     private static volatile ComponentFactory componentFactory = new DefaultComponentFactory();
     
+    private static final java.util.List<String> COMPONENT_PACKAGES = new java.util.concurrent.CopyOnWriteArrayList<>(java.util.Arrays.asList(
+            "", 
+            "com.ciro.jreactive.", 
+            "com.ciro.jreactive.components.",
+            "com.ciro.jreactive.web."
+        ));
+
+        public static void addScanPackage(String pkg) {
+            if (!pkg.endsWith(".")) pkg += ".";
+            if (!COMPONENT_PACKAGES.contains(pkg)) COMPONENT_PACKAGES.add(pkg);
+        }
+    
     
 
     public static void setComponentFactory(ComponentFactory factory) {
@@ -194,14 +206,22 @@ public abstract class AbstractComponentEngine implements ComponentEngine.Strateg
         try {
             Class<?> raw = null;
             
-            // 🔥 CIRUGÍA: Lista ordenada de paquetes donde el motor buscará la clase
-            String[] packagesToTry = {
-                ctx.getClass().getPackageName() + ".", // 1. Mismo paquete que el padre
-                "",                                    // 2. Nombre global (si pasaste el FQCN en el HTML)
-                "com.ciro.jreactive.",                 // 3. Paquete base UI (JTable, JButton, etc.)
-                "com.ciro.jreactive.web.components.",  // 4. NUEVO: Paquete de Web Components
-                "com.ciro.jreactive.components."       // 5. Fallback común para componentes extra
-            };
+            // 🔍 Construimos la lista de búsqueda dinámica
+            java.util.List<String> packagesToTry = new java.util.ArrayList<>();
+            
+            // 1. Siempre buscar primero en el mismo paquete que el padre
+            packagesToTry.add(ctx.getClass().getPackageName() + "."); 
+            
+            // 2. Buscar por nombre global (si el dev pasó el FQCN completo en el HTML)
+            packagesToTry.add(""); 
+            
+            // 3. Añadir todos los paquetes base y los que el dev registró con addScanPackage()
+            packagesToTry.addAll(COMPONENT_PACKAGES); 
+            
+            ClassLoader classLoader = Thread.currentThread().getContextClassLoader();
+            if (classLoader == null) {
+                classLoader = AbstractComponentEngine.class.getClassLoader(); // Fallback de seguridad
+            }
 
             for (String prefix : packagesToTry) {
                 try {
@@ -219,11 +239,10 @@ public abstract class AbstractComponentEngine implements ComponentEngine.Strateg
             return (ViewLeaf) componentFactory.create((Class<? extends ViewLeaf>) raw);
             
         } catch (Exception e) { 
-            throw new RuntimeException("Error: No se encontró el componente '" + className + 
-                "'. Verifica el nombre, imports o usa el paquete completo (ej: com.app.ui." + className + ")", e); 
+            throw new RuntimeException("❌ Error: No se encontró el componente '" + className + 
+                "'. Verifica el nombre o registra su paquete en el main con AbstractComponentEngine.addScanPackage()", e);
         }
-    }
-    
+    }    
     
     @Override
     public String renderChild(HtmlComponent parent, String className, Map<String, String> attrs, Map<String, String> slots) {

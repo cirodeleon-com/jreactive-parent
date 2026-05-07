@@ -14,4 +14,5 @@ import java.lang.annotation.Target;
 public @interface Defer {
     /** El nombre de la variable @State donde se guardará el resultado */
     String value();
+    String fallback() default "";
 }

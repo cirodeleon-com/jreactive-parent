@@ -426,6 +426,34 @@ private final  Map<String, String> _childRefAlias = new HashMap<>();
     @Language("html")
     protected String template() {
         return TEMPLATE_HTML_CACHE.computeIfAbsent(this.getClass(), clazz -> {
+        	
+        	com.ciro.jreactive.annotations.WebComponent wc = clazz.getAnnotation(com.ciro.jreactive.annotations.WebComponent.class);
+            if (wc != null) {
+                StringBuilder sb = new StringBuilder();
+                sb.append("<").append(wc.tag());
+                
+                for (String prop : wc.props()) {
+                    sb.append(" :").append(prop).append("=\"{{").append(prop).append("}}\"");
+                }
+                for (String evt : wc.events()) {
+                    String camelCase = java.util.Arrays.stream(evt.split("-"))
+                        .map(p -> p.substring(0, 1).toUpperCase() + p.substring(1))
+                        .collect(java.util.stream.Collectors.joining());
+                    sb.append(" @").append(evt).append("=\"{{on").append(camelCase).append("}}\"");
+                }
+                sb.append(">");
+                for (String slot : wc.slots()) {
+                    if ("default".equals(slot) || "".equals(slot)) {
+                        sb.append("<slot/>");
+                    } else {
+                        sb.append("<div slot=\"").append(slot).append("\" style=\"display: contents;\"><slot name=\"").append(slot).append("\"/></div>");
+                    }
+                }
+                sb.append("</").append(wc.tag()).append(">");
+                return sb.toString();
+            }
+        	
+        	
             String baseName = clazz.getSimpleName() + ".html";
             try (InputStream is = clazz.getResourceAsStream(baseName)) {
                 if (is != null) {
@@ -1068,6 +1096,27 @@ private final  Map<String, String> _childRefAlias = new HashMap<>();
         System.err.println("⚠️ [JReactive] reloadDeferred: No se encontró ningún método con @Defer(\"" + stateKey + "\")");
     }
     
+    
+ // =========================================================================
+    // 🔥 REACT SUSPENSE KILLER HELPERS
+    // =========================================================================
+    
+    public String _getDeferFallback(String stateKey) {
+        java.util.List<java.lang.reflect.Method> deferMethods = DEFER_CACHE.get(this.getClass());
+        if (deferMethods == null) return null;
+
+        for (java.lang.reflect.Method m : deferMethods) {
+            com.ciro.jreactive.annotations.Defer deferAnn = m.getAnnotation(com.ciro.jreactive.annotations.Defer.class);
+            if (deferAnn != null && stateKey.equals(deferAnn.value())) {
+                return deferAnn.fallback();
+            }
+        }
+        return null;
+    }
+
+    public boolean _isDeferredState(String stateKey) {
+        return _getDeferFallback(stateKey) != null;
+    }
    
     
 }

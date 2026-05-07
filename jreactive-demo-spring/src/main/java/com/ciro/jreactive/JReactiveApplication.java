@@ -22,6 +22,11 @@ public class JReactiveApplication {
 
     public static void main(String[] args) {
     	
+    	AbstractComponentEngine.addScanPackage("com.ciro.jreactive.web.components");
+    	
+    	AbstractComponentEngine.addScanPackage("com.ciro.jreactive.web.shoelace");
+        AbstractComponentEngine.addScanPackage("com.ciro.jreactive.web.ui5");
+    	
         SpringApplication.run(JReactiveApplication.class, args);
     }
 
