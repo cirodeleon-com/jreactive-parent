@@ -1,8 +1,8 @@
 # CodeContextualizer Reasoning state snapshot
-# generatedAtMillis	1785081053314
+# generatedAtMillis	1785081699287
 # status	sha256	relativePath
 FILE	0196fe1377977582ae6c094c030d07342a544c1b81f0a095d1981e7d113a3287	.codecontextualizerignore
-FILE	e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855	.github/workflows/ci.yml
+FILE	bb147ac4afd7703cfc2646dbcea71365441c34f5c3e05b23eb26f93024d9e4c4	.github/workflows/ci.yml
 FILE	7f1438d1881e4f4b7626ab343799b2a07b7ce99a9fe80566f872e7b16b92615c	.gitignore
 FILE	3d3508df404e982fd6ca15b386625bef62b7d3a45664044d79c249f02c907a4f	.project
 FILE	773c6d111354b495e68035a89eddbe5881224fea04a237d27ed5ca138835ffd7	.settings/org.eclipse.m2e.core.prefs
@@ -52,7 +52,7 @@ FILE	2454b5c6456eddbdb208baae76d62abac8a3a77c94a3b7bbace9243eacf51263	jreactive-
 FILE	143294a999d2eca395a212e7a01b91072aab5c078e6aa7c1f56c20df20491722	jreactive-core/src/main/java/com/ciro/jreactive/factory/DefaultComponentFactory.java
 FILE	df420e0f0a526cde457c2ab08d7dfc16d1a7727fba6695794267c291a1f16e67	jreactive-core/src/main/java/com/ciro/jreactive/HtmlComponent.java
 FILE	bc19f24ef1788f36195112bca039ef9fabf7ef4e04e42bc3796504258534a8ab	jreactive-core/src/main/java/com/ciro/jreactive/HtmlEscaper.java
-FILE	72152eed570f3c6c3baaa9be9e2c95fbdabc9725d292861096ab70e9404fa3ad	jreactive-core/src/main/java/com/ciro/jreactive/JrxFile.java
+FILE	c60cb0072205d886e06e98a1f1a8d25d4b7b7f99f86e7339029d239ac033a0ff	jreactive-core/src/main/java/com/ciro/jreactive/JrxFile.java
 FILE	981cf8497740825c2b6259fe7d39bc604922956964a76d662e694807c560d6d4	jreactive-core/src/main/java/com/ciro/jreactive/ReactiveVar.java
 FILE	6b2adb7db209bed41cedcf975b2fdd2710a90b3af0722cfaf875840bbbe5349b	jreactive-core/src/main/java/com/ciro/jreactive/router/Layout.java
 FILE	4fd902ed1eb16d6c415c1635af87a25c68c85bbef86e61367910708ecfd3b796	jreactive-core/src/main/java/com/ciro/jreactive/router/PathPattern.java
@@ -85,7 +85,7 @@ FILE	4482efe5dd4e153d99d57aa061f60189ed6caa485081bc3e435dbacfe855bcd1	jreactive-
 FILE	ab06114befcc45fd5557e32b5382643325a1e007467df6a753f0b4696adbcb1e	jreactive-core/src/test/java/com/ciro/jreactive/factory/DefaultComponentFactoryTest.java
 FILE	f9463e9dcaf4d4ec44224adceee6834dce9b4c53ec1b80f50989f253a10d444d	jreactive-core/src/test/java/com/ciro/jreactive/HtmlComponentTest.java
 FILE	299ee7df8cded5919049a559b8c88c138df53427edf6e990f7c1dee1e546fe71	jreactive-core/src/test/java/com/ciro/jreactive/HtmlEscaperTest.java
-FILE	98e0f5e9af3ffafa466a8bc271c526acc4704e4cfdc2591a82ac4563bb40f491	jreactive-core/src/test/java/com/ciro/jreactive/JrxFileTest.java
+FILE	d4a76d073ce8cd93f98abea1254a64e41e52363d5117d742f03d04bf6f94b1c3	jreactive-core/src/test/java/com/ciro/jreactive/JrxFileTest.java
 FILE	12148e4ddb2385f8a26680af795b91ebba2460b3f8cf05d8ad301091703fa7ab	jreactive-core/src/test/java/com/ciro/jreactive/ReactiveVarTest.java
 FILE	25dd1c24fdf6a9b642734b1cfdd67a0a0c4946db71677b5fd2411135a52b0866	jreactive-core/src/test/java/com/ciro/jreactive/router/PathPatternTest.java
 FILE	c1972029503443e180e7cc707c0bd50293011c59d483d2aba5674fa0f634d330	jreactive-core/src/test/java/com/ciro/jreactive/smart/SmartListTest.java

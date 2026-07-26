@@ -1,0 +1,46 @@
+===== CODECONTEXTUALIZER PATCH SESSION TIMELINE =====
+
+Sesión: 20260726-110110
+Creada: 2026-07-26T11:01:10.8751486
+Proyecto: C:\Users\Inspiron 15 3000\Downloads\jreactive-parent
+Backup: C:\Users\Inspiron 15 3000\Downloads\jreactive-parent\.codecontextualizer\backups\main\20260726-110110
+
+Descripción:
+Intención: hacer que JrxFile.getFormattedSize() produzca siempre la misma cadena, independientemente del locale por defecto de la JVM que ejecute el servidor.
+Alcance: se modifican dos archivos. En JrxFile.java se añaden dos imports y se reemplaza getFormattedSize para construir el DecimalFormat con DecimalFormatSymbols de Locale.ROOT. En JrxFileTest.java se corrigen las tres aserciones al formato determinista y se añade una prueba de regresión que ejerce el método bajo es-CO, en-US y de-DE. No se toca ningún otro archivo ni se cambia la firma pública del método.
+Motivo: el CI reveló que el método depende del locale por defecto de la JVM. En un entorno es-CO devuelve "1,5 KB" y en el runner en-US devuelve "1.5 KB". Como el valor se renderiza en servidor y termina en el HTML, el mismo componente produce salidas distintas según la máquina que lo atienda, lo que rompe el determinismo del render y sería inconsistente entre nodos bajo la épica de resurrección de estado. No bastaba reutilizar código existente porque no hay ninguna utilidad de formato en el proyecto; la corrección correcta es parametrizar explícitamente el DecimalFormat que ya se usa, no crear un helper nuevo.
+Decisión declarada: se elige Locale.ROOT y no el locale del usuario final. Localizar el tamaño según el usuario exigiría propagar un Locale hasta el componente, que es una funcionalidad distinta y no pedida. La ruta de upgrade natural, si algún día se requiere, es añadir una sobrecarga getFormattedSize(Locale) conservando la actual como delegación a ROOT. No se añade esa sobrecarga ahora para no introducir API preventiva.
+Se corrige el test en lugar de conservarlo porque su valor esperado codificaba el locale de la máquina del desarrollador, no un contrato del framework.
+Validación manual sugerida desde el punto de vista del usuario: ejecutar mvn -pl jreactive-core test y confirmar que JrxFileTest pasa sus cuatro pruebas. Repetir forzando otro locale con mvn -pl jreactive-core test -Duser.language=es
+
+... [descripción truncada por CodeContextualizer]
+
+1) ANÁLISIS DEL PATCH
+   - Operaciones analizadas: 3
+   - Aplicables: 3
+   - Ya aplicadas: 0
+   - No aplicables: 0
+   - Archivos afectados por análisis: 2
+
+2) APLICACIÓN
+   - Operaciones aplicadas: 3
+   - Archivos tocados: 2
+   - Estado: APPLIED
+
+3) ARCHIVOS TOCADOS
+   - jreactive-core/src/main/java/com/ciro/jreactive/JrxFile.java
+   - jreactive-core/src/test/java/com/ciro/jreactive/JrxFileTest.java
+
+4) DETALLE DE OPERACIONES
+   1. [APPLICABLE] REPLACE_BLOCK jreactive-core/src/main/java/com/ciro/jreactive/JrxFile.java
+      Detalle: Aplicable. Coincidencia encontrada con tolerancia de saltos de línea, espacios o indentación.
+   2. [APPLICABLE] REPLACE_BLOCK jreactive-core/src/main/java/com/ciro/jreactive/JrxFile.java
+      Detalle: Aplicable. Coincidencia exacta encontrada.
+   3. [APPLICABLE] REPLACE_BLOCK jreactive-core/src/test/java/com/ciro/jreactive/JrxFileTest.java
+      Detalle: Aplicable. Coincidencia encontrada con tolerancia de saltos de línea, espacios o indentación.
+
+5) SIGUIENTE ACCIÓN RECOMENDADA
+   - Ejecuta la verificación configurada o mvn clean test.
+   - Si pasa, haz commit de la feature.
+   - Si falla, usa rollback o pide un patch correctivo.
+
