@@ -12,12 +12,77 @@ import java.util.Base64;
 import java.util.HashMap;
 import java.util.Map;
 import java.nio.charset.StandardCharsets;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class JrxStateToken {
     
     // 🔥 MAPPER INTERNO ESTÁTICO: Aislado de Spring.
     private static final ObjectMapper TOKEN_MAPPER = new ObjectMapper().findAndRegisterModules();
-    private static final String SECRET = System.getenv().getOrDefault("JRX_SECRET", java.util.UUID.randomUUID().toString()); 
+
+    private static final Logger log = LoggerFactory.getLogger(JrxStateToken.class);
+
+    /**
+     * Secreto HMAC para firmar tokens @Stateless.
+     * Orden de resolución:
+     *   1. Variable de entorno  JRX_SECRET           (producción)
+     *   2. System property      jrx.secret           (CI / Spring profiles)
+     *   3. Archivo persistente  ~/.jrx/secret        (dev local, sobrevive reinicios)
+     *   4. Fallback efímero     UUID por arranque    (con log.error ruidoso)
+     *
+     * Multi-instancia (varias JVMs detrás de un LB / K8s): DEBES definir JRX_SECRET
+     * con el mismo valor en TODOS los nodos. Si no, los tokens emitidos por un nodo
+     * no se validan en otro y verás fallos intermitentes 'Token alterado'.
+     */
+    private static final String SECRET = resolveSecret();
+
+    private static String resolveSecret() {
+        // 1) Env
+        String s = System.getenv("JRX_SECRET");
+        // 2) System property
+        if (s == null || s.isBlank()) s = System.getProperty("jrx.secret");
+        if (s != null && !s.isBlank()) return s;
+
+        // 3) Archivo persistente en ~/.jrx/secret
+        try {
+            java.nio.file.Path dir  = java.nio.file.Paths.get(System.getProperty("user.home"), ".jrx");
+            java.nio.file.Path file = dir.resolve("secret");
+
+            if (java.nio.file.Files.exists(file)) {
+                String fromFile = java.nio.file.Files.readString(file, StandardCharsets.UTF_8).trim();
+                if (!fromFile.isBlank()) {
+                    log.warn("[JReactive] JRX_SECRET no definido. Usando secreto persistente de {}. " +
+                             "NO es seguro para despliegues multi-instancia: define la variable de entorno " +
+                             "JRX_SECRET con el mismo valor en todos los nodos.", file);
+                    return fromFile;
+                }
+            }
+
+            java.nio.file.Files.createDirectories(dir);
+            String generated = java.util.UUID.randomUUID().toString() + "-" + Long.toHexString(System.nanoTime());
+            java.nio.file.Files.writeString(file, generated, StandardCharsets.UTF_8,
+                    java.nio.file.StandardOpenOption.CREATE,
+                    java.nio.file.StandardOpenOption.TRUNCATE_EXISTING,
+                    java.nio.file.StandardOpenOption.WRITE);
+
+            // Restringir permisos (best-effort, no falla si el FS no lo soporta)
+            try {
+                java.io.File f = file.toFile();
+                f.setReadable(false, false); f.setReadable(true, true);
+                f.setWritable(false, false); f.setWritable(true, true);
+            } catch (Exception ignored) { /* FS sin soporte POSIX */ }
+
+            log.warn("[JReactive] JRX_SECRET no definido. Secreto persistente generado en {}. " +
+                     "NO es seguro para multi-instancia: define JRX_SECRET con el mismo valor en todos los nodos.", file);
+            return generated;
+
+        } catch (Exception e) {
+            log.error("[JReactive] No se pudo crear el secreto persistente para JrxStateToken. " +
+                      "Cayendo a un secreto efímero — TODOS los tokens @Stateless se invalidarán en cada reinicio. " +
+                      "Define la variable de entorno JRX_SECRET para evitar esto.", e);
+            return java.util.UUID.randomUUID().toString();
+        }
+    }
 
     public static String encode(Map<String, Object> state) throws Exception {
         Map<String, Object> payload = new HashMap<>(state);

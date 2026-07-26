@@ -1,0 +1,60 @@
+# CI del reactor JReactive.
+#
+# Ejecuta mvn clean verify completo, deliberadamente SIN -DskipTests.
+# Cubre JVM (surefire) y JS (frontend-maven-plugin engancha npm test en la fase test
+# de jreactive-runtime-js). JaCoCo ya esta declarado en el pom padre, por lo que el
+# reporte se genera solo y aqui unicamente se publica como artifact.
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build & verify (JDK 21)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      # El reactor necesita red durante generate-sources: jreactive-ui descarga los
+      # manifiestos custom-elements.json desde jsdelivr y jreactive-runtime-js descarga
+      # Node. El runner tiene salida a internet, pero esto es una dependencia real y esta
+      # anotada como pendiente en la epica 0 del backlog.
+      - name: Build and verify reactor
+        run: mvn -B -ntp clean verify
+
+      - name: Upload JaCoCo reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: jacoco-reports
+          path: '**/target/site/jacoco/**'
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Upload surefire reports
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: surefire-reports
+          path: '**/target/surefire-reports/**'
+          if-no-files-found: warn
+          retention-days: 14

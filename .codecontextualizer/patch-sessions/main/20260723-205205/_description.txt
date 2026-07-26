@@ -1,0 +1,10 @@
+Intención: Excluir las clases generadas por javacc de la librería ph-css (com.helger.css.parser.ParserCSS30TokenManager) de la instrumentación de JaCoCo, que causan MethodTooLargeException y IllegalClassFormatException que hacen fallar el build en cascada.
+
+Alcance: Se modifica únicamente la configuración del plugin jacoco-maven-plugin en pom.xml (raíz del proyecto), agregando <excludes> para las clases de ph-css. No se toca ningún archivo Java ni ninguna otra configuración.
+
+Motivo: JaCoCo 0.8.12 no puede instrumentar ParserCSS30TokenManager.jjMoveNfa_0 porque el método excede el límite de bytecode. Esto lanza IllegalClassFormatException que se propaga y causa que tests que dependen de classloading normal (como JrxHttpApiTest) fallen. Es un problema pre-existente del entorno de build, no del código de negocio.
+
+Validación manual sugerida desde el punto de vista del usuario:
+- Ejecutar mvn clean install desde la raíz del proyecto.
+- El build debe completar sin errores de JaCoCo MethodTooLargeException.
+- Los tests de CssScoperTest y JrxHttpApiTest deben pasar sin IllegalClassFormatException en el stack trace.

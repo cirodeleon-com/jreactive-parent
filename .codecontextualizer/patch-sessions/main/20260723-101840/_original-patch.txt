@@ -1,0 +1,330 @@
+<<<DESCRIPCION>>>
+Intención: Añadir cobertura automatizada para la funcionalidad de autorización opt-in (@Authorize + AuthorizationProvider) introducida en el parche de seguridad, cubriendo tanto el SPI como el enforcement en JrxHttpApi.call.
+Alcance: Se crea un único archivo nuevo: AuthorizationEnforcementTest.java en jreactive-runtime-jvm/src/test/java/com/ciro/jreactive/. No se modifica código productivo ni pruebas existentes.
+Motivo: El parche de autorización introdujo 3 elementos nuevos (anotación @Authorize, interfaz AuthorizationProvider con AuthContext/Registry/Holder, y enforcement fail-closed en JrxHttpApi.call) sin ninguna prueba que valide el comportamiento. Esto es riesgo crítico: un regression en el bloque de autorización podría dejar métodos protegidos abiertos o bloquear métodos públicos, y no habría test que lo detecte. Las pruebas cubren: (1) contrato del SPI, (2) fail-closed sin provider, (3) allow/deny con provider, (4) opt-in para métodos sin @Authorize, (5) inspección de roles, (6) @Authorize a nivel clase.
+Validación manual sugerida desde el punto de vista del usuario:
+- Ejecutar: cd jreactive-runtime-jvm && mvn test -Dtest=AuthorizationEnforcementTest
+- Los 9 tests deben pasar en verde.
+- Verificar que el cleanup de Registry/Holder en @AfterEach no afecta a otros tests del mismo módulo (mvn test sin -Dtest filtro).
+<<<END_DESCRIPCION>>>
+
+<<<FILE: jreactive-runtime-jvm/src/test/java/com/ciro/jreactive/AuthorizationEnforcementTest.java>>>
+<<<OP: CREATE_FILE>>>
+<<<CONTENT>>>
+package com.ciro.jreactive;
+
+import com.ciro.jreactive.annotations.Authorize;
+import com.ciro.jreactive.annotations.Call;
+import com.ciro.jreactive.annotations.Stateless;
+import com.ciro.jreactive.spi.AuthorizationProvider;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.lenient;
+
+/**
+ * Cubre el PATCH de autorización opt-in:
+ *   - @Authorize (core)
+ *   - AuthorizationProvider con AuthContext, Registry y Holder (runtime-jvm)
+ *   - Enforcement fail-closed en JrxHttpApi.call (runtime-jvm)
+ *
+ * Limpia el estado global (Registry static volatile + Holder ThreadLocal)
+ * en @BeforeEach y @AfterEach para evitar fugas entre tests.
+ */
+@ExtendWith(MockitoExtension.class)
+@DisplayName("@Authorize Enforcement — Autorización opt-in para métodos @Call")
+class AuthorizationEnforcementTest {
+
+    @Mock PageResolver pageResolver;
+    @Mock CallGuard guard;
+    @Mock JrxHubManager hubManager;
+    private JrxHttpApi api;
+    private final ObjectMapper mapper = new ObjectMapper();
+
+    // ─── Componentes de prueba ───────────────────────────────────
+
+    /**
+     * Página con tres variantes de @Call:
+     *   - adminOnly: protegido con roles
+     *   - anyAuth:   protegido sin roles explícitos
+     *   - open:      sin @Authorize (control de opt-in)
+     */
+    @Stateless
+    static class SecuredPage extends HtmlComponent {
+        @State public int valor = 0;
+
+        @Call
+        @Authorize(roles = {"ADMIN"})
+        public void adminOnly() { valor = 100; }
+
+        @Call
+        @Authorize
+        public void anyAuth() { valor = 200; }
+
+        @Call
+        public void open() { valor = 300; }
+
+        @Override protected String template() { return "<div>{{valor}}</div>"; }
+    }
+
+    /** Página protegida a nivel clase: todos los @Call heredan la restricción. */
+    @Stateless
+    @Authorize(roles = {"SUPERADMIN"})
+    static class ClassLevelSecuredPage extends HtmlComponent {
+        @State public int valor = 0;
+
+        @Call
+        public void restricted() { valor = 42; }
+
+        @Override protected String template() { return "<div>{{valor}}</div>"; }
+    }
+
+    // ─── Ciclo de vida: limpiar estado global estático ──────────
+
+    @BeforeEach
+    void setUp() {
+        AstComponentEngine.installAsDefault();
+        api = new JrxHttpApi(pageResolver, mapper, guard, true, hubManager);
+        AuthorizationProvider.Registry.setProvider(null);
+        AuthorizationProvider.Holder.clear();
+    }
+
+    @AfterEach
+    void tearDown() {
+        AuthorizationProvider.Registry.setProvider(null);
+        AuthorizationProvider.Holder.clear();
+    }
+
+    // ─── SPI: AuthContext, Holder, Registry ─────────────────────
+
+    @Test
+    @DisplayName("AuthContext: anonymous() no está autenticado y no tiene roles ni principal")
+    void testAnonymousContext() {
+        var anon = AuthorizationProvider.AuthContext.anonymous();
+        assertThat(anon.principalName()).isNull();
+        assertThat(anon.roles()).isEmpty();
+        assertThat(anon.principal()).isNull();
+        assertThat(anon.isAuthenticated()).isFalse();
+    }
+
+    @Test
+    @DisplayName("AuthContext: contexto con principal está autenticado y expone roles")
+    void testAuthenticatedContext() {
+        Object principal = new Object();
+        var ctx = new AuthorizationProvider.AuthContext("ciro", Set.of("ADMIN", "USER"), principal);
+        assertThat(ctx.principalName()).isEqualTo("ciro");
+        assertThat(ctx.roles()).containsExactlyInAnyOrder("ADMIN", "USER");
+        assertThat(ctx.isAuthenticated()).isTrue();
+        assertThat(ctx.principal()).isSameAs(principal);
+    }
+
+    @Test
+    @DisplayName("Holder: devuelve anónimo por defecto; set()/clear() propagan correctamente")
+    void testHolderLifecycle() {
+        AuthorizationProvider.Holder.clear();
+        assertThat(AuthorizationProvider.Holder.get().isAuthenticated()).isFalse();
+
+        var ctx = new AuthorizationProvider.AuthContext("admin", Set.of("ADMIN"), null);
+        AuthorizationProvider.Holder.set(ctx);
+        assertThat(AuthorizationProvider.Holder.get()).isEqualTo(ctx);
+        assertThat(AuthorizationProvider.Holder.get().isAuthenticated()).isTrue();
+
+        AuthorizationProvider.Holder.clear();
+        assertThat(AuthorizationProvider.Holder.get().isAuthenticated()).isFalse();
+    }
+
+    @Test
+    @DisplayName("Registry: set()/get() registran y recuperan el provider global")
+    void testRegistrySetAndGet() {
+        AuthorizationProvider provider = (ctx, comp, method, meta) -> true;
+        AuthorizationProvider.Registry.setProvider(provider);
+        assertThat(AuthorizationProvider.Registry.get()).isSameAs(provider);
+
+        AuthorizationProvider.Registry.setProvider(null);
+        assertThat(AuthorizationProvider.Registry.get()).isNull();
+    }
+
+    // ─── Enforcement en JrxHttpApi.call ─────────────────────────
+
+    @Test
+    @DisplayName("Fail-closed: @Authorize sin provider registrado → FORBIDDEN")
+    void testFailClosedWithoutProvider() {
+        var page = new SecuredPage();
+        page.setId("p-fc");
+        page._initIfNeeded();
+
+        lenient().when(pageResolver.getPage(anyString(), anyString(), any())).thenReturn(page);
+        lenient().when(guard.tryConsume(anyString())).thenReturn(true);
+        lenient().when(guard.validateParams(any(), any(), any())).thenReturn(Set.of());
+        lenient().when(guard.errorJson(eq("FORBIDDEN"), anyString()))
+                .thenReturn("{\"ok\":false,\"code\":\"FORBIDDEN\"}");
+
+        String result = api.call("sid", "/sec", "adminOnly", Map.of("args", List.of()), new HashMap<>());
+
+        assertThat(result).contains("FORBIDDEN");
+        assertThat(page.valor).isZero();
+    }
+
+    @Test
+    @DisplayName("Allow: provider que aprueba → método se ejecuta normalmente")
+    void testAllowWhenProviderApproves() {
+        var page = new SecuredPage();
+        page.setId("p-allow");
+        page._initIfNeeded();
+
+        AuthorizationProvider.Registry.setProvider((ctx, comp, method, meta) -> true);
+
+        lenient().when(pageResolver.getPage(anyString(), anyString(), any())).thenReturn(page);
+        lenient().when(guard.tryConsume(anyString())).thenReturn(true);
+        lenient().when(guard.validateParams(any(), any(), any())).thenReturn(Set.of());
+
+        String result = api.call("sid", "/sec", "adminOnly", Map.of("args", List.of()), new HashMap<>());
+
+        assertThat(result).contains("\"ok\":true");
+        assertThat(page.valor).isEqualTo(100);
+    }
+
+    @Test
+    @DisplayName("Deny: provider que rechaza → FORBIDDEN y el método no se ejecuta")
+    void testDenyWhenProviderRejects() {
+        var page = new SecuredPage();
+        page.setId("p-deny");
+        page._initIfNeeded();
+
+        AuthorizationProvider.Registry.setProvider((ctx, comp, method, meta) -> false);
+
+        lenient().when(pageResolver.getPage(anyString(), anyString(), any())).thenReturn(page);
+        lenient().when(guard.tryConsume(anyString())).thenReturn(true);
+        lenient().when(guard.validateParams(any(), any(), any())).thenReturn(Set.of());
+        lenient().when(guard.errorJson(eq("FORBIDDEN"), anyString()))
+                .thenReturn("{\"ok\":false,\"code\":\"FORBIDDEN\"}");
+
+        String result = api.call("sid", "/sec", "adminOnly", Map.of("args", List.of()), new HashMap<>());
+
+        assertThat(result).contains("FORBIDDEN");
+        assertThat(page.valor).isZero();
+    }
+
+    @Test
+    @DisplayName("Opt-in: método SIN @Authorize funciona igual sin importar si hay provider o no")
+    void testOptInUnannotatedMethodUnaffected() {
+        var page = new SecuredPage();
+        page.setId("p-open");
+        page._initIfNeeded();
+
+        // Sin provider registrado — no debe importar para métodos sin @Authorize
+        lenient().when(pageResolver.getPage(anyString(), anyString(), any())).thenReturn(page);
+        lenient().when(guard.tryConsume(anyString())).thenReturn(true);
+        lenient().when(guard.validateParams(any(), any(), any())).thenReturn(Set.of());
+
+        String result = api.call("sid", "/sec", "open", Map.of("args", List.of()), new HashMap<>());
+
+        assertThat(result).contains("\"ok\":true");
+        assertThat(page.valor).isEqualTo(300);
+    }
+
+    @Test
+    @DisplayName("Roles: provider inspecciona meta.roles() para decisiones granulares")
+    void testProviderInspectsRoles() {
+        var page = new SecuredPage();
+        page.setId("p-roles");
+        page._initIfNeeded();
+
+        // Provider que aprueba solo si el contexto tiene alguno de los roles requeridos.
+        // Si no hay roles explícitos, basta con estar autenticado.
+        AuthorizationProvider.Registry.setProvider((ctx, comp, method, meta) -> {
+            if (meta.roles().length == 0) return ctx.isAuthenticated();
+            for (String role : meta.roles()) {
+                if (ctx.roles().contains(role)) return true;
+            }
+            return false;
+        });
+
+        // Usuario autenticado con rol ADMIN
+        AuthorizationProvider.Holder.set(
+                new AuthorizationProvider.AuthContext("ciro", Set.of("ADMIN"), null));
+
+        lenient().when(pageResolver.getPage(anyString(), anyString(), any())).thenReturn(page);
+        lenient().when(guard.tryConsume(anyString())).thenReturn(true);
+        lenient().when(guard.validateParams(any(), any(), any())).thenReturn(Set.of());
+
+        // adminOnly requiere ADMIN → aprobado
+        String result = api.call("sid", "/sec", "adminOnly", Map.of("args", List.of()), new HashMap<>());
+        assertThat(result).contains("\"ok\":true");
+        assertThat(page.valor).isEqualTo(100);
+    }
+
+    @Test
+    @DisplayName("Class-level: @Authorize en la clase protege métodos sin anotación individual (denegado)")
+    void testClassLevelAuthorizeDenied() {
+        var page = new ClassLevelSecuredPage();
+        page.setId("p-class-deny");
+        page._initIfNeeded();
+
+        AuthorizationProvider.Registry.setProvider((ctx, comp, method, meta) -> {
+            for (String role : meta.roles()) {
+                if (ctx.roles().contains(role)) return true;
+            }
+            return false;
+        });
+
+        // Usuario con ADMIN pero sin SUPERADMIN
+        AuthorizationProvider.Holder.set(
+                new AuthorizationProvider.AuthContext("user", Set.of("ADMIN"), null));
+
+        lenient().when(pageResolver.getPage(anyString(), anyString(), any())).thenReturn(page);
+        lenient().when(guard.tryConsume(anyString())).thenReturn(true);
+        lenient().when(guard.validateParams(any(), any(), any())).thenReturn(Set.of());
+        lenient().when(guard.errorJson(eq("FORBIDDEN"), anyString()))
+                .thenReturn("{\"ok\":false,\"code\":\"FORBIDDEN\"}");
+
+        String result = api.call("sid", "/sec", "restricted", Map.of("args", List.of()), new HashMap<>());
+
+        // El método restricted() NO tiene @Authorize en sí mismo,
+        // pero la clase ClassLevelSecuredPage sí → debe denegarse.
+        assertThat(result).contains("FORBIDDEN");
+        assertThat(page.valor).isZero();
+    }
+
+    @Test
+    @DisplayName("Class-level: @Authorize en la clase permite si el rol coincide")
+    void testClassLevelAuthorizeAllowed() {
+        var page = new ClassLevelSecuredPage();
+        page.setId("p-class-allow");
+        page._initIfNeeded();
+
+        AuthorizationProvider.Registry.setProvider((ctx, comp, method, meta) -> {
+            for (String role : meta.roles()) {
+                if (ctx.roles().contains(role)) return true;
+            }
+            return false;
+        });
+
+        // Usuario con SUPERADMIN
+        AuthorizationProvider.Holder.set(
+                new AuthorizationProvider.AuthContext("root", Set.of("SUPERADMIN"), null));
+
+        lenient().when(pageResolver.getPage(anyString(), anyString(), any())).thenReturn(page);
+        lenient().when(guard.tryConsume(anyString())).thenReturn(true);
+        lenient().when(guard.validateParams(any(), any(), any())).thenReturn(Set.of());
+
+        String result = api.call("sid", "/sec", "restricted", Map.of("args", List.of()), new HashMap<>());
+
+        assertThat(result).contains("\"ok\":true");
+        assertThat(page.valor).isEqualTo(42);
+    }
+}
+<<<END>>>

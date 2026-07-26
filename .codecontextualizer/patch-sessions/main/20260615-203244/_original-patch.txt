@@ -1,0 +1,34 @@
+<<<DESCRIPCION>>>
+Corrección de la inicialización de los valores centinela en la caché de reflexión para evitar ExceptionInInitializerError, utilizando referencias seguras y garantizadas (Object.toString y campos estáticos propios).
+<<<END_DESCRIPCION>>>
+<<<FILE: jreactive-core/src/main/java/com/ciro/jreactive/template/TemplateContext.java>>>
+<<<OP: REPLACE_BLOCK>>>
+<<<FIND>>>
+    private static final Map<String, Field> FIELD_REFLECTION_CACHE = new java.util.concurrent.ConcurrentHashMap<>();
+    private static final Map<String, Method> METHOD_REFLECTION_CACHE = new java.util.concurrent.ConcurrentHashMap<>();
+    private static final Field REFLECTION_NULL_FIELD;
+    private static final Method REFLECTION_NULL_METHOD;
+
+    static {
+        try {
+            REFLECTION_NULL_FIELD = TemplateContext.class.getDeclaredField("component");
+            REFLECTION_NULL_METHOD = TemplateContext.class.getDeclaredMethod("slot");
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+    }
+<<<REPLACE>>>
+    private static final Map<String, Field> FIELD_REFLECTION_CACHE = new java.util.concurrent.ConcurrentHashMap<>();
+    private static final Map<String, Method> METHOD_REFLECTION_CACHE = new java.util.concurrent.ConcurrentHashMap<>();
+    private static final Field REFLECTION_NULL_FIELD;
+    private static final Method REFLECTION_NULL_METHOD;
+
+    static {
+        try {
+            REFLECTION_NULL_FIELD = TemplateContext.class.getDeclaredField("FIELD_REFLECTION_CACHE");
+            REFLECTION_NULL_METHOD = Object.class.getDeclaredMethod("toString");
+        } catch (Exception e) {
+            throw new RuntimeException("Error inicializando centinelas de reflexion", e);
+        }
+    }
+<<<END>>>

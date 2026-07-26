@@ -1,0 +1,206 @@
+<<<DESCRIPCION>>>
+Añade autorización opt-in a los métodos @Call sin romper el comportamiento existente.
+Motivo: hoy NO existe ninguna capa de autorización (verificado: cero @Secured/@PreAuthorize/SecurityContext); cualquier POST /call/{metodo} es invocable. El rate-limit y Bean Validation no son autorización.
+Por qué archivos nuevos y no reutilizar: no hay ningún gancho de authz reutilizable en el contexto. Se reutiliza el patrón de registro estático ya presente (AccessorRegistry) para no tocar constructores ni introducir DI nueva. El enforcement se centraliza en un único punto (JrxHttpApi.call), común a Spring y standalone.
+Alcance:
+
+Nueva anotación @Authorize (core) aplicable a método @Call o a la clase del componente.
+Nuevo SPI AuthorizationProvider (runtime-jvm) con AuthContext (identidad desacoplada), Registry (provider global) y Holder (puente hilo-request -> hilo-cola). No depende de ningún framework de seguridad concreto.
+Enforcement en JrxHttpApi.call, ANTES de rate-limit, hidratación de estado e invocación. Fail-closed: @Authorize presente + sin provider registrado = negado. Método sin @Authorize = ruta idéntica a la actual.
+PageController.callMethod (demo Spring): captura el java.security.Principal en el hilo de request y lo re-inyecta dentro de la tarea de la cola (obligatorio porque la tarea corre en otro hilo virtual y perdería el contexto).
+Compatibilidad: la app demo no tiene ningún @Authorize, así que su comportamiento no cambia. El cliente JS no requiere cambios: un FORBIDDEN se propaga como error con code=FORBIDDEN por el flujo ok/error ya existente.
+Fuera de alcance (anotado como deuda): el transporte standalone (CallEndpoint) no se cablea porque hoy no tiene fuente de identidad; hasta que el integrador setee AuthorizationProvider.Holder, los métodos @Authorize se niegan en standalone (seguro-por-defecto). La página se renderiza para resolver el método antes de autorizar (ya ocurría); mover el authz antes del render es otro patch.
+<<<END_DESCRIPCION>>>
+
+codecontextualizer
+<<<FILE: jreactive-core/src/main/java/com/ciro/jreactive/annotations/Authorize.java>>>
+<<<OP: CREATE_FILE>>>
+<<<CONTENT>>>
+package com.ciro.jreactive.annotations;
+
+import java.lang.annotation.Retention;
+import java.lang.annotation.Target;
+import static java.lang.annotation.RetentionPolicy.RUNTIME;
+import static java.lang.annotation.ElementType.METHOD;
+import static java.lang.annotation.ElementType.TYPE;
+
+/**
+ * Marca un metodo @Call (o una clase de componente completa) como protegido.
+ *
+ * La decision real la toma el AuthorizationProvider que registre la app host
+ * (AuthorizationProvider.Registry.setProvider(...)).
+ *
+ * Semantica:
+ *  - roles() vacio  = "cualquier principal autenticado" (el provider decide como comparar).
+ *  - Fail-closed    = si un metodo lleva @Authorize y NO hay provider registrado, se NIEGA.
+ *  - Los metodos SIN esta anotacion no pasan por autorizacion (comportamiento historico).
+ */
+@Target({METHOD, TYPE})
+@Retention(RUNTIME)
+public @interface Authorize {
+
+    /** Roles / authorities requeridos. El provider define la comparacion exacta. */
+    String[] roles() default {};
+
+    /** Metadato libre opcional (p. ej. una expresion) para providers avanzados. */
+    String value() default "";
+}
+<<<END>>>
+
+<<<FILE: jreactive-runtime-jvm/src/main/java/com/ciro/jreactive/spi/AuthorizationProvider.java>>>
+<<<OP: CREATE_FILE>>>
+<<<CONTENT>>>
+package com.ciro.jreactive.spi;
+
+import com.ciro.jreactive.HtmlComponent;
+import com.ciro.jreactive.annotations.Authorize;
+
+import java.lang.reflect.Method;
+import java.util.Set;
+
+/**
+ * SPI de autorizacion para metodos @Call.
+ *
+ * La app host implementa esta interfaz y la registra UNA sola vez al arrancar:
+ *
+ *     AuthorizationProvider.Registry.setProvider((ctx, comp, method, meta) -> {
+ *         if (!ctx.isAuthenticated()) return false;
+ *         for (String r : meta.roles()) if (!ctx.roles().contains(r)) return false;
+ *         return true;
+ *     });
+ *
+ * Los metodos SIN @Authorize nunca llegan aqui (ruta identica a la historica).
+ * Los metodos CON @Authorize se niegan si no hay provider registrado (fail-closed).
+ */
+public interface AuthorizationProvider {
+
+    /**
+     * @param ctx       identidad capturada en el hilo de request; nunca null (puede ser anonymous()).
+     * @param component instancia del componente dueno del metodo (puede ser null en casos limite).
+     * @param method    el metodo @Call solicitado.
+     * @param meta      la anotacion @Authorize encontrada (en el metodo o en la clase).
+     * @return true si se permite ejecutar el metodo.
+     */
+    boolean isAuthorized(AuthContext ctx, HtmlComponent component, Method method, Authorize meta);
+
+    /** Identidad minima, desacoplada de cualquier framework de seguridad concreto. */
+    record AuthContext(String principalName, Set<String> roles, Object principal) {
+
+        public static AuthContext anonymous() {
+            return new AuthContext(null, Set.of(), null);
+        }
+
+        public boolean isAuthenticated() {
+            return principalName != null;
+        }
+    }
+
+    /** Registro global del provider (un solo policy por app; mismo patron que AccessorRegistry). */
+    final class Registry {
+        private static volatile AuthorizationProvider provider;
+
+        private Registry() {}
+
+        public static void setProvider(AuthorizationProvider p) { provider = p; }
+
+        public static AuthorizationProvider get() { return provider; }
+    }
+
+    /**
+     * Puente hilo-de-request -> hilo-de-ejecucion.
+     *
+     * El adaptador de transporte captura el AuthContext en el hilo HTTP (donde existe el
+     * contexto de seguridad) y lo re-inyecta DENTRO de la tarea, que corre en otro hilo
+     * virtual (JrxRequestQueue). Sin este puente, la identidad se perderia.
+     */
+    final class Holder {
+        private static final ThreadLocal<AuthContext> CTX = new ThreadLocal<>();
+
+        private Holder() {}
+
+        public static void set(AuthContext c) { CTX.set(c); }
+
+        public static AuthContext get() {
+            AuthContext c = CTX.get();
+            return (c != null) ? c : AuthContext.anonymous();
+        }
+
+        public static void clear() { CTX.remove(); }
+    }
+}
+<<<END>>>
+
+<<<FILE: jreactive-runtime-jvm/src/main/java/com/ciro/jreactive/JrxHttpApi.java>>>
+<<<OP: REPLACE_BLOCK>>>
+<<<FIND>>>
+        Method target = entry.getKey();
+        Object owner = entry.getValue();
+
+        // 2) deserializar args (mezcla body + @Param del path)
+        @SuppressWarnings("unchecked")
+        List<Object> rawArgs = (List<Object>) body.getOrDefault("args", List.of());
+<<<REPLACE>>>
+        Method target = entry.getKey();
+        Object owner = entry.getValue();
+
+        // 🔐 AUTORIZACIÓN — opt-in vía @Authorize. Los métodos SIN la anotación NO se ven afectados.
+        com.ciro.jreactive.annotations.Authorize authz = target.getAnnotation(com.ciro.jreactive.annotations.Authorize.class);
+        if (authz == null) authz = owner.getClass().getAnnotation(com.ciro.jreactive.annotations.Authorize.class);
+        if (authz != null) {
+            com.ciro.jreactive.spi.AuthorizationProvider provider = com.ciro.jreactive.spi.AuthorizationProvider.Registry.get();
+            // fail-closed: si se pidió proteger el método y no hay proveedor registrado, se niega.
+            boolean allowed = provider != null
+                    && provider.isAuthorized(
+                            com.ciro.jreactive.spi.AuthorizationProvider.Holder.get(),
+                            (owner instanceof HtmlComponent hc) ? hc : null,
+                            target,
+                            authz);
+            if (!allowed) {
+                return guard.errorJson("FORBIDDEN", "No autorizado para: " + qualified);
+            }
+        }
+
+        // 2) deserializar args (mezcla body + @Param del path)
+        @SuppressWarnings("unchecked")
+        List<Object> rawArgs = (List<Object>) body.getOrDefault("args", List.of());
+<<<END>>>
+
+<<<FILE: jreactive-demo-spring/src/main/java/com/ciro/jreactive/PageController.java>>>
+<<<OP: REPLACE_BLOCK>>>
+<<<FIND>>>
+String sessionId = req.getSession(true).getId();
+String path = extractPath(req); // ✅ helper robusto
+    Map<String, String> queryParams = new HashMap<>();
+    req.getParameterMap().forEach((k, v) -> {
+        if (v != null && v.length > 0) queryParams.put(k, v[0]);
+    });
+
+    // ✅ Cola por (sessionId+path): orden garantizado entre set/call/call
+    return queue.run(sessionId, path, () -> api.call(sessionId, path, qualified, body, queryParams));
+<<<REPLACE>>>
+String sessionId = req.getSession(true).getId();
+String path = extractPath(req); // ✅ helper robusto
+    Map<String, String> queryParams = new HashMap<>();
+    req.getParameterMap().forEach((k, v) -> {
+        if (v != null && v.length > 0) queryParams.put(k, v[0]);
+    });
+
+    // 🔐 Capturamos la identidad en el HILO DE REQUEST (aquí sí existe el contexto de seguridad).
+    // OBLIGATORIO capturarla antes de la cola: la tarea corre en otro hilo virtual y la perdería.
+    java.security.Principal principal = req.getUserPrincipal();
+    com.ciro.jreactive.spi.AuthorizationProvider.AuthContext authCtx =
+            (principal == null)
+                    ? com.ciro.jreactive.spi.AuthorizationProvider.AuthContext.anonymous()
+                    : new com.ciro.jreactive.spi.AuthorizationProvider.AuthContext(
+                            principal.getName(), java.util.Set.of(), principal);
+
+    // ✅ Cola por (sessionId+path): orden garantizado entre set/call/call
+    return queue.run(sessionId, path, () -> {
+        com.ciro.jreactive.spi.AuthorizationProvider.Holder.set(authCtx);
+        try {
+            return api.call(sessionId, path, qualified, body, queryParams);
+        } finally {
+            com.ciro.jreactive.spi.AuthorizationProvider.Holder.clear();
+        }
+    });
+<<<END>>>

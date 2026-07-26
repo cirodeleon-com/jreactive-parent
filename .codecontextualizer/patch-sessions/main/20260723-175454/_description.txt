@@ -1,0 +1,17 @@
+Intención:
+Crear SecureDemoPage con demo de autorización declarativa usando @Authorize en método sensible, junto con login/logout de roles y feedback visual.
+
+Alcance:
+- Crear @Authorize (anotación nueva).
+- Crear SecureDemoPage con @Call públicos y @Call @Authorize(roles={"ADMIN"}) protegido.
+- Agregar link en HomePage (FIND más quirúrgico, 2 líneas únicas).
+- Queda fuera: interceptor que procese @Authorize automáticamente.
+
+Motivo:
+El guardia reportó FIND_NOT_FOUND por usar un bloque con línea vacía de indentación ambigua. Se reduce el FIND a las 2 líneas mínimas inequívocas (la línea de shoelace es única en todo el archivo). El warning de "ruptura de template()" es falso positivo: no se cambia la firma del método, solo se inserta texto dentro del String del template.
+
+Validación manual sugerida desde el punto de vista del usuario:
+- Navegar a /secure desde la home (nueva tarjeta "Seguridad & Autorización").
+- Intentar borrar sin login -> ver ACCESO DENEGADO en rojo.
+- Login como USER -> intentar borrar -> sigue denegado.
+- Login como ADMIN -> borrar -> éxito en verde y la lista se reduce.

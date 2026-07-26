@@ -1,0 +1,22 @@
+<<<DESCRIPCION>>>
+Aplica una corrección quirúrgica en el motor AOT para prevenir un ClassCastException al procesar campos Double. Ahora el compilador genera un operador ternario capaz de hacer coerción sobre Strings de forma estable, tal como ya lo hace para Integer y Boolean.
+<<<END_DESCRIPCION>>>
+<<<FILE: jreactive-apt/src/main/java/com/ciro/jreactive/tools/TemplateProcessor.java>>>
+<<<OP: REPLACE_BLOCK>>>
+<<<FIND>>>
+        // 4. Otros primitivos (Double, Float, etc.)
+        if (type.getKind().isPrimitive()) {
+            return switch(type.getKind()) {
+                case DOUBLE -> "((Number)" + varName + ").doubleValue()";
+                default -> "(" + t + ")" + varName;
+            };
+        }
+<<<REPLACE>>>
+        // 4. Otros primitivos (Double, Float, etc.)
+        if (t.equals("java.lang.Double") || type.getKind() == javax.lang.model.type.TypeKind.DOUBLE) {
+            return "(" + varName + " instanceof String ? Double.valueOf((String)" + varName + ") : ((Number)" + varName + ").doubleValue())";
+        }
+        if (type.getKind().isPrimitive()) {
+            return "(" + t + ")" + varName;
+        }
+<<<END>>>

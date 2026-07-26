@@ -1,0 +1,7 @@
+<<<FILE: jreactive-core/.gitignore>>>
+<<<OP: DELETE_FILE>>>
+<<<END>>>
+
+<<<FILE: jreactive-core/.codecontextualizerignore>>>
+<<<OP: DELETE_FILE>>>
+<<<END>>>

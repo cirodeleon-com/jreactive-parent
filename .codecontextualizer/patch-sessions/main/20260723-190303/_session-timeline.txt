@@ -1,0 +1,49 @@
+===== CODECONTEXTUALIZER PATCH SESSION TIMELINE =====
+
+Sesión: 20260723-190303
+Creada: 2026-07-23T19:03:03.4219412
+Proyecto: C:\Users\Inspiron 15 3000\Downloads\jreactive-parent
+Backup: C:\Users\Inspiron 15 3000\Downloads\jreactive-parent\.codecontextualizer\backups\main\20260723-190303
+
+Descripción:
+Intención:
+Agregar un enlace de navegación en HomePage hacia SecureDemoPage (/secure-demo) dentro del JCard "Formularios & Datos".
+
+Alcance:
+Se modifica únicamente HomePage.java: se inserta un `<a class="nav-link">` con `href="/secure-demo"` y `data-router` en el JCard de "Formularios & Datos", justo después del enlace "Login Falso". No se toca ningún otro archivo ni la lógica de autorización.
+
+Motivo:
+La página SecureDemoPage ya existe y demuestra el flujo de autorización basado en roles (fail-closed sin login, ADMIN permite delete, USER bloquea), pero no era accesible desde el hub de navegación principal. Este enlace cierra el flujo end-to-end para verificación manual.
+
+Validación manual sugerida desde el punto de vista del usuario:
+- Navegar a la HomePage (http://localhost:8080/).
+- Localizar el JCard "Formularios & Datos" y hacer clic en "🔒 Demo Segura (Roles)".
+- Confirmar que se navega a /secure-demo.
+- En esa página, sin haber hecho login, intentar el botón de eliminación: debe bloquearse (fail-closed).
+- Hacer login como ADMIN y reintentar: el delete debe permitirse.
+- Hacer login como USER y reintentar: el delete debe bloquearse con mensaje de denegación.
+
+1) ANÁLISIS DEL PATCH
+   - Operaciones analizadas: 1
+   - Aplicables: 1
+   - Ya aplicadas: 0
+   - No aplicables: 0
+   - Archivos afectados por análisis: 1
+
+2) APLICACIÓN
+   - Operaciones aplicadas: 1
+   - Archivos tocados: 1
+   - Estado: APPLIED
+
+3) ARCHIVOS TOCADOS
+   - jreactive-demo-spring/src/main/java/com/ciro/jreactive/HomePage.java
+
+4) DETALLE DE OPERACIONES
+   1. [APPLICABLE] REPLACE_BLOCK jreactive-demo-spring/src/main/java/com/ciro/jreactive/HomePage.java
+      Detalle: Aplicable. Coincidencia encontrada con tolerancia de saltos de línea, espacios o indentación.
+
+5) SIGUIENTE ACCIÓN RECOMENDADA
+   - Ejecuta la verificación configurada o mvn clean test.
+   - Si pasa, haz commit de la feature.
+   - Si falla, usa rollback o pide un patch correctivo.
+

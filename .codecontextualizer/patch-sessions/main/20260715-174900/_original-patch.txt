@@ -1,0 +1,17 @@
+<<<DESCRIPCION>>>
+Actualiza el test `testDeepPojoAndPrimitivesInAccessor` para que valide el nuevo casteo inteligente y robusto de Double en el Accessor generado, reemplazando la aserción que esperaba el casteo rígido `(java.lang.Double)v` por la nueva expresión con operador ternario.
+<<<END_DESCRIPCION>>>
+
+<<<FILE: jreactive-apt/src/test/java/com/ciro/jreactive/tools/TemplateProcessorTest.java>>>
+<<<OP: REPLACE_BLOCK>>>
+<<<FIND>>>
+        // 2. Verificamos el casteo inteligente de primitivos (Soporta JSON strings)
+        assertThat(accessorContent).contains("(v instanceof String ? Boolean.valueOf((String)v) : (Boolean)v)");
+        assertThat(accessorContent).contains("(v instanceof String ? Long.valueOf((String)v) : ((Number)v).longValue())");
+        assertThat(accessorContent).contains("(java.lang.Double)v");
+<<<REPLACE>>>
+        // 2. Verificamos el casteo inteligente de primitivos (Soporta JSON strings)
+        assertThat(accessorContent).contains("(v instanceof String ? Boolean.valueOf((String)v) : (Boolean)v)");
+        assertThat(accessorContent).contains("(v instanceof String ? Long.valueOf((String)v) : ((Number)v).longValue())");
+        assertThat(accessorContent).contains("(v instanceof String ? Double.valueOf((String)v) : ((Number)v).doubleValue())");
+<<<END>>>

@@ -1,0 +1,33 @@
+<<<DESCRIPCION>>>
+Intención: Corregir el fallo de JaCoCo 0.8.12 al instrumentar clases generadas por JavaCC en ph-css (MethodTooLargeException en ParserCSS30TokenManager.jjMoveNfa_0), que genera IllegalClassFormatException y desestabiliza tests aguas abajo por overhead de reintentos de instrumentación.
+
+Alcance: Se modifica únicamente pom.xml (padre) para añadir configuración <excludes> al jacoco-maven-plugin en la sección pluginManagement, excluyendo com/helger/** de la instrumentación. No se toca ningún otro archivo ni módulo.
+
+Motivo: JaCoCo no puede instrumentar métodos generados por JavaCC que exceden 64KB. Aunque CssScoperTest pasa (la excepción es atrapada internamente), el overhead del error repetido degrada el rendimiento del agente JaCoCo y puede causar fallos intermitentes en tests con timing sensible (JrxHttpApiTest, HybridStateStoreTest) en otros módulos. La exclusión es el fix estándar documentado por JaCoCo para librerías con parsers generados.
+
+Validación manual sugerida desde el punto de vista del usuario:
+- Ejecutar mvn clean install desde la raíz del proyecto.
+- Verificar que desaparece el stack trace de IllegalClassFormatException / MethodTooLargeException en el módulo jreactive-apt.
+- Confirmar que jreactive-runtime-jvm y jreactive-store-redis completan sus tests sin errores.
+<<<END_DESCRIPCION>>>
+
+<<<FILE: pom.xml>>>
+<<<OP: REPLACE_BLOCK>>>
+<<<FIND>>>
+        <plugin>
+          <groupId>org.jacoco</groupId>
+          <artifactId>jacoco-maven-plugin</artifactId>
+          <version>0.8.12</version>
+          <executions>
+<<<REPLACE>>>
+        <plugin>
+          <groupId>org.jacoco</groupId>
+          <artifactId>jacoco-maven-plugin</artifactId>
+          <version>0.8.12</version>
+          <configuration>
+            <excludes>
+              <exclude>com/helger/**</exclude>
+            </excludes>
+          </configuration>
+          <executions>
+<<<END>>>

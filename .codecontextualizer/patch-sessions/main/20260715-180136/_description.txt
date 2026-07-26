@@ -1,0 +1,11 @@
+Añade autorización opt-in a los métodos @Call sin romper el comportamiento existente.
+Motivo: hoy NO existe ninguna capa de autorización (verificado: cero @Secured/@PreAuthorize/SecurityContext); cualquier POST /call/{metodo} es invocable. El rate-limit y Bean Validation no son autorización.
+Por qué archivos nuevos y no reutilizar: no hay ningún gancho de authz reutilizable en el contexto. Se reutiliza el patrón de registro estático ya presente (AccessorRegistry) para no tocar constructores ni introducir DI nueva. El enforcement se centraliza en un único punto (JrxHttpApi.call), común a Spring y standalone.
+Alcance:
+
+Nueva anotación @Authorize (core) aplicable a método @Call o a la clase del componente.
+Nuevo SPI AuthorizationProvider (runtime-jvm) con AuthContext (identidad desacoplada), Registry (provider global) y Holder (puente hilo-request -> hilo-cola). No depende de ningún framework de seguridad concreto.
+Enforcement en JrxHttpApi.call, ANTES de rate-limit, hidratación de estado e invocación. Fail-closed: @Authorize presente + sin provider registrado = negado. Método sin @Authorize = ruta idéntica a la actual.
+PageController.callMethod (demo Spring): captura el java.security.Principal en el hilo de request y lo re-inyecta dentro de la tarea de la cola (obligatorio porque la tarea corre en otro hilo virtual y perdería el contexto).
+Compatibilidad: la app demo no tiene ningún @Authorize, así que su comportamiento no cambia. El cliente JS no requiere cambios: un FORBIDDEN se propaga como error con code=FORBIDDEN por el flujo ok/error ya existente.
+Fuera de alcance (anotado como deuda): el transporte standalone (CallEndpoint) no se cablea porque hoy no tiene fuente de identidad; hasta que el integrador setee AuthorizationProvider.Holder, los métodos @Authorize se niegan en standalone (seguro-por-defecto). La página se renderiza para resolver el método antes de autorizar (ya ocurría); mover el authz antes del render es otro patch.

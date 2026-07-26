@@ -1,0 +1,9 @@
+Intención: Crear un ejemplo completo y funcional de @Authorize en el demo project, con un provider de autorización registrable, una página demo interactiva enlazada al hub, y pruebas unitarias que validen la lógica del provider.
+Alcance: Se crean 3 archivos nuevos (SecurityDemoPage.java, DemoAuthorizationProvider.java, DemoAuthorizationProviderTest.java) y se modifican 2 existentes (JReactiveApplication.java para registrar el provider, HomePage.java para enlazar el demo). No se modifica código del framework ni pruebas existentes.
+Motivo: El usuario solicitó un ejemplo de @Authorize en el demo. La anotación y el enforcement ya existen pero no hay un ejemplo visible ni un provider registrado que los haga funcionar end-to-end. El test cubre la lógica de decisión del provider (la pieza nueva y específica de este cambio), complementando el AuthorizationEnforcementTest ya existente que cubre el pipeline de enforcement.
+Validación manual sugerida desde el punto de vista del usuario:
+- Navegar a http://localhost:8080/security-demo
+- Click en "Exportar (ADMIN)" sin haber iniciado sesión → debe aparecer un toast rojo: "No autorizado".
+- Click en "Iniciar como ADMIN" → el badge cambia a ADMIN ✅.
+- Click en "Exportar (ADMIN)" ahora → debe aparecer el mensaje de éxito verde.
+- Click en "Cerrar Sesión" y volver a intentar → debe denegar de nuevo.

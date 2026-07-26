@@ -1,0 +1,3 @@
+<<<FILE: verification-pass-test.txt>>>
+<<<OP: DELETE_FILE>>>
+<<<END>>>

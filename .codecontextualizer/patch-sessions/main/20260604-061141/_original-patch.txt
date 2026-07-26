@@ -1,0 +1,42 @@
+<<<DESCRIPCION>>>
+Añadir soporte para interfaces Map y arreglos nativos en la evaluación booleana (Truthy/Falsy) y en la resolución de tamaños del motor de plantillas para evitar falsos positivos lógicos.
+<<<END_DESCRIPCION>>>
+
+<<<FILE: jreactive-core/src/main/java/com/ciro/jreactive/template/TemplateContext.java>>>
+<<<OP: REPLACE_BLOCK>>>
+<<<FIND>>>
+    private boolean isTruthy(Object o) {
+        if (o == null) return false;
+        if (o instanceof Boolean b) return b;
+        if (o instanceof Collection<?> c) return !c.isEmpty();
+        if (o instanceof String s) return !s.isEmpty();
+        if (o instanceof Number n) return n.doubleValue() != 0;
+        return true;
+    }
+
+    private int getSize(Object o) {
+        if (o instanceof Collection<?> c) return c.size();
+        if (o instanceof Map<?,?> m) return m.size();
+        if (o instanceof String s) return s.length();
+        return 0;
+    }
+<<<REPLACE>>>
+    private boolean isTruthy(Object o) {
+        if (o == null) return false;
+        if (o instanceof Boolean b) return b;
+        if (o instanceof Collection<?> c) return !c.isEmpty();
+        if (o instanceof Map<?,?> m) return !m.isEmpty();
+        if (o.getClass().isArray()) return java.lang.reflect.Array.getLength(o) > 0;
+        if (o instanceof String s) return !s.isEmpty();
+        if (o instanceof Number n) return n.doubleValue() != 0;
+        return true;
+    }
+
+    private int getSize(Object o) {
+        if (o instanceof Collection<?> c) return c.size();
+        if (o instanceof Map<?,?> m) return m.size();
+        if (o instanceof String s) return s.length();
+        if (o != null && o.getClass().isArray()) return java.lang.reflect.Array.getLength(o);
+        return 0;
+    }
+<<<END>>>

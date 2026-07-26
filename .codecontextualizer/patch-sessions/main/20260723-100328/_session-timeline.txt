@@ -1,0 +1,47 @@
+===== CODECONTEXTUALIZER PATCH SESSION TIMELINE =====
+
+Sesión: 20260723-100328
+Creada: 2026-07-23T10:03:28.4328905
+Proyecto: C:\Users\Inspiron 15 3000\Downloads\jreactive-parent
+Backup: C:\Users\Inspiron 15 3000\Downloads\jreactive-parent\.codecontextualizer\backups\main\20260723-100328
+
+Descripción:
+Intención: Corregir el fallo en DeferLifecycleTest donde tareas @Defer que completan durante la inicialización (antes del primer mount) son incorrectamente descartadas por el check de cancelación.
+
+Alcance:
+- HtmlComponent.java: añade flag `_disposed` (volatile, transient), lo activa en `_unmountRecursive()`, y cambia el check en `executeDeferred` de `if (_state() != MOUNTED)` a `if (_disposed)`.
+- No se tocan CssScoper/JrxHttpApi (sus errores son warnings de JaCoCo instrumentando ph-css, no fallos reales: ambos módulos terminaron verde en el log).
+
+Motivo: El check original `if (_state() != ComponentState.MOUNTED) return;` es demasiado estricto porque `_initIfNeeded()` (que lanza las tareas Defer) se ejecuta antes que `_mountRecursive()`. Si la tarea completa rápido, el estado aún es UNMOUNTED y el resultado se pierde. Con un flag `_disposed` distinguimos "aún no montado" (permitimos escritura) de "fue montado y desmontado" (descartamos).
+
+Validación manual sugerida:
+- Ejecutar DeferLifecycleTest: los 3 tests deben pasar (éxito, cancelación, anti-duplicados).
+
+1) ANÁLISIS DEL PATCH
+   - Operaciones analizadas: 3
+   - Aplicables: 3
+   - Ya aplicadas: 0
+   - No aplicables: 0
+   - Archivos afectados por análisis: 1
+
+2) APLICACIÓN
+   - Operaciones aplicadas: 3
+   - Archivos tocados: 1
+   - Estado: APPLIED
+
+3) ARCHIVOS TOCADOS
+   - jreactive-core/src/main/java/com/ciro/jreactive/HtmlComponent.java
+
+4) DETALLE DE OPERACIONES
+   1. [APPLICABLE] REPLACE_BLOCK jreactive-core/src/main/java/com/ciro/jreactive/HtmlComponent.java
+      Detalle: Aplicable. Coincidencia encontrada con tolerancia de saltos de línea, espacios o indentación.
+   2. [APPLICABLE] REPLACE_BLOCK jreactive-core/src/main/java/com/ciro/jreactive/HtmlComponent.java
+      Detalle: Aplicable. Coincidencia encontrada con tolerancia de saltos de línea, espacios o indentación.
+   3. [APPLICABLE] REPLACE_BLOCK jreactive-core/src/main/java/com/ciro/jreactive/HtmlComponent.java
+      Detalle: Aplicable. Coincidencia encontrada con tolerancia de saltos de línea, espacios o indentación.
+
+5) SIGUIENTE ACCIÓN RECOMENDADA
+   - Ejecuta la verificación configurada o mvn clean test.
+   - Si pasa, haz commit de la feature.
+   - Si falla, usa rollback o pide un patch correctivo.
+

@@ -1,0 +1,60 @@
+===== CODECONTEXTUALIZER PATCH SESSION TIMELINE =====
+
+Sesión: 20260723-173612
+Creada: 2026-07-23T17:36:12.5456062
+Proyecto: C:\Users\Inspiron 15 3000\Downloads\jreactive-parent
+Backup: C:\Users\Inspiron 15 3000\Downloads\jreactive-parent\.codecontextualizer\backups\main\20260723-173612
+
+Descripción:
+Intención:
+Crear un ejemplo runnable de @Authorize en jreactive-demo-spring con infraestructura mínima de autenticación por sesión, un AuthorizationProvider concreto registrado vía @PostConstruct, endpoints REST de login/logout y una página demo protegida enlazada desde el Hub.
+
+Alcance:
+- Se crean 3 archivos nuevos en jreactive-demo-spring:
+ * com/ciro/jreactive/DemoSecurity.java (consolida DemoPrincipal, DemoAuthFilter, DemoAuthorizationProvider y @Configuration con @PostConstruct)
+ * com/ciro/jreactive/DemoAuthController.java (REST: /demo/login, /demo/logout, /demo/me)
+ * com/ciro/jreactive/SecurePage.java (página @Stateless con @Authorize a nivel clase y método)
+- Se modifica HomePage.java para añadir un enlace a /secure.
+- No se toca archivos del framework.
+
+Motivo:
+La anotación @Authorize y el SPI AuthorizationProvider no tenían un ejemplo runnable ni provider concreto en el demo. Este parche aporta el eslabón mínimo: identidad ficticia por sesión + provider que extrae roles del Principal + página demo con métodos protegidos.
+
+Validación manual sugerida desde el punto de vista del usuario:
+- fetch('/demo/login', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({user:'admin', roles:['ADMIN']})})
+- Navegar a /secure, pulsar "Revelar Secreto" (ADMIN): debe funcionar
+- fetch('/demo/logout', {method:'POST'}), refrescar /secure, pulsar botones: debe devolver FORBIDDEN
+
+1) ANÁLISIS DEL PATCH
+   - Operaciones analizadas: 4
+   - Aplicables: 4
+   - Ya aplicadas: 0
+   - No aplicables: 0
+   - Archivos afectados por análisis: 4
+
+2) APLICACIÓN
+   - Operaciones aplicadas: 4
+   - Archivos tocados: 4
+   - Estado: APPLIED
+
+3) ARCHIVOS TOCADOS
+   - jreactive-demo-spring/src/main/java/com/ciro/jreactive/DemoAuthController.java
+   - jreactive-demo-spring/src/main/java/com/ciro/jreactive/DemoSecurity.java
+   - jreactive-demo-spring/src/main/java/com/ciro/jreactive/HomePage.java
+   - jreactive-demo-spring/src/main/java/com/ciro/jreactive/SecurePage.java
+
+4) DETALLE DE OPERACIONES
+   1. [APPLICABLE] CREATE_FILE jreactive-demo-spring/src/main/java/com/ciro/jreactive/DemoSecurity.java
+      Detalle: Aplicable. Se creará un archivo nuevo.
+   2. [APPLICABLE] CREATE_FILE jreactive-demo-spring/src/main/java/com/ciro/jreactive/DemoAuthController.java
+      Detalle: Aplicable. Se creará un archivo nuevo.
+   3. [APPLICABLE] CREATE_FILE jreactive-demo-spring/src/main/java/com/ciro/jreactive/SecurePage.java
+      Detalle: Aplicable. Se creará un archivo nuevo.
+   4. [APPLICABLE] REPLACE_BLOCK jreactive-demo-spring/src/main/java/com/ciro/jreactive/HomePage.java
+      Detalle: Aplicable. Coincidencia encontrada con tolerancia de saltos de línea, espacios o indentación.
+
+5) SIGUIENTE ACCIÓN RECOMENDADA
+   - Ejecuta la verificación configurada o mvn clean test.
+   - Si pasa, haz commit de la feature.
+   - Si falla, usa rollback o pide un patch correctivo.
+

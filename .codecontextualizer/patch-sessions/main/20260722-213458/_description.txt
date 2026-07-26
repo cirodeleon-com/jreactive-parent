@@ -1,0 +1,10 @@
+Intención: Implementar pruebas automatizadas (puertas de calidad) para el ciclo de vida de @Defer, la resurrección de estado (Stateful/Redis) y el generador de Web Components, garantizando el cumplimiento del Definition of Done del backlog vigente.
+
+Alcance: Se crean tres nuevos archivos de test: `DeferLifecycleTest.java` (valida hilos virtuales y reactividad diferida), `StateResurrectionTest.java` (valida serialización JSON de componentes completos) y `GenerateComponentsMojoTest.java` (valida la generación de código del plugin). Adicionalmente, se actualiza el `pom.xml` del módulo `jreactive-webcomponents-maven-plugin` para incluir las dependencias de JUnit y AssertJ necesarias para ejecutar sus pruebas.
+
+Motivo: El proyecto se encuentra en fase de estabilización (0.0.1-SNAPSHOT) y el backlog exigía garantías robustas sobre la ejeción asíncrona, persistencia de estado en arquitecturas distribuidas y la generación AOT, previniendo regresiones graves antes de un lanzamiento.
+
+Validación manual sugerida desde el punto de vista del usuario:
+- Ejecutar `mvn test` en la raíz del proyecto.
+- Confirmar que los módulos `jreactive-runtime-jvm`, `jreactive-store-redis` y `jreactive-webcomponents-maven-plugin` compilan y pasan sus nuevos tests sin fallos aislados.
+- Revisar que la cobertura de las funcionalidades mencionadas aumente en el reporte.

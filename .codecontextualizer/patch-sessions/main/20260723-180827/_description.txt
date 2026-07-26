@@ -1,0 +1,25 @@
+Intención:
+Crear la página SecureDemoPage con estado base (lista de items, mensaje y rol actual), un onInit con datos semilla, un método @Call público addItem (sin @Authorize) y un template HTML con tabla y formulario de añadir.
+
+Alcance:
+- Crea un único archivo nuevo: jreactive-demo-spring/src/main/java/com/ciro/jreactive/SecureDemoPage.java.
+- No modifica HomePage ni ningún otro archivo existente.
+- No implementa @Authorize (es base para subintenciones siguientes).
+- No incluye directiva de iteración reactiva del motor de plantillas (deuda explícita marcada en el template).
+
+Motivo:
+Es el andamiaje mínimo sobre el que las siguientes subintenciones colgarán autorización (@Authorize), roles y reactividad avanzada. Se aisla estado, ciclo de vida y un @Call público para validar el flujo end-to-end antes de añadir seguridad.
+
+Supuestos (contexto no los confirma; ajustar si fallan):
+- AppPage expone protected void onInit().
+- @Call admite firma public void addItem(String).
+- Interpolación por ${field}.
+
+Validación manual sugerida desde el punto de vista del usuario:
+- Navegar a /secure-demo.
+- Ver encabezado "Secure Demo Page", el rol "guest", el mensaje "Listo: 3 items cargados" y una tabla con 3 filas semilla.
+- Inspeccionar que el método addItem esté registrado como @Call público (sin @Authorize) revisando el descriptor generado o invocándolo desde el cliente.
+
+Deuda técnica explícita:
+- codecontextualizer-debt: el botón del formulario no invoca addItem todavía; falta conectar con el sistema de eventos de JReactive. Límite: render inicial correcto, sin invocación. Upgrade: sub-paso siguiente que defina el binding de eventos (data-call / @click equivalente).
+- codecontextualizer-debt: la tabla se genera estáticamente desde this.items; al addItem la vista no se actualiza hasta re-render. Límite: datos semilla visibles. Upgrade: usar la directiva de iteración del motor de plantillas de JReactive.

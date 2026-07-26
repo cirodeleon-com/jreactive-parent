@@ -1,0 +1,98 @@
+<<<DESCRIPCION>>>
+Optimización de rendimiento en el motor de evaluación de plantillas mediante la introducción de una capa de caché estática para campos y métodos reflejados, eliminando por completo las penalizaciones de inspección del ClassLoader en caliente durante la resolución de propiedades dinámicas.
+<<<END_DESCRIPCION>>>
+<<<FILE: jreactive-core/src/main/java/com/ciro/jreactive/template/TemplateContext.java>>>
+<<<OP: REPLACE_BLOCK>>>
+<<<FIND>>>
+    private Field findField(Class<?> c, String name) {
+        while (c != null && c != Object.class) {
+            try { return c.getDeclaredField(name); } catch (Exception e) { c = c.getSuperclass(); }
+        }
+        return null;
+    }
+
+    private Method findMethod(Class<?> c, String name) {
+        // 1. Nombre exacto (Records: "street()")
+        try { return c.getMethod(name); } catch (Exception e) { /* Ignorado por diseño (fallback) */ }
+        // 2. Estilo Bean: "getStreet()"
+        String getter = "get" + Character.toUpperCase(name.charAt(0)) + name.substring(1);
+        try { return c.getMethod(getter); } catch (Exception e) { /* Ignorado por diseño (fallback) */ }
+        // 3. Estilo Boolean: "isUrgent()"
+        String isser = "is" + Character.toUpperCase(name.charAt(0)) + name.substring(1);
+        try { return c.getMethod(isser); } catch (Exception e) { /* Ignorado por diseño (fallback) */ }
+        
+        // 🔥 Si llegamos aquí, ninguno funcionó. Dejamos un registro ligero.
+        System.out.println("ℹ️ [JReactive] No se encontró método (getter/record) para '" + name + "' en " + c.getSimpleName());
+        return null;
+    }
+<<<REPLACE>>>
+    private static final Map<String, Field> FIELD_REFLECTION_CACHE = new java.util.concurrent.ConcurrentHashMap<>();
+    private static final Map<String, Method> METHOD_REFLECTION_CACHE = new java.util.concurrent.ConcurrentHashMap<>();
+    private static final Field REFLECTION_NULL_FIELD;
+    private static final Method REFLECTION_NULL_METHOD;
+
+    static {
+        try {
+            REFLECTION_NULL_FIELD = TemplateContext.class.getDeclaredField("component");
+            REFLECTION_NULL_METHOD = TemplateContext.class.getDeclaredMethod("slot");
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    private Field findField(Class<?> c, String name) {
+        String cacheKey = c.getName() + "::" + name;
+        Field cached = FIELD_REFLECTION_CACHE.get(cacheKey);
+        if (cached != null) {
+            return cached == REFLECTION_NULL_FIELD ? null : cached;
+        }
+
+        Class<?> current = c;
+        while (current != null && current != Object.class) {
+            try {
+                Field f = current.getDeclaredField(name);
+                FIELD_REFLECTION_CACHE.put(cacheKey, f);
+                return f;
+            } catch (Exception e) {
+                current = current.getSuperclass();
+            }
+        }
+        FIELD_REFLECTION_CACHE.put(cacheKey, REFLECTION_NULL_FIELD);
+        return null;
+    }
+
+    private Method findMethod(Class<?> c, String name) {
+        String cacheKey = c.getName() + "::" + name;
+        Method cached = METHOD_REFLECTION_CACHE.get(cacheKey);
+        if (cached != null) {
+            return cached == REFLECTION_NULL_METHOD ? null : cached;
+        }
+
+        // 1. Nombre exacto (Records: "street()")
+        try {
+            Method m = c.getMethod(name);
+            METHOD_REFLECTION_CACHE.put(cacheKey, m);
+            return m;
+        } catch (Exception e) { /* Fallback */ }
+
+        // 2. Estilo Bean: "getStreet()"
+        String getter = "get" + Character.toUpperCase(name.charAt(0)) + name.substring(1);
+        try {
+            Method m = c.getMethod(getter);
+            METHOD_REFLECTION_CACHE.put(cacheKey, m);
+            return m;
+        } catch (Exception e) { /* Fallback */ }
+
+        // 3. Estilo Boolean: "isUrgent()"
+        String isser = "is" + Character.toUpperCase(name.charAt(0)) + name.substring(1);
+        try {
+            Method m = c.getMethod(isser);
+            METHOD_REFLECTION_CACHE.put(cacheKey, m);
+            return m;
+        } catch (Exception e) { /* Fallback */ }
+
+        System.out.println("ℹ️ [JReactive] No se encontró método (getter/record) para '" + name + "' en " + c.getSimpleName());
+        METHOD_REFLECTION_CACHE.put(cacheKey, REFLECTION_NULL_METHOD);
+        return null;
+    }
+<<<END>>>

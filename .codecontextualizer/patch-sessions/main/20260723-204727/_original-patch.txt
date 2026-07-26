@@ -1,0 +1,74 @@
+<<<DESCRIPCION>>>
+Intención: Volver SecureDemoPage.java a su estado base mínimo: eliminar @Authorize, login y deleteItem añadidos en patches previos, conservando solo estado base (SmartList items, message, currentRole=GUEST), onInit con 3 items semilla, @Call addItem(String) público y template funcional con formulario y lista.
+
+Alcance: Se reemplaza únicamente jreactive-demo-spring/src/main/java/com/ciro/jreactive/SecureDemoPage.java. No se toca HomePage ni ningún otro archivo. La eliminación de login() y deleteItem() es intencional y solicitada por la subintención ("sin @Authorize todavía"). LoginPage.java tiene su propio método login() autónomo y no depende de SecureDemoPage.
+
+Motivo: La subintención pide explícitamente la versión base sin @Authorize. Los métodos login/deleteItem se añadieron en PATCH 2 y deben removerse para volver al estado base. No es pérdida funcional accidental: es el objetivo de la tarea.
+
+Validación manual sugerida desde el punto de vista del usuario:
+- Navegar a http://localhost:8080/secure-demo.
+- Ver rol "GUEST", mensaje de bienvenida y 3 items semilla.
+- Escribir texto, presionar "Agregar" y ver el nuevo item con mensaje de confirmación.
+- No deben existir botones de login/logout ni eliminar en esta versión base.
+<<<END_DESCRIPCION>>>
+
+<<<FILE: jreactive-demo-spring/src/main/java/com/ciro/jreactive/SecureDemoPage.java>>>
+<<<OP: REPLACE_FILE>>>
+<<<CONTENT>>>
+package com.ciro.jreactive;
+
+import com.ciro.jreactive.annotations.Call;
+import com.ciro.jreactive.annotations.Stateful;
+import com.ciro.jreactive.router.Route;
+import com.ciro.jreactive.smart.SmartList;
+
+@Route(path = "/secure-demo")
+@Stateful
+public class SecureDemoPage extends AppPage {
+
+    @State public SmartList<String> items = new SmartList<>();
+    @State public String message = "Bienvenido. Tu rol actual es GUEST.";
+    @State public String currentRole = "GUEST";
+    @State public String newItemText = "";
+
+    @Override
+    public void onInit() {
+        items.add("Item Semilla A");
+        items.add("Item Semilla B");
+        items.add("Item Semilla C");
+    }
+
+    @Call
+    public void addItem(String value) {
+        if (value == null || value.isBlank()) return;
+        items.add(value);
+        newItemText = "";
+        message = "Item añadido correctamente.";
+    }
+
+    @Override
+    protected String template() {
+        return """
+            <div style="padding: 30px; font-family: system-ui, sans-serif; max-width: 600px; margin: 0 auto;">
+                <h1>🔒 Demo Segura</h1>
+                <p>Rol actual: <strong>{{currentRole}}</strong></p>
+                <p>{{message}}</p>
+
+                <div style="margin-bottom: 20px; display: flex; gap: 10px;">
+                    <input type="text" name="newItemText" placeholder="Escribe un nuevo item..." style="flex: 1; padding: 8px;" />
+                    <button @click="addItem(newItemText)" style="padding: 8px 16px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer;">Agregar</button>
+                </div>
+
+                <h3>Lista de Items ({{items.size}})</h3>
+                <ul style="border: 1px solid #ddd; padding: 10px 20px; min-height: 60px; border-radius: 4px;">
+                    {{#each items as item}}
+                        <li style="padding: 4px 0;">{{item}}</li>
+                    {{/each}}
+                </ul>
+
+                <p style="margin-top: 30px;"><a data-router href="/">⬅️ Volver al Inicio</a></p>
+            </div>
+        """;
+    }
+}
+<<<END>>>

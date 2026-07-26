@@ -1,0 +1,62 @@
+===== CODECONTEXTUALIZER PATCH SESSION TIMELINE =====
+
+Sesión: 20260723-095827
+Creada: 2026-07-23T09:58:27.7349839
+Proyecto: C:\Users\Inspiron 15 3000\Downloads\jreactive-parent
+Backup: C:\Users\Inspiron 15 3000\Downloads\jreactive-parent\.codecontextualizer\backups\main\20260723-095827
+
+Descripción:
+Intención: Endurecer @Defer con timeout configurable, cancelación al desmontar y anti-duplicados (Epic 2, P0 del backlog).
+
+Alcance:
+1. Anotación @Defer: añade timeout() con default 30s.
+2. HtmlComponent: reescribe el cuerpo interno de _launchDeferredTasks() y reloadDeferred() usando CompletableFuture con orTimeout, check de MOUNTED antes de escribir, y Set de stateKeys en ejecución para evitar duplicados. NO cambia firmas públicas (reloadDeferred sigue siendo protected void reloadDeferred(String)).
+3. DeferLifecycleTest: prueba nueva que cubre éxito, cancelación y anti-duplicados.
+
+Motivo: @Defer ya es funcional pero un hilo virtual sin timeout puede quedar vivo indefinidamente; si el usuario navega a otra página la tarea escribe en un componente desmontado; y doble-click en "recargar" lanza tareas duplicadas.
+
+Validación manual sugerida desde el punto de vista del usuario:
+- Crear un componente con @Defer que haga Thread.sleep(10000) y timeout=2000. A los 2s la tarea se cancela.
+- Navegar a otra página mientras @Defer corre. No se escribe en componente desmontado.
+- Pulsar dos veces reloadDeferred("x") mientras corre. Solo se ejecuta una vez.
+
+1) ANÁLISIS DEL PATCH
+   - Operaciones analizadas: 8
+   - Aplicables: 8
+   - Ya aplicadas: 0
+   - No aplicables: 0
+   - Archivos afectados por análisis: 3
+
+2) APLICACIÓN
+   - Operaciones aplicadas: 8
+   - Archivos tocados: 3
+   - Estado: APPLIED
+
+3) ARCHIVOS TOCADOS
+   - jreactive-core/src/main/java/com/ciro/jreactive/HtmlComponent.java
+   - jreactive-core/src/main/java/com/ciro/jreactive/annotations/Defer.java
+   - jreactive-runtime-jvm/src/test/java/com/ciro/jreactive/DeferLifecycleTest.java
+
+4) DETALLE DE OPERACIONES
+   1. [APPLICABLE] REPLACE_FILE jreactive-core/src/main/java/com/ciro/jreactive/annotations/Defer.java
+      Detalle: Aplicable. Esta operación reemplazará el archivo completo.
+   2. [APPLICABLE] REPLACE_BLOCK jreactive-core/src/main/java/com/ciro/jreactive/HtmlComponent.java
+      Detalle: Aplicable. Coincidencia exacta encontrada.
+   3. [APPLICABLE] REPLACE_BLOCK jreactive-core/src/main/java/com/ciro/jreactive/HtmlComponent.java
+      Detalle: Aplicable. Coincidencia exacta encontrada.
+   4. [APPLICABLE] REPLACE_BLOCK jreactive-core/src/main/java/com/ciro/jreactive/HtmlComponent.java
+      Detalle: Aplicable. Coincidencia encontrada con tolerancia de saltos de línea, espacios o indentación.
+   5. [APPLICABLE] REPLACE_BLOCK jreactive-core/src/main/java/com/ciro/jreactive/HtmlComponent.java
+      Detalle: Aplicable. Coincidencia encontrada con tolerancia de saltos de línea, espacios o indentación.
+   6. [APPLICABLE] REPLACE_BLOCK jreactive-core/src/main/java/com/ciro/jreactive/HtmlComponent.java
+      Detalle: Aplicable. Coincidencia encontrada con tolerancia de saltos de línea, espacios o indentación.
+   7. [APPLICABLE] REPLACE_BLOCK jreactive-core/src/main/java/com/ciro/jreactive/HtmlComponent.java
+      Detalle: Aplicable. Coincidencia encontrada con tolerancia de saltos de línea, espacios o indentación.
+   8. [APPLICABLE] CREATE_FILE jreactive-runtime-jvm/src/test/java/com/ciro/jreactive/DeferLifecycleTest.java
+      Detalle: Aplicable. Se creará un archivo nuevo.
+
+5) SIGUIENTE ACCIÓN RECOMENDADA
+   - Ejecuta la verificación configurada o mvn clean test.
+   - Si pasa, haz commit de la feature.
+   - Si falla, usa rollback o pide un patch correctivo.
+

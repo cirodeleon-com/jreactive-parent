@@ -1,0 +1,23 @@
+<<<DESCRIPCION>>>
+Intención: Corregir el error de compilación en DemoAuthorizationProvider.java donde el tipo anidado AuthContext no está importado.
+Alcance: Se añade una sola línea de import en DemoAuthorizationProvider.java. No se modifica ninguna otra clase ni prueba.
+Motivo: Java no resuelve automáticamente tipos anidados al importar la clase contenedora. Sin este import, el compilador no encuentra el símbolo AuthContext en la firma de isAuthorized(), lo que impide la compilación del módulo jreactive-demo-spring y falla todo el reactor.
+Validación manual sugerida desde el punto de vista del usuario:
+- Ejecutar: cd jreactive-demo-spring && mvn test-compile
+- La compilación debe terminar en BUILD SUCCESS.
+- Ejecutar: mvn test -pl jreactive-demo-spring -Dtest=DemoAuthorizationProviderTest
+- Los 7 tests deben pasar en verde.
+<<<END_DESCRIPCION>>>
+
+<<<FILE: jreactive-demo-spring/src/main/java/com/ciro/jreactive/DemoAuthorizationProvider.java>>>
+<<<OP: REPLACE_BLOCK>>>
+<<<FIND>>>
+import com.ciro.jreactive.spi.AuthorizationProvider;
+
+import java.lang.reflect.Method;
+<<<REPLACE>>>
+import com.ciro.jreactive.spi.AuthorizationProvider;
+import com.ciro.jreactive.spi.AuthorizationProvider.AuthContext;
+
+import java.lang.reflect.Method;
+<<<END>>>

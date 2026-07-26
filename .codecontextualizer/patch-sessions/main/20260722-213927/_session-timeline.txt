@@ -1,0 +1,52 @@
+===== CODECONTEXTUALIZER PATCH SESSION TIMELINE =====
+
+Sesión: 20260722-213927
+Creada: 2026-07-22T21:39:27.1826083
+Proyecto: C:\Users\Inspiron 15 3000\Downloads\jreactive-parent
+Backup: C:\Users\Inspiron 15 3000\Downloads\jreactive-parent\.codecontextualizer\backups\main\20260722-213927
+
+Descripción:
+Intención: Corregir los fallos en las pruebas automatizadas recién añadidas y un fallo de instrumentación de JaCoCo.
+Alcance: 
+1. Se modifica `DeferLifecycleTest.java` para que el método `@Defer` retorne el valor en lugar de mutar la variable.
+2. Se modifica `GenerateComponentsMojoTest.java` para invocar usando un arreglo explícito de argumentos.
+3. Se actualiza `jreactive-apt/pom.xml` para excluir las clases de la dependencia de terceros `ph-css` de la instrumentación de JaCoCo y evitar el `MethodTooLargeException`.
+Motivo: El método `_launchDeferredTasks` esperaba un valor de retorno para inyectarlo reactivamente. Devolver `void` causaba que se inyectara `null`. Por otro lado, JaCoCo no soporta métodos gigantes generados por javacc en la librería `ph-css`.
+Validación manual sugerida desde el punto de vista del usuario:
+- Ejecutar `mvn clean install` en la raíz.
+- Verificar que todas las pruebas pasan exitosamente sin excepciones de cobertura (JaCoCo) y sin bloqueos en los tests de @Defer.
+
+1) ANÁLISIS DEL PATCH
+   - Operaciones analizadas: 3
+   - Aplicables: 3
+   - Ya aplicadas: 0
+   - No aplicables: 0
+   - Archivos afectados por análisis: 3
+
+2) APLICACIÓN
+   - Operaciones aplicadas: 3
+   - Archivos tocados: 3
+   - Estado: APPLIED
+
+3) ARCHIVOS TOCADOS
+   - jreactive-apt/pom.xml
+   - jreactive-runtime-jvm/src/test/java/com/ciro/jreactive/DeferLifecycleTest.java
+   - jreactive-webcomponents-maven-plugin/src/test/java/com/ciro/jreactive/plugin/GenerateComponentsMojoTest.java
+
+4) DETALLE DE OPERACIONES
+   1. [APPLICABLE] REPLACE_BLOCK jreactive-runtime-jvm/src/test/java/com/ciro/jreactive/DeferLifecycleTest.java
+      Detalle: Aplicable. Coincidencia exacta encontrada.
+   2. [APPLICABLE] REPLACE_BLOCK jreactive-webcomponents-maven-plugin/src/test/java/com/ciro/jreactive/plugin/GenerateComponentsMojoTest.java
+      Detalle: Aplicable. Coincidencia exacta encontrada.
+   3. [APPLICABLE] REPLACE_BLOCK jreactive-apt/pom.xml
+      Detalle: Aplicable. Coincidencia encontrada con tolerancia de saltos de línea, espacios o indentación.
+
+5) SIGUIENTE ACCIÓN RECOMENDADA
+   - Ejecuta la verificación configurada o mvn clean test.
+   - Si pasa, haz commit de la feature.
+   - Si falla, usa rollback o pide un patch correctivo.
+
+
+===== EVENTO: ROLLBACK =====
+Fecha: 2026-07-22T21:50:06.1460673
+Detalle: Rollback ejecutado desde CodeContextualizer. Restaurados=4, creados eliminados=0

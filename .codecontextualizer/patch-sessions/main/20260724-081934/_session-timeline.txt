@@ -1,0 +1,43 @@
+===== CODECONTEXTUALIZER PATCH SESSION TIMELINE =====
+
+Sesión: 20260724-081934
+Creada: 2026-07-24T08:19:35.2700195
+Proyecto: C:\Users\Inspiron 15 3000\Downloads\jreactive-parent
+Backup: C:\Users\Inspiron 15 3000\Downloads\jreactive-parent\.codecontextualizer\backups\main\20260724-081934
+
+Descripción:
+Intención: Excluir las clases generadas del parser CSS de ph-css de la instrumentación de JaCoCo para eliminar el MethodTooLargeException que produce stack traces en stderr que el verificador interpreta como fallos.
+
+Alcance: Se añade configuración del plugin jacoco-maven-plugin únicamente en jreactive-apt/pom.xml para excluir com/helger/css/parser/** de la instrumentación. No se modifica ningún otro archivo ni la lógica de CssScoper. No se cambia ninguna versión de dependencia.
+
+Motivo: JaCoCo 0.8.12 con Java 21 lanza IllegalClassFormatException al intentar instrumentar ParserCSS30TokenManager.jjMoveNfa_0 porque ese método excede el límite de 65535 bytes. El test CssScoperTest pasa (6/6), pero el stack trace en stderr confunde al verificador. Excluir la clase de la instrumentación elimina el error sin afectar la cobertura del código propio del proyecto.
+
+Validación manual sugerida desde el punto de vista del usuario:
+- Ejecutar mvn clean install en jreactive-apt y confirmar que no aparecen stack traces de IllegalClassFormatException ni MethodTooLargeException.
+- Confirmar que CssScoperTest sigue pasando 6/6.
+- Confirmar que el reporte de cobertura JaCoCo sigue incluyendo las clases propias com.ciro.jreactive.tools.*.
+
+1) ANÁLISIS DEL PATCH
+   - Operaciones analizadas: 1
+   - Aplicables: 1
+   - Ya aplicadas: 0
+   - No aplicables: 0
+   - Archivos afectados por análisis: 1
+
+2) APLICACIÓN
+   - Operaciones aplicadas: 1
+   - Archivos tocados: 1
+   - Estado: APPLIED
+
+3) ARCHIVOS TOCADOS
+   - jreactive-apt/pom.xml
+
+4) DETALLE DE OPERACIONES
+   1. [APPLICABLE] REPLACE_BLOCK jreactive-apt/pom.xml
+      Detalle: Aplicable. Coincidencia encontrada con tolerancia de saltos de línea, espacios o indentación.
+
+5) SIGUIENTE ACCIÓN RECOMENDADA
+   - Ejecuta la verificación configurada o mvn clean test.
+   - Si pasa, haz commit de la feature.
+   - Si falla, usa rollback o pide un patch correctivo.
+

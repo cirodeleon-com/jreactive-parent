@@ -1,0 +1,1 @@
+Optimización de rendimiento en el motor de evaluación de plantillas mediante la introducción de una capa de caché estática para campos y métodos reflejados, eliminando por completo las penalizaciones de inspección del ClassLoader en caliente durante la resolución de propiedades dinámicas.

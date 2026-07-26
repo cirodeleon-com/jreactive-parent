@@ -1,0 +1,15 @@
+Intención:
+Añadir control de roles dinámico a SecureDemoPage: método `@Authorize(roles={"ADMIN"}) deleteItem(String)` para eliminación protegida, método `@Call login(String role)` para switch de rol, y feedback visual en template con `{{#if}}` mostrando botones de login/logout según el rol actual.
+
+Alcance:
+Se modifica únicamente `SecureDemoPage.java`: imports, dos métodos nuevos (`login` y `deleteItem`), CSS para botones de rol y eliminación, y HTML del template con condicionales `{{#if}}`. No se tocan otros archivos, ni la infraestructura de autorización del framework.
+
+Motivo:
+La subintención pide demostrar el sistema de autorización de JReactive con un ejemplo visible: el usuario puede cambiar de rol (GUEST→USER→ADMIN) y ver cómo `@Authorize` bloquea o permite la eliminación de items según el rol activo.
+
+Validación manual sugerida desde el punto de vista del usuario:
+- Navegar a `/secure-demo`: la página carga con rol GUEST, sin botones de eliminar en items.
+- Click en "Login como ADMIN": el badge cambia a ADMIN y aparece un botón 🗑️ en cada item.
+- Click en eliminar un item: el item desaparece y el mensaje confirma la eliminación.
+- Click en "Logout": el rol vuelve a GUEST y los botones de eliminar desaparecen.
+- Si se prueba como USER: aparecen botones de login/logout pero no de eliminar (solo ADMIN puede borrar).

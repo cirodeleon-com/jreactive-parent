@@ -1,0 +1,1 @@
+Aplica una corrección quirúrgica en el motor AOT para prevenir un ClassCastException al procesar campos Double. Ahora el compilador genera un operador ternario capaz de hacer coerción sobre Strings de forma estable, tal como ya lo hace para Integer y Boolean.

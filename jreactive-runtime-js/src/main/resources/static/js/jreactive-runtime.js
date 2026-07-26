@@ -833,35 +833,61 @@ function calcSizeLen(val, prop) {
                 entry = null; 
             }
 
-            if (!entry) {
-              const html = renderTemplate(tpl.innerHTML, item, idx, alias);
-              
-              const cleanHtml = html.trim();
-              const isCell = /^<(td|th)/i.test(cleanHtml);
-              const isTablePart = /^<(tr|thead|tbody|tfoot)/i.test(cleanHtml);
-              
-              const tempContainer = document.createElement(isCell || isTablePart ? 'table' : 'div');
-              if (isCell) tempContainer.innerHTML = `<tbody><tr>${cleanHtml}</tr></tbody>`;
-              else tempContainer.innerHTML = cleanHtml;
+			if (!entry) {
+			              // 1. Clonación nativa en memoria (Cero parseo)
+			              const itemFrag = tpl.content.cloneNode(true);
+			              const nodes = Array.from(itemFrag.childNodes);
 
-              const searchRoot = isCell ? tempContainer.querySelector('tr') : 
-                                 (isTablePart && tempContainer.querySelector('tbody')) ? tempContainer.querySelector('tbody') : 
-                                 tempContainer;
+			              // 2. Inyectamos la Verdad Funcional en los nodos raíz 
+			              // para que el resolveExpr encuentre los datos.
+			              nodes.forEach(n => {
+			                n._jrxScope = { [alias]: item, index: idx };
+			              });
 
-              const nodes = Array.from(searchRoot.childNodes);
+			              // 3. PRIMERO: Preparación O(1) de los Nodos Internos
+			              // Resolvemos todas las variables {{...}} en textos y atributos
+			              const walker = document.createTreeWalker(itemFrag, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT);
+			              let curr;
+			              
+			              while ((curr = walker.nextNode())) {
+			                if (curr.nodeType === Node.TEXT_NODE && curr.nodeValue.includes('{{')) {
+			                    curr.__tpl = curr.nodeValue;
+			                    renderText(curr);
+			                } 
+			                else if (curr.nodeType === Node.ELEMENT_NODE) {
+			                    Array.from(curr.attributes).forEach(attr => {
+			                        if (attr.value.includes('{{')) {
+			                            if (!curr._jrxAttrTpls) curr._jrxAttrTpls = {};
+			                            curr._jrxAttrTpls[attr.name] = attr.value;
+			                            
+			                            const newVal = attr.value.replace(/{{\s*([\w#.-]+)\s*}}/g, (m, key) => {
+			                                const val = resolveExpr(key, curr); 
+			                                return (val !== undefined && val !== null) ? val : '';
+			                            });
+			                            
+			                            if (isBoolAttr(attr.name)) {
+			                                const isTrue = newVal === 'true' || (newVal !== 'false' && newVal !== '');
+			                                if (isTrue) curr.setAttribute(attr.name, '');
+			                                else curr.removeAttribute(attr.name);
+			                            } else {
+			                                curr.setAttribute(attr.name, newVal);
+			                            }
+			                        }
+			                    });
+			                }
+			              }
 
-              // Inyectar el SCOPE (alias) a los nodos de esta fila para que la recursividad los encuentre
-              nodes.forEach(n => {
-                if (n.nodeType === 1) { 
-                  n._jrxScope = { [alias]: item };
-                  hydrateEventDirectives(n); 
-                  setupEventBindings(n); 
-                }
-              });
+			              // 4. SEGUNDO: AHORA SÍ, con los atributos sin llaves, hidratamos los eventos
+			              nodes.forEach(n => {
+			                if (n.nodeType === Node.ELEMENT_NODE) { 
+			                  hydrateEventDirectives(n); 
+			                  setupEventBindings(n); 
+			                }
+			              });
 
-              entry = { nodes, item };
-              rowChanged = true;
-            }
+			              entry = { nodes, item };
+			              rowChanged = true;
+			            }
 
             frag.append(...entry.nodes);
             next.set(key, entry);

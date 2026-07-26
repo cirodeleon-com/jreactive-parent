@@ -1,0 +1,56 @@
+===== CODECONTEXTUALIZER PATCH SESSION TIMELINE =====
+
+Sesión: 20260723-175454
+Creada: 2026-07-23T17:54:54.6569423
+Proyecto: C:\Users\Inspiron 15 3000\Downloads\jreactive-parent
+Backup: C:\Users\Inspiron 15 3000\Downloads\jreactive-parent\.codecontextualizer\backups\main\20260723-175454
+
+Descripción:
+Intención:
+Crear SecureDemoPage con demo de autorización declarativa usando @Authorize en método sensible, junto con login/logout de roles y feedback visual.
+
+Alcance:
+- Crear @Authorize (anotación nueva).
+- Crear SecureDemoPage con @Call públicos y @Call @Authorize(roles={"ADMIN"}) protegido.
+- Agregar link en HomePage (FIND más quirúrgico, 2 líneas únicas).
+- Queda fuera: interceptor que procese @Authorize automáticamente.
+
+Motivo:
+El guardia reportó FIND_NOT_FOUND por usar un bloque con línea vacía de indentación ambigua. Se reduce el FIND a las 2 líneas mínimas inequívocas (la línea de shoelace es única en todo el archivo). El warning de "ruptura de template()" es falso positivo: no se cambia la firma del método, solo se inserta texto dentro del String del template.
+
+Validación manual sugerida desde el punto de vista del usuario:
+- Navegar a /secure desde la home (nueva tarjeta "Seguridad & Autorización").
+- Intentar borrar sin login -> ver ACCESO DENEGADO en rojo.
+- Login como USER -> intentar borrar -> sigue denegado.
+- Login como ADMIN -> borrar -> éxito en verde y la lista se reduce.
+
+1) ANÁLISIS DEL PATCH
+   - Operaciones analizadas: 3
+   - Aplicables: 3
+   - Ya aplicadas: 0
+   - No aplicables: 0
+   - Archivos afectados por análisis: 3
+
+2) APLICACIÓN
+   - Operaciones aplicadas: 3
+   - Archivos tocados: 3
+   - Estado: APPLIED
+
+3) ARCHIVOS TOCADOS
+   - jreactive-demo-spring/src/main/java/com/ciro/jreactive/HomePage.java
+   - jreactive-demo-spring/src/main/java/com/ciro/jreactive/SecureDemoPage.java
+   - jreactive-demo-spring/src/main/java/com/ciro/jreactive/annotations/Authorize.java
+
+4) DETALLE DE OPERACIONES
+   1. [APPLICABLE] CREATE_FILE jreactive-demo-spring/src/main/java/com/ciro/jreactive/annotations/Authorize.java
+      Detalle: Aplicable. Se creará un archivo nuevo.
+   2. [APPLICABLE] CREATE_FILE jreactive-demo-spring/src/main/java/com/ciro/jreactive/SecureDemoPage.java
+      Detalle: Aplicable. Se creará un archivo nuevo.
+   3. [APPLICABLE] REPLACE_BLOCK jreactive-demo-spring/src/main/java/com/ciro/jreactive/HomePage.java
+      Detalle: Aplicable. Coincidencia encontrada con tolerancia de saltos de línea, espacios o indentación.
+
+5) SIGUIENTE ACCIÓN RECOMENDADA
+   - Ejecuta la verificación configurada o mvn clean test.
+   - Si pasa, haz commit de la feature.
+   - Si falla, usa rollback o pide un patch correctivo.
+

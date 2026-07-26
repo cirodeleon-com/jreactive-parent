@@ -1,0 +1,1 @@
+Corrección de la inicialización de los valores centinela en la caché de reflexión para evitar ExceptionInInitializerError, utilizando referencias seguras y garantizadas (Object.toString y campos estáticos propios).

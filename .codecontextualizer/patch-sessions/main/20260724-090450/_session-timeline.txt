@@ -1,0 +1,43 @@
+===== CODECONTEXTUALIZER PATCH SESSION TIMELINE =====
+
+Sesión: 20260724-090450
+Creada: 2026-07-24T09:04:51.5757891
+Proyecto: C:\Users\Inspiron 15 3000\Downloads\jreactive-parent
+Backup: C:\Users\Inspiron 15 3000\Downloads\jreactive-parent\.codecontextualizer\backups\main\20260724-090450
+
+Descripción:
+Intención: Corregir el fallo de JaCoCo 0.8.12 al instrumentar clases generadas por JavaCC en ph-css (MethodTooLargeException en ParserCSS30TokenManager.jjMoveNfa_0), que genera IllegalClassFormatException y desestabiliza tests aguas abajo por overhead de reintentos de instrumentación.
+
+Alcance: Se modifica únicamente pom.xml (padre) para añadir configuración <excludes> al jacoco-maven-plugin en la sección pluginManagement, excluyendo com/helger/** de la instrumentación. No se toca ningún otro archivo ni módulo.
+
+Motivo: JaCoCo no puede instrumentar métodos generados por JavaCC que exceden 64KB. Aunque CssScoperTest pasa (la excepción es atrapada internamente), el overhead del error repetido degrada el rendimiento del agente JaCoCo y puede causar fallos intermitentes en tests con timing sensible (JrxHttpApiTest, HybridStateStoreTest) en otros módulos. La exclusión es el fix estándar documentado por JaCoCo para librerías con parsers generados.
+
+Validación manual sugerida desde el punto de vista del usuario:
+- Ejecutar mvn clean install desde la raíz del proyecto.
+- Verificar que desaparece el stack trace de IllegalClassFormatException / MethodTooLargeException en el módulo jreactive-apt.
+- Confirmar que jreactive-runtime-jvm y jreactive-store-redis completan sus tests sin errores.
+
+1) ANÁLISIS DEL PATCH
+   - Operaciones analizadas: 1
+   - Aplicables: 1
+   - Ya aplicadas: 0
+   - No aplicables: 0
+   - Archivos afectados por análisis: 1
+
+2) APLICACIÓN
+   - Operaciones aplicadas: 1
+   - Archivos tocados: 1
+   - Estado: APPLIED
+
+3) ARCHIVOS TOCADOS
+   - pom.xml
+
+4) DETALLE DE OPERACIONES
+   1. [APPLICABLE] REPLACE_BLOCK pom.xml
+      Detalle: Aplicable. Coincidencia encontrada con tolerancia de saltos de línea, espacios o indentación.
+
+5) SIGUIENTE ACCIÓN RECOMENDADA
+   - Ejecuta la verificación configurada o mvn clean test.
+   - Si pasa, haz commit de la feature.
+   - Si falla, usa rollback o pide un patch correctivo.
+

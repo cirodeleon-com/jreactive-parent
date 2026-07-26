@@ -1,0 +1,11 @@
+Intención: Volver SecureDemoPage.java a su estado base mínimo: eliminar @Authorize, login y deleteItem añadidos en patches previos, conservando solo estado base (SmartList items, message, currentRole=GUEST), onInit con 3 items semilla, @Call addItem(String) público y template funcional con formulario y lista.
+
+Alcance: Se reemplaza únicamente jreactive-demo-spring/src/main/java/com/ciro/jreactive/SecureDemoPage.java. No se toca HomePage ni ningún otro archivo. La eliminación de login() y deleteItem() es intencional y solicitada por la subintención ("sin @Authorize todavía"). LoginPage.java tiene su propio método login() autónomo y no depende de SecureDemoPage.
+
+Motivo: La subintención pide explícitamente la versión base sin @Authorize. Los métodos login/deleteItem se añadieron en PATCH 2 y deben removerse para volver al estado base. No es pérdida funcional accidental: es el objetivo de la tarea.
+
+Validación manual sugerida desde el punto de vista del usuario:
+- Navegar a http://localhost:8080/secure-demo.
+- Ver rol "GUEST", mensaje de bienvenida y 3 items semilla.
+- Escribir texto, presionar "Agregar" y ver el nuevo item con mensaje de confirmación.
+- No deben existir botones de login/logout ni eliminar en esta versión base.

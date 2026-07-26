@@ -1,0 +1,13 @@
+Intención: Endurecer @Defer con timeout configurable, cancelación al desmontar y anti-duplicados (Epic 2, P0 del backlog).
+
+Alcance:
+1. Anotación @Defer: añade timeout() con default 30s.
+2. HtmlComponent: reescribe el cuerpo interno de _launchDeferredTasks() y reloadDeferred() usando CompletableFuture con orTimeout, check de MOUNTED antes de escribir, y Set de stateKeys en ejecución para evitar duplicados. NO cambia firmas públicas (reloadDeferred sigue siendo protected void reloadDeferred(String)).
+3. DeferLifecycleTest: prueba nueva que cubre éxito, cancelación y anti-duplicados.
+
+Motivo: @Defer ya es funcional pero un hilo virtual sin timeout puede quedar vivo indefinidamente; si el usuario navega a otra página la tarea escribe en un componente desmontado; y doble-click en "recargar" lanza tareas duplicadas.
+
+Validación manual sugerida desde el punto de vista del usuario:
+- Crear un componente con @Defer que haga Thread.sleep(10000) y timeout=2000. A los 2s la tarea se cancela.
+- Navegar a otra página mientras @Defer corre. No se escribe en componente desmontado.
+- Pulsar dos veces reloadDeferred("x") mientras corre. Solo se ejecuta una vez.

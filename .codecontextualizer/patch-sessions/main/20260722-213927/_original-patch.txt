@@ -1,0 +1,67 @@
+<<<DESCRIPCION>>>
+Intención: Corregir los fallos en las pruebas automatizadas recién añadidas y un fallo de instrumentación de JaCoCo.
+Alcance: 
+1. Se modifica `DeferLifecycleTest.java` para que el método `@Defer` retorne el valor en lugar de mutar la variable.
+2. Se modifica `GenerateComponentsMojoTest.java` para invocar usando un arreglo explícito de argumentos.
+3. Se actualiza `jreactive-apt/pom.xml` para excluir las clases de la dependencia de terceros `ph-css` de la instrumentación de JaCoCo y evitar el `MethodTooLargeException`.
+Motivo: El método `_launchDeferredTasks` esperaba un valor de retorno para inyectarlo reactivamente. Devolver `void` causaba que se inyectara `null`. Por otro lado, JaCoCo no soporta métodos gigantes generados por javacc en la librería `ph-css`.
+Validación manual sugerida desde el punto de vista del usuario:
+- Ejecutar `mvn clean install` en la raíz.
+- Verificar que todas las pruebas pasan exitosamente sin excepciones de cobertura (JaCoCo) y sin bloqueos en los tests de @Defer.
+<<<END_DESCRIPCION>>>
+
+<<<FILE: jreactive-runtime-jvm/src/test/java/com/ciro/jreactive/DeferLifecycleTest.java>>>
+<<<OP: REPLACE_BLOCK>>>
+<<<FIND>>>
+        @Defer("heavyData")
+        public void loadHeavyData() {
+            try { Thread.sleep(50); } catch (InterruptedException ignored) {}
+            heavyData = "Loaded from DB";
+            isLoaded = true;
+        }
+<<<REPLACE>>>
+        @Defer("heavyData")
+        public String loadHeavyData() {
+            try { Thread.sleep(50); } catch (InterruptedException ignored) {}
+            isLoaded = true;
+            return "Loaded from DB";
+        }
+<<<END>>>
+
+<<<FILE: jreactive-webcomponents-maven-plugin/src/test/java/com/ciro/jreactive/plugin/GenerateComponentsMojoTest.java>>>
+<<<OP: REPLACE_BLOCK>>>
+<<<FIND>>>
+        // 4. Ejecutamos la generación
+        method.invoke(mojo, "my-button", declaration, outputDir, "com.test.wc");
+<<<REPLACE>>>
+        // 4. Ejecutamos la generación
+        method.invoke(mojo, new Object[]{"my-button", declaration, outputDir, "com.test.wc"});
+<<<END>>>
+
+<<<FILE: jreactive-apt/pom.xml>>>
+<<<OP: REPLACE_BLOCK>>>
+<<<FIND>>>
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-compiler-plugin</artifactId>
+        <version>3.11.0</version>
+<<<REPLACE>>>
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.jacoco</groupId>
+        <artifactId>jacoco-maven-plugin</artifactId>
+        <version>0.8.12</version>
+        <configuration>
+          <excludes>
+            <exclude>com/helger/**</exclude>
+          </excludes>
+        </configuration>
+      </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-compiler-plugin</artifactId>
+        <version>3.11.0</version>
+<<<END>>>

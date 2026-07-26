@@ -1,0 +1,40 @@
+===== CODECONTEXTUALIZER PATCH SESSION TIMELINE =====
+
+Sesión: 20260723-101840
+Creada: 2026-07-23T10:18:40.6430901
+Proyecto: C:\Users\Inspiron 15 3000\Downloads\jreactive-parent
+Backup: C:\Users\Inspiron 15 3000\Downloads\jreactive-parent\.codecontextualizer\backups\main\20260723-101840
+
+Descripción:
+Intención: Añadir cobertura automatizada para la funcionalidad de autorización opt-in (@Authorize + AuthorizationProvider) introducida en el parche de seguridad, cubriendo tanto el SPI como el enforcement en JrxHttpApi.call.
+Alcance: Se crea un único archivo nuevo: AuthorizationEnforcementTest.java en jreactive-runtime-jvm/src/test/java/com/ciro/jreactive/. No se modifica código productivo ni pruebas existentes.
+Motivo: El parche de autorización introdujo 3 elementos nuevos (anotación @Authorize, interfaz AuthorizationProvider con AuthContext/Registry/Holder, y enforcement fail-closed en JrxHttpApi.call) sin ninguna prueba que valide el comportamiento. Esto es riesgo crítico: un regression en el bloque de autorización podría dejar métodos protegidos abiertos o bloquear métodos públicos, y no habría test que lo detecte. Las pruebas cubren: (1) contrato del SPI, (2) fail-closed sin provider, (3) allow/deny con provider, (4) opt-in para métodos sin @Authorize, (5) inspección de roles, (6) @Authorize a nivel clase.
+Validación manual sugerida desde el punto de vista del usuario:
+- Ejecutar: cd jreactive-runtime-jvm && mvn test -Dtest=AuthorizationEnforcementTest
+- Los 9 tests deben pasar en verde.
+- Verificar que el cleanup de Registry/Holder en @AfterEach no afecta a otros tests del mismo módulo (mvn test sin -Dtest filtro).
+
+1) ANÁLISIS DEL PATCH
+   - Operaciones analizadas: 1
+   - Aplicables: 1
+   - Ya aplicadas: 0
+   - No aplicables: 0
+   - Archivos afectados por análisis: 1
+
+2) APLICACIÓN
+   - Operaciones aplicadas: 1
+   - Archivos tocados: 1
+   - Estado: APPLIED
+
+3) ARCHIVOS TOCADOS
+   - jreactive-runtime-jvm/src/test/java/com/ciro/jreactive/AuthorizationEnforcementTest.java
+
+4) DETALLE DE OPERACIONES
+   1. [APPLICABLE] CREATE_FILE jreactive-runtime-jvm/src/test/java/com/ciro/jreactive/AuthorizationEnforcementTest.java
+      Detalle: Aplicable. Se creará un archivo nuevo.
+
+5) SIGUIENTE ACCIÓN RECOMENDADA
+   - Ejecuta la verificación configurada o mvn clean test.
+   - Si pasa, haz commit de la feature.
+   - Si falla, usa rollback o pide un patch correctivo.
+

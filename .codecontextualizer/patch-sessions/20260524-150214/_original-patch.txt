@@ -1,0 +1,25 @@
+<<<FILE: .codecontextualizerignore>>>
+<<<OP: REPLACE_BLOCK>>>
+<<<FIND>>>
+# IDE
+.idea/
+.vscode/
+.settings/
+.classpath
+.project
+.factorypath
+<<<REPLACE>>>
+# IDE
+.idea/
+.vscode/
+.settings/
+.classpath
+.project
+.factorypath
+
+# IDE metadata inside modules
+*/.classpath
+*/.project
+*/.factorypath
+*/.settings/
+<<<END>>>

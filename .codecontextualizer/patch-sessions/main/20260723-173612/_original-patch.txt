@@ -1,0 +1,367 @@
+<<<DESCRIPCION>>>
+Intención:
+Crear un ejemplo runnable de @Authorize en jreactive-demo-spring con infraestructura mínima de autenticación por sesión, un AuthorizationProvider concreto registrado vía @PostConstruct, endpoints REST de login/logout y una página demo protegida enlazada desde el Hub.
+
+Alcance:
+- Se crean 3 archivos nuevos en jreactive-demo-spring:
+  * com/ciro/jreactive/DemoSecurity.java (consolida DemoPrincipal, DemoAuthFilter, DemoAuthorizationProvider y @Configuration con @PostConstruct)
+  * com/ciro/jreactive/DemoAuthController.java (REST: /demo/login, /demo/logout, /demo/me)
+  * com/ciro/jreactive/SecurePage.java (página @Stateless con @Authorize a nivel clase y método)
+- Se modifica HomePage.java para añadir un enlace a /secure.
+- No se toca archivos del framework.
+
+Motivo:
+La anotación @Authorize y el SPI AuthorizationProvider no tenían un ejemplo runnable ni provider concreto en el demo. Este parche aporta el eslabón mínimo: identidad ficticia por sesión + provider que extrae roles del Principal + página demo con métodos protegidos.
+
+Validación manual sugerida desde el punto de vista del usuario:
+- fetch('/demo/login', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({user:'admin', roles:['ADMIN']})})
+- Navegar a /secure, pulsar "Revelar Secreto" (ADMIN): debe funcionar
+- fetch('/demo/logout', {method:'POST'}), refrescar /secure, pulsar botones: debe devolver FORBIDDEN
+<<<END_DESCRIPCION>>>
+
+<<<FILE: jreactive-demo-spring/src/main/java/com/ciro/jreactive/DemoSecurity.java>>>
+<<<OP: CREATE_FILE>>>
+<<<CONTENT>>>
+package com.ciro.jreactive;
+
+import com.ciro.jreactive.annotations.Authorize;
+import com.ciro.jreactive.spi.AuthorizationProvider;
+import jakarta.annotation.PostConstruct;
+import jakarta.servlet.Filter;
+import jakarta.servlet.FilterChain;
+import jakarta.servlet.ServletException;
+import jakarta.servlet.ServletRequest;
+import jakarta.servlet.ServletResponse;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletRequestWrapper;
+import jakarta.servlet.http.HttpSession;
+import org.springframework.boot.web.servlet.FilterRegistrationBean;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.stereotype.Component;
+
+import java.io.IOException;
+import java.security.Principal;
+import java.util.Collections;
+import java.util.Set;
+
+/**
+ * Infraestructura mínima de autenticación para el demo de @Authorize.
+ * Consolidada en un solo archivo para reducir superficie.
+ */
+public final class DemoSecurity {
+
+    private DemoSecurity() {}
+
+    // ──────────────────────────────────────────────
+    // 1. Principal ficticio (guardable en HttpSession)
+    // ──────────────────────────────────────────────
+
+    public static final class DemoPrincipal implements Principal {
+        private final String name;
+        private final Set<String> roles;
+
+        public DemoPrincipal(String name, Set<String> roles) {
+            this.name = name;
+            this.roles = (roles == null) ? Set.of() : Collections.unmodifiableSet(Set.copyOf(roles));
+        }
+
+        @Override
+        public String getName() { return name; }
+
+        public Set<String> getRoles() { return roles; }
+    }
+
+    // ──────────────────────────────────────────────
+    // 2. Filter que envuelve la request para exponer el Principal
+    // ──────────────────────────────────────────────
+
+    public static final String SESSION_KEY = "jrx.demo.principal";
+
+    @Component
+    public static class DemoAuthFilter implements Filter {
+
+        @Override
+        public void doFilter(ServletRequest req, ServletResponse res, FilterChain chain)
+                throws IOException, ServletException {
+
+            HttpServletRequest request = (HttpServletRequest) req;
+            DemoPrincipal principal = null;
+
+            HttpSession session = request.getSession(false);
+            if (session != null) {
+                Object raw = session.getAttribute(SESSION_KEY);
+                if (raw instanceof DemoPrincipal dp) {
+                    principal = dp;
+                }
+            }
+
+            if (principal != null) {
+                chain.doFilter(new AuthenticatedRequest(request, principal), res);
+            } else {
+                chain.doFilter(req, res);
+            }
+        }
+
+        private static final class AuthenticatedRequest extends HttpServletRequestWrapper {
+            private final DemoPrincipal principal;
+
+            AuthenticatedRequest(HttpServletRequest request, DemoPrincipal principal) {
+                super(request);
+                this.principal = principal;
+            }
+
+            @Override
+            public Principal getUserPrincipal() {
+                return principal;
+            }
+        }
+    }
+
+    // ──────────────────────────────────────────────
+    // 3. AuthorizationProvider concreto (fail-closed)
+    // ──────────────────────────────────────────────
+
+    public static class DemoAuthorizationProvider implements AuthorizationProvider {
+
+        @Override
+        public boolean isAuthorized(AuthContext ctx, HtmlComponent component,
+                                     java.lang.reflect.Method method, Authorize meta) {
+            if (!ctx.isAuthenticated()) {
+                return false;
+            }
+
+            Set<String> userRoles;
+            if (ctx.principal() instanceof DemoPrincipal dp) {
+                userRoles = dp.getRoles();
+            } else {
+                userRoles = ctx.roles();
+            }
+
+            String[] required = meta.roles();
+            if (required == null || required.length == 0) {
+                return true; // @Authorize sin roles = cualquier autenticado
+            }
+
+            for (String role : required) {
+                if (userRoles.contains(role)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+    }
+
+    // ──────────────────────────────────────────────
+    // 4. @Configuration: registra provider + filtro
+    // ──────────────────────────────────────────────
+
+    @Configuration
+    public static class DemoAuthConfig {
+
+        private final DemoAuthFilter demoAuthFilter;
+
+        public DemoAuthConfig(DemoAuthFilter demoAuthFilter) {
+            this.demoAuthFilter = demoAuthFilter;
+        }
+
+        @PostConstruct
+        public void registerAuthorizationProvider() {
+            AuthorizationProvider.Registry.setProvider(new DemoAuthorizationProvider());
+            System.out.println("🔐 [Demo] DemoAuthorizationProvider registrado en AuthorizationProvider.Registry");
+        }
+
+        @Bean
+        public FilterRegistrationBean<DemoAuthFilter> demoAuthFilterRegistration() {
+            FilterRegistrationBean<DemoAuthFilter> registration = new FilterRegistrationBean<>(demoAuthFilter);
+            registration.addUrlPatterns("/*");
+            registration.setOrder(0);
+            registration.setName("demoAuthFilter");
+            return registration;
+        }
+    }
+}
+<<<END>>>
+
+<<<FILE: jreactive-demo-spring/src/main/java/com/ciro/jreactive/DemoAuthController.java>>>
+<<<OP: CREATE_FILE>>>
+<<<CONTENT>>>
+package com.ciro.jreactive;
+
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpSession;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+import java.security.Principal;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
+
+/**
+ * Endpoints REST de ejemplo para el demo de @Authorize.
+ * La identidad (DemoPrincipal) se guarda en HttpSession y DemoAuthFilter la expone.
+ */
+@RestController
+@RequestMapping("/demo")
+public class DemoAuthController {
+
+    @PostMapping("/login")
+    public Map<String, Object> login(@RequestBody Map<String, Object> body, HttpServletRequest req) {
+        String user = String.valueOf(body.getOrDefault("user", "demo-user"));
+        Set<String> roles = parseRoles(body.get("roles"));
+
+        DemoSecurity.DemoPrincipal principal = new DemoSecurity.DemoPrincipal(user, roles);
+        req.getSession(true).setAttribute(DemoSecurity.SESSION_KEY, principal);
+
+        Map<String, Object> res = new LinkedHashMap<>();
+        res.put("ok", true);
+        res.put("user", principal.getName());
+        res.put("roles", principal.getRoles());
+        return res;
+    }
+
+    @PostMapping("/logout")
+    public Map<String, Object> logout(HttpServletRequest req) {
+        HttpSession session = req.getSession(false);
+        if (session != null) {
+            session.removeAttribute(DemoSecurity.SESSION_KEY);
+        }
+        return Map.of("ok", true);
+    }
+
+    @GetMapping("/me")
+    public Map<String, Object> me(HttpServletRequest req) {
+        Principal p = req.getUserPrincipal();
+        if (p instanceof DemoSecurity.DemoPrincipal dp) {
+            Map<String, Object> res = new LinkedHashMap<>();
+            res.put("authenticated", true);
+            res.put("user", dp.getName());
+            res.put("roles", dp.getRoles());
+            return res;
+        }
+        return Map.of("authenticated", false);
+    }
+
+    private Set<String> parseRoles(Object raw) {
+        if (raw instanceof List<?> list) {
+            return list.stream()
+                    .filter(java.util.Objects::nonNull)
+                    .map(String::valueOf)
+                    .collect(Collectors.toSet());
+        }
+        if (raw instanceof String s && !s.isBlank()) {
+            return Set.of(s);
+        }
+        return Set.of("USER");
+    }
+}
+<<<END>>>
+
+<<<FILE: jreactive-demo-spring/src/main/java/com/ciro/jreactive/SecurePage.java>>>
+<<<OP: CREATE_FILE>>>
+<<<CONTENT>>>
+package com.ciro.jreactive;
+
+import com.ciro.jreactive.annotations.Authorize;
+import com.ciro.jreactive.annotations.Call;
+import com.ciro.jreactive.annotations.Stateless;
+import com.ciro.jreactive.router.Route;
+
+/**
+ * Demo de la anotación @Authorize.
+ *
+ * @Authorize a nivel clase: cualquier autenticado puede invocar @Call de esta página.
+ * @Authorize(roles = {"ADMIN"}) a nivel método: solo ADMIN puede ejecutar revealSecret().
+ */
+@Route(path = "/secure")
+@Stateless
+@Authorize
+public class SecurePage extends AppPage {
+
+    @State public String message = "Acceso concedido. Estás autenticado.";
+    @State public String secret = "";
+
+    @Call
+    public void ping() {
+        this.message = "Pong: cualquier usuario autenticado puede hacer ping.";
+        this.secret = "";
+    }
+
+    @Call
+    @Authorize(roles = {"ADMIN"})
+    public void revealSecret() {
+        this.secret = "🥷 Clave maestra del boss: 42. No se lo digas a nadie.";
+        this.message = "Secreto revelado: fuiste autorizado como ADMIN.";
+    }
+
+    @Override
+    protected String template() {
+        return """
+            <div style="padding: 30px; font-family: system-ui, sans-serif; max-width: 640px; margin: 0 auto;">
+                <h1>🔒 Demo @Authorize</h1>
+                <p style="color: #555;">Ejemplo runnable de la anotación <code>@Authorize</code> conectada al hub de sesión.</p>
+
+                <div style="margin-top: 20px; padding: 15px; background: #e7f3ff; border-radius: 8px; border-left: 5px solid #007bff;">
+                    <strong>Estado:</strong> {{message}}
+                </div>
+
+                <div style="margin-top: 20px; display: flex; gap: 10px; flex-wrap: wrap;">
+                    <button @click="ping()"
+                        style="padding: 10px 15px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer;">
+                        📢 Ping (cualquier autenticado)
+                    </button>
+                    <button @click="revealSecret()"
+                        style="padding: 10px 15px; background: #dc3545; color: white; border: none; border-radius: 4px; cursor: pointer;">
+                        🔑 Revelar Secreto (solo ADMIN)
+                    </button>
+                </div>
+
+                {{#if secret}}
+                    <div style="margin-top: 20px; padding: 15px; background: #fff3cd; border-radius: 6px; border-left: 5px solid #ffc107;">
+                        {{secret}}
+                    </div>
+                {{/if}}
+
+                <div style="margin-top: 30px; padding: 15px; background: #f8f9fa; border-radius: 6px; font-size: 0.9em; color: #555;">
+                    <strong>¿Cómo probarlo?</strong>
+                    <ol style="margin: 10px 0 0 20px;">
+                        <li>En la consola del navegador ejecuta:
+<code>fetch('/demo/login', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({user:'admin', roles:['ADMIN']})})</code>
+                        </li>
+                        <li>Refresca esta página. Ahora eres ADMIN autenticado.</li>
+                        <li>Pulsa "Revelar Secreto": debe funcionar.</li>
+                        <li>Haz logout con <code>fetch('/demo/logout', {method:'POST'})</code>, refresca y vuelve a probar: devuelve <strong>FORBIDDEN</strong>.</li>
+                    </ol>
+                </div>
+
+                <p style="margin-top: 30px;"><a data-router href="/">⬅️ Volver al Inicio</a></p>
+            </div>
+        """;
+    }
+}
+<<<END>>>
+
+<<<FILE: jreactive-demo-spring/src/main/java/com/ciro/jreactive/HomePage.java>>>
+<<<OP: REPLACE_BLOCK>>>
+<<<FIND>>>
+                      <a class="nav-link" href="/shoelace" data-router><span class="nav-icon">🥾</span> Web Components Nativos</a>
+                  </JCard>
+
+              </div>
+<<<REPLACE>>>
+                      <a class="nav-link" href="/shoelace" data-router><span class="nav-icon">🥾</span> Web Components Nativos</a>
+                  </JCard>
+
+                  <JCard title="🔐 Seguridad" subtitle="Autorización basada en roles">
+                      <a class="nav-link" href="/secure" data-router><span class="nav-icon">🔒</span> @Authorize Demo</a>
+                      <a class="nav-link" href="/demo/me"><span class="nav-icon">👤</span> ¿Quién soy? (/demo/me)</a>
+                  </JCard>
+
+              </div>
+<<<END>>>

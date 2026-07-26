@@ -1,0 +1,54 @@
+===== CODECONTEXTUALIZER PATCH SESSION TIMELINE =====
+
+Sesión: 20260723-185456
+Creada: 2026-07-23T18:54:56.4363684
+Proyecto: C:\Users\Inspiron 15 3000\Downloads\jreactive-parent
+Backup: C:\Users\Inspiron 15 3000\Downloads\jreactive-parent\.codecontextualizer\backups\main\20260723-185456
+
+Descripción:
+Intención:
+Añadir control de roles dinámico a SecureDemoPage: método `@Authorize(roles={"ADMIN"}) deleteItem(String)` para eliminación protegida, método `@Call login(String role)` para switch de rol, y feedback visual en template con `{{#if}}` mostrando botones de login/logout según el rol actual.
+
+Alcance:
+Se modifica únicamente `SecureDemoPage.java`: imports, dos métodos nuevos (`login` y `deleteItem`), CSS para botones de rol y eliminación, y HTML del template con condicionales `{{#if}}`. No se tocan otros archivos, ni la infraestructura de autorización del framework.
+
+Motivo:
+La subintención pide demostrar el sistema de autorización de JReactive con un ejemplo visible: el usuario puede cambiar de rol (GUEST→USER→ADMIN) y ver cómo `@Authorize` bloquea o permite la eliminación de items según el rol activo.
+
+Validación manual sugerida desde el punto de vista del usuario:
+- Navegar a `/secure-demo`: la página carga con rol GUEST, sin botones de eliminar en items.
+- Click en "Login como ADMIN": el badge cambia a ADMIN y aparece un botón 🗑️ en cada item.
+- Click en eliminar un item: el item desaparece y el mensaje confirma la eliminación.
+- Click en "Logout": el rol vuelve a GUEST y los botones de eliminar desaparecen.
+- Si se prueba como USER: aparecen botones de login/logout pero no de eliminar (solo ADMIN puede borrar).
+
+1) ANÁLISIS DEL PATCH
+   - Operaciones analizadas: 4
+   - Aplicables: 4
+   - Ya aplicadas: 0
+   - No aplicables: 0
+   - Archivos afectados por análisis: 1
+
+2) APLICACIÓN
+   - Operaciones aplicadas: 4
+   - Archivos tocados: 1
+   - Estado: APPLIED
+
+3) ARCHIVOS TOCADOS
+   - jreactive-demo-spring/src/main/java/com/ciro/jreactive/SecureDemoPage.java
+
+4) DETALLE DE OPERACIONES
+   1. [APPLICABLE] REPLACE_BLOCK jreactive-demo-spring/src/main/java/com/ciro/jreactive/SecureDemoPage.java
+      Detalle: Aplicable. Coincidencia exacta encontrada.
+   2. [APPLICABLE] REPLACE_BLOCK jreactive-demo-spring/src/main/java/com/ciro/jreactive/SecureDemoPage.java
+      Detalle: Aplicable. Coincidencia exacta encontrada.
+   3. [APPLICABLE] REPLACE_BLOCK jreactive-demo-spring/src/main/java/com/ciro/jreactive/SecureDemoPage.java
+      Detalle: Aplicable. Coincidencia exacta encontrada.
+   4. [APPLICABLE] REPLACE_BLOCK jreactive-demo-spring/src/main/java/com/ciro/jreactive/SecureDemoPage.java
+      Detalle: Aplicable. Coincidencia exacta encontrada.
+
+5) SIGUIENTE ACCIÓN RECOMENDADA
+   - Ejecuta la verificación configurada o mvn clean test.
+   - Si pasa, haz commit de la feature.
+   - Si falla, usa rollback o pide un patch correctivo.
+

@@ -1,0 +1,264 @@
+package com.ciro.jreactive.template;
+
+import com.ciro.jreactive.HtmlComponent;
+import com.ciro.jreactive.ReactiveVar;
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
+import java.util.*;
+
+public class TemplateContext {
+    private final Map<String, Object> localVars;
+    private final TemplateContext parent;
+    private final HtmlComponent component; 
+    private static final java.util.Set<Class<?>> WARNED_CLASSES = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    public TemplateContext(HtmlComponent component) {
+        this.component = component;
+        this.localVars = new HashMap<>();
+        this.parent = null;
+    }
+
+    private TemplateContext(TemplateContext parent, Map<String, Object> locals) {
+        this.component = parent.component;
+        this.localVars = locals;
+        this.parent = parent;
+    }
+
+    public TemplateContext createChild(Map<String, Object> locals) {
+        return new TemplateContext(this, locals);
+    }
+
+    public Object resolve(String path) {
+        if (path == null || path.isBlank()) return null;
+        if (path.equals("this")) return localVars.get("this");
+        
+        // Literales
+        if (path.equals("true")) return true;
+        if (path.equals("false")) return false;
+        if (path.startsWith("'") && path.endsWith("'")) return path.substring(1, path.length()-1);
+        if (isNumeric(path)) return Double.parseDouble(path);
+
+        String[] parts = path.split("\\.");
+        String root = parts[0];
+
+        // 1. Buscar en Variables Locales (Para alias de {{#each user in users}})
+        if (localVars.containsKey(root)) {
+            Object value = localVars.get(root);
+            if (parts.length > 1) {
+                // Aquí sí usamos getProperty clásico porque el #each es dinámico
+                for (int i = 1; i < parts.length; i++) {
+                    value = getProperty(value, parts[i]);
+                    if (value == null) break;
+                }
+            }
+            return checkSize(value, path);
+        }
+
+        // 2. 🔥 MAGIA AOT: Lectura directa del estado del componente O(1)
+        @SuppressWarnings({"rawtypes", "unchecked"})
+        com.ciro.jreactive.spi.ComponentAccessor acc = com.ciro.jreactive.spi.AccessorRegistry.get(component.getClass());
+        if (acc != null) {
+        	System.out.println("🚀 Leyendo [" + path + "] via AOT en " + component.getClass().getSimpleName());
+            Object val = acc.read(component, path);
+            if (val != null) return checkSize(val, path);
+            
+            // Soporte para .size en arrays directos del state (Ej: items.size)
+            if (path.endsWith(".size") || path.endsWith(".length")) {
+                String base = path.substring(0, path.lastIndexOf('.'));
+                Object baseVal = acc.read(component, base);
+                return checkSize(baseVal, path);
+            }
+            return val; // Null si no existe o es nulo
+        }
+        
+     // ------------------------------------------------------------------
+        // 2.5 🔥 FALLBACK DE REFLEXIÓN (Plan B Amigable)
+        // ------------------------------------------------------------------
+        ReactiveVar<?> rx = component.getRawBindings().get(root);
+        if (rx != null) {
+            if (WARNED_CLASSES.add(component.getClass())) {
+                System.err.println("⚠️ [JReactive] ADVERTENCIA: Ejecutando '" + component.getClass().getSimpleName() + "' en modo Reflexión (Lento). Activa el procesador AOT para producción.");
+            }
+
+            Object value = rx.get();
+            if (parts.length > 1) {
+                for (int i = 1; i < parts.length; i++) {
+                    // 🔥 NUEVO: Interceptar .size y .length antes de buscar la propiedad
+                    String part = parts[i];
+                    if (i == parts.length - 1 && (part.equals("size") || part.equals("length"))) {
+                        return getSize(value);
+                    }
+                    
+                    value = getProperty(value, part);
+                    if (value == null) break;
+                }
+            }
+            return checkSize(value, path);
+        }
+
+        // 3. Fallback a padres (Por si usas variables heredadas en Slots)
+        if (parent != null) {
+            return parent.resolve(path);
+        }
+
+        return null;
+    }
+
+    // Pequeño helper para no repetir el código del size
+    private Object checkSize(Object value, String path) {
+        if (path.endsWith(".size") || path.endsWith(".length")) {
+            return getSize(value);
+        }
+        return value;
+    }
+
+    public boolean evaluate(String expr) {
+        String clean = expr.trim();
+        boolean negate = false;
+        if (clean.startsWith("!")) {
+            negate = true;
+            clean = clean.substring(1).trim();
+        }
+        Object val = resolve(clean);
+        return negate ? !isTruthy(val) : isTruthy(val);
+    }
+
+    private boolean isTruthy(Object o) {
+        if (o == null) return false;
+        if (o instanceof Boolean b) return b;
+        if (o instanceof Collection<?> c) return !c.isEmpty();
+        if (o instanceof Map<?,?> m) return !m.isEmpty();
+        if (o.getClass().isArray()) return java.lang.reflect.Array.getLength(o) > 0;
+        if (o instanceof String s) return !s.isEmpty();
+        if (o instanceof Number n) return n.doubleValue() != 0;
+        return true;
+    }
+
+    private int getSize(Object o) {
+        if (o instanceof Collection<?> c) return c.size();
+        if (o instanceof Map<?,?> m) return m.size();
+        if (o instanceof String s) return s.length();
+        if (o != null && o.getClass().isArray()) return java.lang.reflect.Array.getLength(o);
+        return 0;
+    }
+
+    // ========================================================================
+    // 🔥 EL MOTOR DE REFLEXIÓN (Soporta Records, Getters y Fields)
+    // ========================================================================
+    private Object getProperty(Object obj, String fieldName) {
+        if (obj == null) return null;
+        if (obj instanceof Map<?,?> m) return m.get(fieldName);
+        
+        Class<?> c = obj.getClass();
+        try {
+            // A. Intentar como MÉTODO (Indispensable para Records: street())
+            Method m = findMethod(c, fieldName);
+            if (m != null) {
+                m.setAccessible(true);
+                return m.invoke(obj);
+            }
+
+            // B. Intentar como CAMPO (Para clases normales)
+            Field f = findField(c, fieldName);
+            if (f != null) {
+                f.setAccessible(true);
+                return f.get(obj);
+            }
+        } catch (Exception e) {
+        	System.err.println("⚠️ [JReactive] Error accediendo a propiedad '" + fieldName + "' en objeto " + obj.getClass().getSimpleName() + ": " + e.getMessage());
+        }
+        return null;
+    }
+    
+    private static final Map<String, Field> FIELD_REFLECTION_CACHE = new java.util.concurrent.ConcurrentHashMap<>();
+    private static final Map<String, Method> METHOD_REFLECTION_CACHE = new java.util.concurrent.ConcurrentHashMap<>();
+    private static final Field REFLECTION_NULL_FIELD;
+    private static final Method REFLECTION_NULL_METHOD;
+
+    static {
+        try {
+            REFLECTION_NULL_FIELD = TemplateContext.class.getDeclaredField("component");
+            REFLECTION_NULL_METHOD = TemplateContext.class.getDeclaredMethod("slot");
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    private Field findField(Class<?> c, String name) {
+        String cacheKey = c.getName() + "::" + name;
+        Field cached = FIELD_REFLECTION_CACHE.get(cacheKey);
+        if (cached != null) {
+            return cached == REFLECTION_NULL_FIELD ? null : cached;
+        }
+
+        Class<?> current = c;
+        while (current != null && current != Object.class) {
+            try {
+                Field f = current.getDeclaredField(name);
+                FIELD_REFLECTION_CACHE.put(cacheKey, f);
+                return f;
+            } catch (Exception e) {
+                current = current.getSuperclass();
+            }
+        }
+        FIELD_REFLECTION_CACHE.put(cacheKey, REFLECTION_NULL_FIELD);
+        return null;
+    }
+
+    private Method findMethod(Class<?> c, String name) {
+        String cacheKey = c.getName() + "::" + name;
+        Method cached = METHOD_REFLECTION_CACHE.get(cacheKey);
+        if (cached != null) {
+            return cached == REFLECTION_NULL_METHOD ? null : cached;
+        }
+
+        // 1. Nombre exacto (Records: "street()")
+        try {
+            Method m = c.getMethod(name);
+            METHOD_REFLECTION_CACHE.put(cacheKey, m);
+            return m;
+        } catch (Exception e) { /* Fallback */ }
+
+        // 2. Estilo Bean: "getStreet()"
+        String getter = "get" + Character.toUpperCase(name.charAt(0)) + name.substring(1);
+        try {
+            Method m = c.getMethod(getter);
+            METHOD_REFLECTION_CACHE.put(cacheKey, m);
+            return m;
+        } catch (Exception e) { /* Fallback */ }
+
+        // 3. Estilo Boolean: "isUrgent()"
+        String isser = "is" + Character.toUpperCase(name.charAt(0)) + name.substring(1);
+        try {
+            Method m = c.getMethod(isser);
+            METHOD_REFLECTION_CACHE.put(cacheKey, m);
+            return m;
+        } catch (Exception e) { /* Fallback */ }
+
+        System.out.println("ℹ️ [JReactive] No se encontró método (getter/record) para '" + name + "' en " + c.getSimpleName());
+        METHOD_REFLECTION_CACHE.put(cacheKey, REFLECTION_NULL_METHOD);
+        return null;
+    }
+    
+    private double parseDouble(Object o) {
+        if (o instanceof Number n) return n.doubleValue();
+        try { return Double.parseDouble(String.valueOf(o)); } catch(Exception e) { return 0; }
+    }
+
+    private boolean isNumeric(String str) {
+        return str != null && str.matches("-?\\d+(\\.\\d+)?");
+    }
+    
+    public HtmlComponent getComponent() {
+        return this.component;
+    }
+    
+    public static boolean evalSimple(HtmlComponent comp, String expr) {
+    	        if (expr == null || expr.isBlank()) return false;
+    	
+    	        // Creamos un contexto efímero para evaluar una sola expresión
+    	        TemplateContext ctx = new TemplateContext(comp);
+    	        return ctx.evaluate(expr);
+    	    }
+
+}

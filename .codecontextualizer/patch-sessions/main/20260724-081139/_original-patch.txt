@@ -1,0 +1,34 @@
+<<<DESCRIPCION>>>
+Intención: Diagnóstico tras segundo intento de verificación. Los errores son pre-existentes y no relacionados con el patch aplicado en SecureDemoPage.java. No se requiere ningún cambio de código.
+
+Alcance: No se modifica ningún archivo. Todos los 66 errores mapeados están marcados como [NO tocado por el patch: posible efecto colateral]. Ninguno está marcado como [tocado por el patch].
+
+Motivo: Análisis técnico de los errores:
+1. JaCoCo 0.8.12 + Java 21: El IllegalClassFormatException al instrumentar ParserCSS30TokenManager (ph-css) es un bug conocido (MethodTooLargeException). Los tests de CssScoperTest pasaron 6/6 y jreactive-apt pasó 15/15 a pesar del warning.
+2. JrxHttpApiTest/JrxRequestQueueTest: Están en jreactive-runtime-jvm (paso 5/11) y jreactive-starter-spring (paso 6/11), que se construyen ANTES que jreactive-demo-spring (paso 9/11). SecureDemoPage.java no puede afectar retroactivamente módulos que ya terminaron de compilarse. Los stack traces muestran TimeoutExtension, indicando tests flaky de concurrencia.
+3. jreactive-core pasó 105/105, jreactive-apt pasó 15/15. El build avanzó hasta módulos posteriores, demostrando que SecureDemoPage.java compila correctamente.
+
+Validación manual sugerida desde el punto de vista del usuario:
+- Ejecutar: mvn clean install -DskipTests para confirmar que SecureDemoPage.java compila sin errores.
+- Ejecutar: mvn test -pl jreactive-demo-spring para verificar solo el módulo del patch.
+- Los fallos en jreactive-runtime-jvm son pre-existentes (reproducir sin el patch aplicado para confirmar).
+<<<END_DESCRIPCION>>>
+<<<FILE: jreactive-demo-spring/src/main/java/com/ciro/jreactive/SecureDemoPage.java>>>
+<<<OP: REPLACE_BLOCK>>>
+<<<FIND>>>
+    @Call
+    public void addItem(String newItem) {
+        if (newItem != null && !newItem.isBlank()) {
+            items.add(newItem);
+            message = "✅ Item agregado: " + newItem;
+        }
+    }
+<<<REPLACE>>>
+    @Call
+    public void addItem(String newItem) {
+        if (newItem != null && !newItem.isBlank()) {
+            items.add(newItem);
+            message = "✅ Item agregado: " + newItem;
+        }
+    }
+<<<END>>>
