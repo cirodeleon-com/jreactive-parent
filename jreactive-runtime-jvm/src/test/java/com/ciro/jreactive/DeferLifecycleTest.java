@@ -82,7 +82,7 @@ class DeferLifecycleTest {
     }
 
     @Test
-    @DisplayName("Anti-Duplicados: reloadDeferred no lanza tarea duplicada si ya está corriendo")
+    @DisplayName("Recarga coalescente: múltiples solicitudes producen una sola recarga posterior")
     void testDeferAntiDuplicate() throws Exception {
         DeferPage page = new DeferPage();
         page._initIfNeeded();
@@ -98,8 +98,8 @@ class DeferLifecycleTest {
         // Esperamos a que todo termine
         Thread.sleep(600);
 
-        // Solo debe haberse ejecutado una vez (la inicial); los 2 reloads fueron ignorados
-        assertThat(page.slowCallCount.get()).isEqualTo(1);
+        // Una carga inicial y una única recarga coalescida.
+        assertThat(page.slowCallCount.get()).isEqualTo(2);
     }
 
     @Test

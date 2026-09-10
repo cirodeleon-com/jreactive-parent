@@ -74,13 +74,14 @@ private final  Map<String, String> _childRefAlias = new HashMap<>();
     private Map<String, String> _slots = new HashMap<>();
     
     private boolean _initialized = false;
+    private transient volatile boolean _deferredInitialLaunchPending = false;
     
     // 🔒 Lock para gestión de estado y árbol (Anti-Pinning)
     private transient volatile ReentrantLock lock;
     
  // 🔥 NUEVO: Lista para limpiar suscripciones viejas al ser reciclado
     private transient List<Runnable> _bindingCleanups = new ArrayList<>();
-    private transient java.util.Set<String> _runningDeferredTasks = ConcurrentHashMap.newKeySet();
+    private transient java.util.Set<String> _runningDeferredTasks = DeferredTaskGate.create();
     // Rastro de tareas @Defer en vuelo por stateKey (diagnóstico; transient: no se serializa).
     private transient Map<String, java.util.concurrent.CompletableFuture<?>> _runningDeferredFutures = null;
     private transient volatile boolean _disposed = false;
@@ -340,7 +341,7 @@ private final  Map<String, String> _childRefAlias = new HashMap<>();
     public void _initIfNeeded() {
         if (!_initialized) {
             onInit();
-            _launchDeferredTasks();
+            _deferredInitialLaunchPending = true;
             _initialized = true;
         }
     }
@@ -351,7 +352,14 @@ private final  Map<String, String> _childRefAlias = new HashMap<>();
     
     public void _mountRecursive() {
         if (_state.compareAndSet(ComponentState.UNMOUNTED, ComponentState.MOUNTED)) {
+            if (_runningDeferredTasks == null) {
+                _runningDeferredTasks = DeferredTaskGate.create();
+            }
             onMount();
+            if (_deferredInitialLaunchPending) {
+                _deferredInitialLaunchPending = false;
+                _launchDeferredTasks();
+            }
         }
         for (HtmlComponent child : _children()) {
             child._mountRecursive();
@@ -1119,7 +1127,10 @@ private final  Map<String, String> _childRefAlias = new HashMap<>();
         for (Method m : deferMethods) {
             com.ciro.jreactive.annotations.Defer deferAnn = m.getAnnotation(com.ciro.jreactive.annotations.Defer.class);
             if (stateKey.equals(deferAnn.value())) {
-                executeDeferred(m, stateKey, deferAnn.timeout());
+                DeferredTaskGate.request(
+                        _runningDeferredTasks,
+                        stateKey,
+                        () -> executeDeferred(m, stateKey, deferAnn.timeout()));
                 return;
             }
         }
