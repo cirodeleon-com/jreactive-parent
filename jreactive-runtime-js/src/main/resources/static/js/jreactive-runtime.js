@@ -2452,6 +2452,32 @@ function updateDomForKey(k, v) {
 // =====================================================================================
 // 🔥 FIX FINAL DEFINITIVO: applyStateForKey (Reactividad Inmortal + Foco Protegido)
 // =====================================================================================
+function deferNodes(attributeName, k, shortKey) {
+  const nodes = Array.from(
+      document.querySelectorAll('[' + attributeName + ']')
+  );
+
+  const direct = nodes.filter(node => {
+      const nodeKey = node.getAttribute(attributeName);
+      return nodeKey === k || nodeKey === shortKey;
+  });
+
+  if (direct.length > 0 || k.includes('.')) {
+      return direct;
+  }
+
+  const qualified = nodes.filter(node => {
+      const nodeKey = node.getAttribute(attributeName);
+      return nodeKey != null && nodeKey.endsWith('.' + shortKey);
+  });
+
+  const qualifiedKeys = new Set(
+      qualified.map(node => node.getAttribute(attributeName))
+  );
+
+  return qualifiedKeys.size === 1 ? qualified : [];
+}
+
 function applyStateForKey(k, v) {
   // 1. Actualizar memoria global
   state[k] = v;
@@ -2462,10 +2488,10 @@ function applyStateForKey(k, v) {
   // NO usamos innerHTML: el valor del centinela es un flag booleano, no HTML.
   if (v && typeof v === 'object' && v.__jrx_defer_error__ === 'true') {
       const shortKey = k.includes('.') ? k.split('.').at(-1) : k;
-      document.querySelectorAll('[jrx-error-fallback="' + k + '"], [jrx-error-fallback="' + shortKey + '"]').forEach(function(node) {
+      deferNodes('jrx-error-fallback', k, shortKey).forEach(function(node) {
           node.style.display = '';
       });
-      document.querySelectorAll('[jrx-fallback="' + k + '"], [jrx-fallback="' + shortKey + '"]').forEach(function(node) {
+      deferNodes('jrx-fallback', k, shortKey).forEach(function(node) {
           node.style.display = 'none';
       });
       return;
@@ -2473,7 +2499,12 @@ function applyStateForKey(k, v) {
   
   const toggleFallback = () => {
         const shortKey = k.includes('.') ? k.split('.').at(-1) : k;
-        document.querySelectorAll(`[jrx-fallback="${k}"], [jrx-fallback="${shortKey}"]`).forEach(node => {
+
+        deferNodes('jrx-error-fallback', k, shortKey).forEach(node => {
+            node.style.display = 'none';
+        });
+
+        deferNodes('jrx-fallback', k, shortKey).forEach(node => {
             if (v === null || v === undefined) {
                 node.style.display = ''; // Aparece el spinner si la data es null
             } else {
