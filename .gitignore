@@ -55,8 +55,10 @@ node_modules/
 
 # End of .gitignore
 
-# CodeContextualizer
+# CodeContextualizer local/generated state
+.codecontextualizer/
 .codecontextualizerignore
+_apply-manifest.json
 
 # CodeContextualizer
 .codecontextualizer/backups/

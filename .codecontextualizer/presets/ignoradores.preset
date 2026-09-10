@@ -1,7 +1,0 @@
-# CodeContextualizer preset
-name=ignoradores
-createdAt=2026-05-19T16:52:20
-fileCount=2
-[files]
-.codecontextualizerignore
-.gitignore

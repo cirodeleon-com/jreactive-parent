@@ -1,7 +1,0 @@
-Intención: Añadir cobertura automatizada para la funcionalidad de autorización opt-in (@Authorize + AuthorizationProvider) introducida en el parche de seguridad, cubriendo tanto el SPI como el enforcement en JrxHttpApi.call.
-Alcance: Se crea un único archivo nuevo: AuthorizationEnforcementTest.java en jreactive-runtime-jvm/src/test/java/com/ciro/jreactive/. No se modifica código productivo ni pruebas existentes.
-Motivo: El parche de autorización introdujo 3 elementos nuevos (anotación @Authorize, interfaz AuthorizationProvider con AuthContext/Registry/Holder, y enforcement fail-closed en JrxHttpApi.call) sin ninguna prueba que valide el comportamiento. Esto es riesgo crítico: un regression en el bloque de autorización podría dejar métodos protegidos abiertos o bloquear métodos públicos, y no habría test que lo detecte. Las pruebas cubren: (1) contrato del SPI, (2) fail-closed sin provider, (3) allow/deny con provider, (4) opt-in para métodos sin @Authorize, (5) inspección de roles, (6) @Authorize a nivel clase.
-Validación manual sugerida desde el punto de vista del usuario:
-- Ejecutar: cd jreactive-runtime-jvm && mvn test -Dtest=AuthorizationEnforcementTest
-- Los 9 tests deben pasar en verde.
-- Verificar que el cleanup de Registry/Holder en @AfterEach no afecta a otros tests del mismo módulo (mvn test sin -Dtest filtro).

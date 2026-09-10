@@ -1,1 +1,0 @@
-Actualiza el test `testDeepPojoAndPrimitivesInAccessor` para que valide el nuevo casteo inteligente y robusto de Double en el Accessor generado, reemplazando la aserción que esperaba el casteo rígido `(java.lang.Double)v` por la nueva expresión con operador ternario.

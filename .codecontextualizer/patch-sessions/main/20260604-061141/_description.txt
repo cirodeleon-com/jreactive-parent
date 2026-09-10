@@ -1,1 +1,0 @@
-Añadir soporte para interfaces Map y arreglos nativos en la evaluación booleana (Truthy/Falsy) y en la resolución de tamaños del motor de plantillas para evitar falsos positivos lógicos.

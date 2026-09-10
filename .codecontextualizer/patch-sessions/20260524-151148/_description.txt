@@ -1,1 +1,0 @@
-Patch LLM aplicado automáticamente: 1 operación(es) aplicable(s) sobre 1 archivo(s). Detalle: 0 REPLACE_BLOCK, 0 CREATE_FILE, 0 REPLACE_FILE, 1 DELETE_FILE. No aplicables: 0.
