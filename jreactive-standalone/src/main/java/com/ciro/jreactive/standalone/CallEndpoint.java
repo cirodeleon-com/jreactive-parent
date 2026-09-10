@@ -4,6 +4,8 @@ import com.ciro.jreactive.CallGuard;
 import com.ciro.jreactive.JrxHttpApi;
 import com.ciro.jreactive.JrxHubManager;
 import com.ciro.jreactive.PageResolver;
+import com.ciro.jreactive.spi.AuthorizationProvider;
+import com.ciro.jreactive.spi.AuthorizationProvider.AuthContext;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.undertow.server.HttpHandler;
 import io.undertow.server.HttpServerExchange;
@@ -81,7 +83,17 @@ public final class CallEndpoint implements HttpHandler {
                     if (v != null && !v.isEmpty()) queryParams.put(k, v.getFirst());
                 });
 
-                String json = api.call(sid, path, callName, body, queryParams);
+                // 🔐 AUTORIZACIÓN STANDALONE: capturar identidad del exchange y propagarla
+                // al Holder para que @Authorize se evalúe igual que en Spring. Si Undertow
+                // no tiene seguridad configurada, cae a AuthContext.anonymous() explícito.
+                com.ciro.jreactive.spi.AuthorizationProvider.AuthContext authCtx = resolveAuthContext(ex);
+                com.ciro.jreactive.spi.AuthorizationProvider.Holder.set(authCtx);
+                String json;
+                try {
+                    json = api.call(sid, path, callName, body, queryParams);
+                } finally {
+                    com.ciro.jreactive.spi.AuthorizationProvider.Holder.clear();
+                }
 
                 ex.setStatusCode(200);
                 ex.getResponseHeaders().put(Headers.CONTENT_TYPE, "application/json; charset=utf-8");
@@ -97,6 +109,30 @@ public final class CallEndpoint implements HttpHandler {
             ex.getResponseHeaders().put(Headers.CONTENT_TYPE, "application/json; charset=utf-8");
             ex.getResponseSender().send("{\"ok\":false,\"code\":\"BAD_REQUEST\",\"error\":\"" + escapeJson(err.getMessage()) + "\"}");
         });
+    }
+
+    private static com.ciro.jreactive.spi.AuthorizationProvider.AuthContext resolveAuthContext(HttpServerExchange ex) {
+        java.security.Principal principal = null;
+        io.undertow.security.idm.Account account = null;
+        try {
+            io.undertow.security.api.SecurityContext secCtx = ex.getSecurityContext();
+            if (secCtx != null && secCtx.isAuthenticated()) {
+                account = secCtx.getAuthenticatedAccount();
+                if (account != null) {
+                    principal = account.getPrincipal();
+                }
+            }
+        } catch (Throwable ignored) {
+            // Sin infraestructura de seguridad de Undertow configurada: cae a anónimo explícito.
+        }
+        if (principal == null) {
+            return com.ciro.jreactive.spi.AuthorizationProvider.AuthContext.anonymous();
+        }
+        java.util.Set<String> roles = (account != null && account.getRoles() != null)
+                ? account.getRoles()
+                : java.util.Set.of();
+        return new com.ciro.jreactive.spi.AuthorizationProvider.AuthContext(
+                principal.getName(), roles, principal);
     }
 
     private Map<String, Object> parseBody(byte[] bytes) throws Exception {

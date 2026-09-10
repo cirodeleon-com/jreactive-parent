@@ -24,6 +24,7 @@ class HtmlComponentTest {
         @State(value = "edad_correcta") int edad = 20;
         @State TestData pojoVal = null;
         @Bind("contador_global") int clics = 0;
+        @Bind(value = "precio_fijo", readOnly = true) int precio = 100;
         @Prop("usuario_id") Integer userId; 
         @Prop boolean estaMuted = false;
         @Shared(value = "mesa-poker-5") String estadoPartida = "ESPERANDO";
@@ -67,6 +68,20 @@ class HtmlComponentTest {
             assertThat(bindings).containsKey("usuario_id");
             assertThat(bindings).containsKey("estaMuted");
             assertThat(bindings).containsKey("estadoPartida");
+            assertThat(bindings).containsKey("precio_fijo");
+        }
+
+        @Test
+        @DisplayName("@Bind(readOnly=true) marca su ReactiveVar como readOnly; el resto queda editable")
+        void testReadOnlyBindFlagPropagation() {
+            Map<String, ReactiveVar<?>> bindings = component.getRawBindings();
+
+            // El binding readOnly queda marcado
+            assertThat(bindings.get("precio_fijo").isReadOnly()).isTrue();
+
+            // Control: bindings normales y estados NO deben marcarse readOnly
+            assertThat(bindings.get("contador_global").isReadOnly()).isFalse();
+            assertThat(bindings.get("texto").isReadOnly()).isFalse();
         }
     }
 

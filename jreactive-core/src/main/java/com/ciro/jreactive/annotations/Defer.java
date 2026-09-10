@@ -21,5 +21,18 @@ public @interface Defer {
      * Si expira, el resultado se descarta y el fallback permanece visible.
      * 0 = sin timeout (espera indefinida, no recomendado en producción).
      */
-    long timeout() default 30000;
-}
+        /**
+         * Timeout en milisegundos para la tarea diferida.
+         * Si expira, el resultado se descarta y el fallback permanece visible.
+         * 0 = sin timeout (espera indefinida, no recomendado en producción).
+         */
+        long timeout() default 30000;
+
+        /**
+         * HTML de error que se renderiza en el DOM (por el motor SSR) si la tarea falla o supera el timeout.
+         * El HTML se pre-renderiza en un div oculto; al ocurrir el error, el runtime JS sólo lo hace visible
+         * (sin transportar HTML por WebSocket, eliminando riesgo de XSS).
+         * Si se deja vacío, el error sólo se loguea en stderr (comportamiento histórico).
+         */
+        String errorFallback() default "";
+    }/* === File: jreactive-core/src/main/java/com/ciro/jreactive/Bind.java === === */

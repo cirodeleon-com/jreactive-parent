@@ -79,6 +79,24 @@ public class RedisMessageBroker implements JrxMessageBroker {
     public void onMessage(BiConsumer<String, String> handler) {
         this.handler = handler;
     }
+
+    @Override
+    public void publishEvent(String event) {
+        BiConsumer<String, String> current =
+                this.handler;
+
+        if (current != null) {
+            current.accept(
+                    "event:" + event,
+                    ""
+            );
+        }
+
+        publish(
+                "event:" + event,
+                ""
+        );
+    }
     
     @Override
     public void publishShared(String topic, String message) {

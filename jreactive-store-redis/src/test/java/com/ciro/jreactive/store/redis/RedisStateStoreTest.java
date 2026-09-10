@@ -73,11 +73,16 @@ class RedisStateStoreTest { // <-- Mismo nombre del archivo que ya tienes
     @DisplayName("Debe guardar en Redis usando un Pipeline (PUT)")
     void testPutSuccess() {
         MockComp comp = new MockComp();
-        
+        comp._setVersion(5L);
+
         store.put("sesion1", "/home", comp);
 
-        // Verificamos que el código ejecutó los comandos del pipeline
-        verify(pipeline).setex(any(byte[].class), eq(1800L), any(byte[].class));
+        // Verificamos que PUT usa el mismo HASH versionado que GET y REPLACE
+        verify(pipeline).del(any(byte[].class));
+        verify(pipeline).hset(any(byte[].class), eq("data".getBytes()), any(byte[].class));
+        verify(pipeline).hset(any(byte[].class), eq("v".getBytes()), eq("5".getBytes()));
+        verify(pipeline).expire(any(byte[].class), eq(1800L));
+        verify(pipeline, never()).setex(any(byte[].class), anyLong(), any(byte[].class));
         verify(pipeline).sadd(anyString(), eq("/home"));
         verify(pipeline).expire(anyString(), eq(1800L));
         verify(pipeline).sync();

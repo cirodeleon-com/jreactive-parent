@@ -21,6 +21,8 @@ class DeferLifecycleTest {
     static class DeferPage extends HtmlComponent {
         @State public List<String> fastData;
         @State public List<String> slowData;
+        @State public List<String> errorData;
+        @State public List<String> timeoutData;
         final AtomicInteger slowCallCount = new AtomicInteger(0);
 
         @Defer(value = "fastData")
@@ -33,6 +35,17 @@ class DeferLifecycleTest {
             slowCallCount.incrementAndGet();
             Thread.sleep(300);
             return List.of("C");
+        }
+
+        @Defer(value = "errorData", errorFallback = "<div class='error'>Error cargando datos</div>")
+        public List<String> loadWithError() {
+            throw new RuntimeException("Fallo simulado");
+        }
+
+        @Defer(value = "timeoutData", timeout = 100, errorFallback = "<div class='timeout'>Timeout</div>")
+        public List<String> loadWithTimeout() throws InterruptedException {
+            Thread.sleep(500);
+            return List.of("T");
         }
 
         @Override
@@ -87,5 +100,60 @@ class DeferLifecycleTest {
 
         // Solo debe haberse ejecutado una vez (la inicial); los 2 reloads fueron ignorados
         assertThat(page.slowCallCount.get()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("Error: la tarea diferida que falla inyecta el centinela de error en el estado reactivo")
+    void testDeferErrorVisible() throws Exception {
+        DeferPage page = new DeferPage();
+        page._initIfNeeded();
+        page._mountRecursive();
+
+        Thread.sleep(500);
+
+        // El centinela Map debe estar en el ReactiveVar con el flag booleano
+        Object errorData = page.getRawBindings().get("errorData").get();
+        assertThat(errorData).isInstanceOf(java.util.Map.class);
+        @SuppressWarnings("unchecked")
+        java.util.Map<String, String> errorMarker = (java.util.Map<String, String>) errorData;
+        assertThat(errorMarker.get("__jrx_defer_error__")).isEqualTo("true");
+    }
+
+    @Test
+    @DisplayName("Timeout: la tarea diferida que excede el timeout inyecta el centinela de error")
+    void testDeferTimeoutErrorVisible() throws Exception {
+        DeferPage page = new DeferPage();
+        page._initIfNeeded();
+        page._mountRecursive();
+
+        // timeout=100ms pero la tarea duerme 500ms → timeout dispara primero
+        Thread.sleep(700);
+
+        Object timeoutData = page.getRawBindings().get("timeoutData").get();
+        assertThat(timeoutData).isInstanceOf(java.util.Map.class);
+        @SuppressWarnings("unchecked")
+        java.util.Map<String, String> errorMarker = (java.util.Map<String, String>) timeoutData;
+        assertThat(errorMarker.get("__jrx_defer_error__")).isEqualTo("true");
+    }
+
+    @Test
+    @DisplayName("_getDeferErrorFallback devuelve el HTML configurado, vacío o null según corresponda")
+    void testGetDeferErrorFallbackDirect() {
+        DeferPage page = new DeferPage();
+        page._initIfNeeded();
+
+        // stateKey con errorFallback definido → devuelve el HTML exacto
+        assertThat(page._getDeferErrorFallback("errorData"))
+            .isEqualTo("<div class='error'>Error cargando datos</div>");
+
+        assertThat(page._getDeferErrorFallback("timeoutData"))
+            .isEqualTo("<div class='timeout'>Timeout</div>");
+
+        // stateKey con @Defer pero sin errorFallback → devuelve string vacío (no null)
+        assertThat(page._getDeferErrorFallback("fastData")).isEmpty();
+        assertThat(page._getDeferErrorFallback("slowData")).isEmpty();
+
+        // stateKey que no tiene ningún @Defer asociado → devuelve null
+        assertThat(page._getDeferErrorFallback("nonExistent")).isNull();
     }
 }

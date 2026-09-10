@@ -2,7 +2,6 @@ package com.ciro.jreactive;
 
 import com.ciro.jreactive.annotations.Call;
 import com.ciro.jreactive.annotations.Client;
-import com.ciro.jreactive.annotations.StatefulRam;
 import com.ciro.jreactive.router.Route;
 
 import java.io.Serializable;
@@ -13,7 +12,6 @@ import java.util.Random;
 
 @Route(path = "/mapa")
 @Client
-@StatefulRam
 public class MapTestPage extends AppPage {
 
     // Record para representar las coordenadas

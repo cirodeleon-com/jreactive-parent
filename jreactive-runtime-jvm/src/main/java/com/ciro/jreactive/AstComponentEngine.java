@@ -481,6 +481,13 @@ public class AstComponentEngine extends AbstractComponentEngine {
             // 🔥 SIEMPRE inyectamos, pero ocultamos si ya está cargado
             String displayStyle = isLoaded ? " style=\"display: none;\"" : "";
             out.append("<div jrx-fallback=\"").append(escapeAttr(cond)).append("\"").append(displayStyle).append(">").append(fallback).append("</div>");
+
+            // 🔥 ERROR FALLBACK: Renderizamos el div de error oculto por defecto.
+            // El HTML del error vive aquí en el DOM; el runtime JS sólo lo hace visible.
+            String errorFallbackHtml = ctx._getDeferErrorFallback(rawExpr);
+            if (errorFallbackHtml != null && !errorFallbackHtml.isBlank()) {
+                out.append("<div jrx-error-fallback=\"").append(escapeAttr(cond)).append("\" style=\"display: none;\">").append(errorFallbackHtml).append("</div>");
+            }
         }
 
         out.append("<template data-if=\"").append(escapeAttr(cond)).append("\">");
@@ -514,6 +521,12 @@ public class AstComponentEngine extends AbstractComponentEngine {
             // 🔥 SIEMPRE inyectamos, pero ocultamos si ya está cargado
             String displayStyle = isLoaded ? " style=\"display: none;\"" : "";
             out.append("<div jrx-fallback=\"").append(escapeAttr(listExpr)).append("\"").append(displayStyle).append(">").append(fallback).append("</div>");
+
+            // 🔥 ERROR FALLBACK: Renderizamos el div de error oculto por defecto.
+            String errorFallbackHtml = ctx._getDeferErrorFallback(rawExpr);
+            if (errorFallbackHtml != null && !errorFallbackHtml.isBlank()) {
+                out.append("<div jrx-error-fallback=\"").append(escapeAttr(listExpr)).append("\" style=\"display: none;\">").append(errorFallbackHtml).append("</div>");
+            }
         }
 
         out.append("<template data-each=\"")

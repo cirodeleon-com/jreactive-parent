@@ -7,7 +7,7 @@ import com.github.benmanes.caffeine.cache.*;
 import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 
-public class JrxHubManager {
+public class JrxHubManager implements JrxEvents {
 
     private static final class Key {
         private final String sessionId;
@@ -63,6 +63,12 @@ public class JrxHubManager {
  // Este método se dispara cuando Redis Pub/Sub recibe un mensaje
     private void distributeRemoteMessage(String targetId, String message) {
         
+        if (targetId.startsWith("event:")) {
+            String event = targetId.substring("event:".length());
+            Thread.startVirtualThread(() -> JrxEventRuntime.publish(event));
+            return;
+        }
+
         // 1. MODO MULTIJUGADOR: El destino es una sala pública (Ej: "shared:chat-global")
         if (targetId.startsWith("shared:")) {
             String topicName = targetId.substring("shared:".length());
@@ -139,6 +145,24 @@ public class JrxHubManager {
         hubs.invalidate(key);
     }
     
+    @Override
+    public void publish(String event) {
+        if (event == null || event.isBlank()) {
+            throw new IllegalArgumentException(
+                    "JReactive: el evento no puede estar vacío"
+            );
+        }
+
+        String normalized = event.trim();
+
+        if (broker != null) {
+            broker.publishEvent(normalized);
+            return;
+        }
+
+        JrxEventRuntime.publish(normalized);
+    }
+
     public JrxMessageBroker getBroker() {
         return this.broker;
     }

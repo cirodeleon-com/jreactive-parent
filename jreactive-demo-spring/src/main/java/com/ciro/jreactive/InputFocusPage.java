@@ -11,7 +11,6 @@ import org.springframework.stereotype.Component;
 
 @Route(path = "/focus-test")
 @StatefulRam
-@Client
 public class InputFocusPage extends AppPage {
 
     @State

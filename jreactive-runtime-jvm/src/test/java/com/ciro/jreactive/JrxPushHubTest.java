@@ -294,5 +294,29 @@ class JrxPushHubTest {
         // Si no crashea, y la lista sigue intacta, el catch interno hizo su trabajo
         assertThat(page.lista).isEmpty();
     }
+
+    // 🔒 FIXTURE: página con binding de solo lectura para probar la denegación en set()
+    static class ReadOnlyHubPage extends HtmlComponent {
+        @Bind(value = "lockedCounter", readOnly = true) public int lockedCounter = 7;
+        @Bind public String textoLibre = "libre";
+        @Override protected String template() { return "<div></div>"; }
+    }
+
+    @Test
+    @DisplayName("Debe denegar escrituras cliente→servidor sobre bindings @Bind(readOnly=true)")
+    void testReadOnlySetDenied() {
+        ReadOnlyHubPage page = new ReadOnlyHubPage();
+        page._initIfNeeded();
+        page._mountRecursive();
+        JrxPushHub hub = new JrxPushHub(page, mapper, 100, broker, "sid-readonly", null);
+
+        // Sin la guardia, el ReactiveVar mutaría a 999 y se re-difundiría a los clientes
+        hub.set("lockedCounter", 999);
+        assertThat(page.getRawBindings().get("lockedCounter").get()).isEqualTo(7);
+
+        // Control: un binding normal sigue siendo escribible
+        hub.set("textoLibre", "editado");
+        assertThat(page.getRawBindings().get("textoLibre").get()).isEqualTo("editado");
+    }
     
 }

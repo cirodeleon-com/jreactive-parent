@@ -46,7 +46,7 @@ public class JrxHttpApi {
   } catch (Exception e) {
   System.err.println("⚠️ [JReactive] Error serializando los @UrlParam de la página: " + e.getMessage());
   }
-  String script = "<script>window.**JRX_URL_PARAMS** = " + escapeInlineScriptJson(urlParamsJson) + ";</script>";
+  String script = "<script>window.__JRX_URL_PARAMS__ = " + escapeInlineScriptJson(urlParamsJson) + ";</script>";
 
         // 🟢 MODIFICACIÓN: Declaramos variables para guardar el resultado en lugar de retornar de inmediato
         String finalHtml;
@@ -72,7 +72,7 @@ public class JrxHttpApi {
                     
                     // 🔥 Inyección quirúrgica: Lo metemos DENTRO del <head> para no romper el <!DOCTYPE>
                     if (fullHtml.contains("</head>")) {
-                        finalHtml = fullHtml.replaceFirst("</head>", script + "\n</head>"); // 👈 Cambio: Asignar
+                        finalHtml = injectBeforeHeadClose(fullHtml, script); // 👈 Cambio: Asignar
                     } else {
                         finalHtml = script + "\n" + fullHtml; // 👈 Cambio: Asignar
                     }
@@ -501,6 +501,25 @@ public class JrxHttpApi {
         }
     }
     
+    /**
+     * Inserta un bloque de arranque justo antes de </head>. Si el documento no
+     * tiene <head> (fragmento parcial), lo antepone.
+     *
+     * Usa indexOf/substring a propósito: replaceFirst trataría el patrón como
+     * expresión regular y el reemplazo como cadena con escapes, y el bloque
+     * contiene barras invertidas (\\u0026, \\u003C) y puede contener '$'.
+     */
+    private static String injectBeforeHeadClose(String html, String block) {
+        if (html == null) return null;
+        if (block == null || block.isEmpty()) return html;
+
+        int idx = html.indexOf("</head>");
+        if (idx >= 0) {
+            return html.substring(0, idx) + block + "\n" + html.substring(idx);
+        }
+        return block + "\n" + html;
+    }
+
     private static String escapeInlineScriptJson(String json) {
     if (json == null || json.isEmpty()) return json;
 
@@ -522,10 +541,12 @@ public class JrxHttpApi {
           String rawJson = escapeInlineScriptJson(JrxStateToken.toJson(tokenState));
           String rootIdJson = escapeInlineScriptJson(objectMapper.writeValueAsString(rootIdOrNull));
 
-          return "<meta name=\"jrx-state\" content=\"" + token + "\">\n" +
+          String block = "<meta name=\"jrx-state\" content=\"" + token + "\">\n" +
                  "<script>window.__JRX_STATE__ = " + rawJson +
                  "; window.__JRX_ROOT_ID__ = " + rootIdJson +
-                 ";</script>\n" + html;
+                 ";</script>";
+
+          return injectBeforeHeadClose(html, block);
       } catch (Exception e) {
           System.err.println("ℹ️ [JReactive] Fallback activado para inyección de Token Stateless.");
           return html;

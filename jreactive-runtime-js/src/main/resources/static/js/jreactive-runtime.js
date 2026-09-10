@@ -2435,6 +2435,21 @@ function applyStateForKey(k, v) {
   // 1. Actualizar memoria global
   state[k] = v;
   
+  // 🔥 @Defer Error: Interceptamos el centinela de error antes de procesar el estado.
+  // El HTML del error ya está pre-renderizado en el DOM por el servidor (AstComponentEngine);
+  // aquí sólo hacemos visible el div jrx-error-fallback y ocultamos el jrx-fallback (spinner).
+  // NO usamos innerHTML: el valor del centinela es un flag booleano, no HTML.
+  if (v && typeof v === 'object' && v.__jrx_defer_error__ === 'true') {
+      const shortKey = k.includes('.') ? k.split('.').at(-1) : k;
+      document.querySelectorAll('[jrx-error-fallback="' + k + '"], [jrx-error-fallback="' + shortKey + '"]').forEach(function(node) {
+          node.style.display = '';
+      });
+      document.querySelectorAll('[jrx-fallback="' + k + '"], [jrx-fallback="' + shortKey + '"]').forEach(function(node) {
+          node.style.display = 'none';
+      });
+      return;
+  }
+  
   const toggleFallback = () => {
         const shortKey = k.includes('.') ? k.split('.').at(-1) : k;
         document.querySelectorAll(`[jrx-fallback="${k}"], [jrx-fallback="${shortKey}"]`).forEach(node => {

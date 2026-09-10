@@ -76,11 +76,49 @@ public class PageController {
             // 🔐 Capturamos la identidad en el HILO DE REQUEST (aquí sí existe el contexto de seguridad).
             // OBLIGATORIO capturarla antes de la cola: la tarea corre en otro hilo virtual y la perdería.
             java.security.Principal principal = req.getUserPrincipal();
+            java.util.Set<String> extractedRoles = new java.util.HashSet<>();
+
+            if (principal != null) {
+                // Spring Security Authentication.getAuthorities() vía reflection (sin dependencia dura):
+                // si el principal expone authorities estándar, los extraemos como strings para
+                // que ctx.roles() sirva a cualquier AuthorizationProvider declarativo.
+                try {
+                    Class<?> authClass = Class.forName("org.springframework.security.core.Authentication");
+                    if (authClass.isInstance(principal)) {
+                        Object authorities = authClass.getMethod("getAuthorities").invoke(principal);
+                        if (authorities instanceof java.util.Collection<?> col) {
+                            for (Object ga : col) {
+                                Object authority = ga.getClass().getMethod("getAuthority").invoke(ga);
+                                if (authority != null) extractedRoles.add(String.valueOf(authority));
+                            }
+                        }
+                    }
+                } catch (ClassNotFoundException ignored) {
+                    // Spring Security no está en el classpath: caemos al siguiente fallback.
+                } catch (Exception ignored) {
+                    // Error inesperado inspeccionando authorities: continuamos sin romper el request.
+                }
+
+                // Fallback: principals que exponen getRoles() (DemoPrincipal y similares).
+                // Permite que el demo funcione sin Spring Security en el classpath.
+                if (extractedRoles.isEmpty()) {
+                    try {
+                        java.lang.reflect.Method m = principal.getClass().getMethod("getRoles");
+                        Object result = m.invoke(principal);
+                        if (result instanceof java.util.Collection<?> col) {
+                            col.forEach(r -> extractedRoles.add(String.valueOf(r)));
+                        }
+                    } catch (Exception ignored) {
+                        // El principal no expone roles: AuthContext.roles() queda vacío (comportamiento histórico).
+                    }
+                }
+            }
+
             com.ciro.jreactive.spi.AuthorizationProvider.AuthContext authCtx =
                     (principal == null)
                             ? com.ciro.jreactive.spi.AuthorizationProvider.AuthContext.anonymous()
                             : new com.ciro.jreactive.spi.AuthorizationProvider.AuthContext(
-                                    principal.getName(), java.util.Set.of(), principal);
+                                    principal.getName(), extractedRoles, principal);
 
             // ✅ Cola por (sessionId+path): orden garantizado entre set/call/call
             return queue.run(sessionId, path, () -> {

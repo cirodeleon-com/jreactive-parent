@@ -68,6 +68,10 @@ public class JReactiveServer {
         registry.add(path, factory);
     }
 
+    public com.ciro.jreactive.JrxEvents events() {
+        return hubManager;
+    }
+
     public void start() {
 
         ClassLoader cl = Main.class.getClassLoader();

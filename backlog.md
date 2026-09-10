@@ -1,13 +1,13 @@
 
 # JReactive Backlog
 
-> Backlog re-auditado contra el código fuente disponible el 26 de julio de 2026.
+> Backlog re-auditado contra el código fuente disponible el 2 de agosto de 2026.
 >
 > **Versión observada:** 0.0.1-SNAPSHOT
 >
 > Este documento distingue entre funcionalidad demostrada en código, infraestructura reutilizable y trabajo todavía pendiente. Los nombres “killer” son posicionamiento de producto, no criterios de aceptación.
 >
-> **Cambios de esta re-auditoría:** la épica 2 (@Defer) pasó de "falta endurecimiento" a "endurecida con hueco de errores" gracias a timeout, anti-duplicados, cancelación por desmontaje y DeferLifecycleTest. Se incorpora la épica 7 (autorización de @Call), que existe en código desde las últimas sesiones y no estaba registrada.
+> **Cambios de esta auditoría:** la épica 2 (@Defer) cerró el hueco de error visible: `errorFallback` se pre-renderiza en el DOM por AstComponentEngine y el runtime JS sólo togglea visibility con un centinela booleano (sin innerHTML). La épica 7 (@Authorize) cerró los huecos de transporte HTTP: Spring extrae authorities vía reflection del `Authentication` y standalone extrae roles de `Undertow Account.getRoles()`. Permanece pendiente la decisión sobre autorización en mutaciones WebSocket (`updateDeep`).
 
 ## Leyenda
 
@@ -22,12 +22,12 @@
 | - | ----------------------------------- | ----------------------------------------- | --------------------- |
 | 0 | Puertas de salida para V1.0         | 🔴 Pendiente                              | P0                    |
 | 1 | Auto-Generador de Web Components    | 🟡 MVP avanzado                           | P0: endurecer         |
-| 2 | Deferred Frames / @Defer          | 🟡 Endurecido, falta error visible        | P1: cerrar errores    |
+| 2 | Deferred Frames / @Defer          | ✅ Endurecido con error visible            | P2: pulir             |
 | 3 | JReactive Hibernate Bridge          | 🔴 Pendiente, con base reutilizable       | P1                    |
 | 4 | Resurrección de Estado Transparente | 🟡 Parcialmente funcional                 | P0                    |
 | 5 | JReactive Data Streams              | 🔴 Pendiente, con JTable básico         | P1                    |
 | 6 | Service Worker Offline Cache        | 🔴 Pendiente, con Optimistic UI existente | P2                    |
-| 7 | Autorización de @Call (@Authorize)  | 🟡 MVP funcional con huecos de transporte | P0: cerrar huecos     |
+| 7 | Autorización de @Call (@Authorize)  | 🟡 HTTP cerrado, WebSocket pendiente      | P1: decisión WS       |
 
 ---
 
@@ -105,7 +105,7 @@
 
 ## 2. Epic: Deferred Frames / @Defer
 
-**Estado:** 🟡 funcional; la capacidad principal ya existe.
+**Estado:** ✅ funcional con error visible; la capacidad principal y el manejo de errores (excepción + timeout) están implementados y probados.
 
 **Objetivo:** renderizar inmediatamente un fallback y resolver estado pesado en un Virtual Thread sin bloquear la primera respuesta.
 
@@ -125,13 +125,17 @@
 * [x] executeDeferred evita ejecuciones duplicadas por stateKey mediante el conjunto _runningDeferredTasks.
 * [x] El resultado se descarta si el componente fue desmontado, comprobando _disposed antes de escribir el estado.
 * [x] Existe DeferLifecycleTest en runtime-jvm con casos de éxito, cancelación y anti-duplicado.
+* [x] @Defer expone errorFallback() para inyectar HTML de error visible cuando la tarea falla o supera el timeout.
+* [x] executeDeferred inyecta un centinela booleano seguro (no HTML) en el estado reactivo cuando ocurre una excepción o timeout.
+* [x] AstComponentEngine renderiza el div jrx-error-fallback dentro del contenedor de suspense (HTML pre-renderizado en el DOM).
+* [x] El runtime JS intercepta el centinela __jrx_defer_error__ y hace visible el div pre-renderizado sin usar innerHTML (sin riesgo de XSS).
+* [x] DeferLifecycleTest cubre caso de error (excepción) y caso de timeout.
 
 ### Falta
 
-* [ ] Definir estado de error visible y fallback de error. Hoy exceptionally solo escribe en System.err y el fallback queda congelado sin señal para el usuario.
 * [ ] Distinguir en la UI un timeout de un error de negocio.
 * [ ] Cancelar realmente la tarea al desmontar. Hoy solo se descarta el resultado; el hilo virtual sigue ejecutándose hasta terminar.
-* [ ] Añadir pruebas de timeout y de excepción, además de las tres existentes.
+* [x] Añadir pruebas de timeout y de excepción, además de las tres existentes. DeferLifecycleTest ahora cubre éxito, cancelación, anti-duplicado, error (excepción) y timeout (5 casos) más prueba directa de `_getDeferErrorFallback`.
 * [ ] Añadir pruebas dedicadas para la validación del APT y para el runtime JS.
 * [ ] Añadir trazas o métricas de duración y fallo.
 * [ ] Decidir si <JAsync> aporta valor real o si @Defer será la API oficial única.
@@ -304,7 +308,7 @@ Construir primero el contrato explícito entre JTable y JrxPageable. Añadir az�
 
 ## 7. Epic: Autorización de @Call
 
-**Estado:** 🟡 MVP funcional; la ruta HTTP está cubierta, faltan transportes y superficie de estado.
+**Estado:** 🟡 MVP funcional; rutas HTTP cerradas en Spring y standalone; falta decisión sobre WebSocket (`updateDeep`) y autorización de render.
 
 **Objetivo:** permitir que la aplicación host decida quién puede invocar cada método @Call, sin acoplar el framework a un stack de seguridad concreto.
 
@@ -316,6 +320,8 @@ Construir primero el contrato explícito entre JTable y JrxPageable. Añadir az�
 * [x] El comportamiento es fail-closed: un método anotado sin provider registrado se niega con FORBIDDEN.
 * [x] Los métodos sin anotar no pasan por autorización, preservando el comportamiento histórico.
 * [x] PageController captura el Principal en el hilo HTTP y lo inyecta en el Holder dentro de la cola serial, limpiándolo en finally.
+* [x] PageController (Spring) y CallEndpoint (standalone) poblan AuthContext.roles() con los roles/authorities reales del principal.
+* [x] CallEndpoint (standalone) establece el Holder con el AuthContext de Undertow antes de delegar a JrxHttpApi.call.
 * [x] CallGuard aplica rate limit por sesión más método y Bean Validation antes de invocar.
 * [x] AuthorizationEnforcementTest cubre contexto anónimo, ciclo de vida del Holder, fail-closed, allow, deny, anotación a nivel clase y no afectación de métodos sin anotar.
 * [x] CallGuardTest cubre rate limit, aislamiento entre claves, validación y formato de error.
@@ -323,8 +329,8 @@ Construir primero el contrato explícito entre JTable y JrxPageable. Añadir az�
 
 ### Falta
 
-* [ ] Poblar roles en AuthContext. PageController construye el contexto con un conjunto vacío, de modo que roles() solo funciona si el provider inspecciona el principal por su cuenta.
-* [ ] Rellenar el Holder en el adaptador standalone. CallEndpoint delega en JrxHttpApi pero nunca establece el AuthContext, así que en modo standalone todo método anotado se evalúa como anónimo y se niega.
+* [x] Poblar roles en AuthContext. PageController (Spring) extrae authorities vía reflection y CallEndpoint (standalone) extrae roles de Undertow Account.getRoles().
+* [x] Rellenar el Holder en el adaptador standalone. CallEndpoint captura el AuthContext del SecurityContext de Undertow y lo inyecta en el Holder antes de delegar a JrxHttpApi.call.
 * [ ] Decidir el alcance sobre la ruta WebSocket. JrxProtocolHandler.updateDeep escribe directamente sobre campos @State y @Bind sin pasar por autorización, por lo que @Authorize protege invocación de métodos pero no mutación de estado.
 * [ ] Definir autorización a nivel de render de página, no solo de @Call.
 * [ ] Definir autorización por tópico en el broker, compartida con la épica 3.
@@ -342,8 +348,8 @@ Construir primero el contrato explícito entre JTable y JrxPageable. Añadir az�
 # Orden de ejecución recomendado
 
 1. Puertas de salida para V1.0.
-2. Cerrar los huecos de transporte de @Authorize: standalone y decisión sobre WebSocket.
-3. Estado de error visible en @Defer.
+2. ~~Cerrar los huecos de transporte de @Authorize: standalone~~ ✅ Standalone y Spring cerrados; falta decisión sobre WebSocket.
+3. ~~Estado de error visible en @Defer.~~ ✅ Completado.
 4. Pruebas y endurecimiento del generador de Web Components.
 5. Protocolo formal de resurrección de estado.
 6. Data Streams MVP.

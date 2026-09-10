@@ -296,5 +296,43 @@ class JrxProtocolHandlerTest {
         // El rol debe seguir intacto porque el catch detuvo el desastre
         assertThat(page.dto.role).isEqualTo("GUEST"); 
     }
+
+    // 🔒 FIXTURE: página con bindings de solo lectura (@Bind(readOnly=true)).
+    // El DTO anida un @State para que el deep update sea alcanzable sin la guardia
+    // (getF exige @State/@Bind en el campo final).
+    public static class ReadOnlyDto {
+        @State public String secreto = "ORIGINAL";
+    }
+
+    static class ReadOnlyPage extends HtmlComponent {
+        @State public String libre = "editame";
+        @Bind(value = "contadorBloqueado", readOnly = true) public int contadorBloqueado = 7;
+        @Bind(value = "configBloqueada", readOnly = true) public ReadOnlyDto configBloqueada = new ReadOnlyDto();
+        @Override protected String template() { return "<div>{{libre}}</div>"; }
+    }
+
+    @Test
+    @DisplayName("ReadOnly: escrituras WS sobre @Bind(readOnly=true) se deniegan (raíz y profundas)")
+    void testReadOnlyWriteDenied() {
+        ReadOnlyPage page = new ReadOnlyPage();
+        page._initIfNeeded();
+        page._mountRecursive();
+
+        JrxProtocolHandler handler = new JrxProtocolHandler(page, mapper, scheduler, false, 100, 16, null, broker);
+        lenient().when(session.isOpen()).thenReturn(true);
+        handler.onOpen(session, null, 0);
+
+        // 1. Raíz readOnly: el ReactiveVar NO debe mutar (sin guardia cambiaría a 999)
+        handler.onMessage(session, "{\"k\":\"contadorBloqueado\", \"v\":999}");
+        assertThat(page.getRawBindings().get("contadorBloqueado").get()).isEqualTo(7);
+
+        // 2. Profunda readOnly: el campo del POJO NO debe mutar (sin guardia cambiaría a "Hackeado")
+        handler.onMessage(session, "{\"k\":\"configBloqueada.secreto\", \"v\":\"Hackeado\"}");
+        assertThat(page.configBloqueada.secreto).isEqualTo("ORIGINAL");
+
+        // 3. Control: un @State normal sigue siendo escribible por WebSocket
+        handler.onMessage(session, "{\"k\":\"libre\", \"v\":\"editado\"}");
+        assertThat(page.libre).isEqualTo("editado");
+    }
     
 }

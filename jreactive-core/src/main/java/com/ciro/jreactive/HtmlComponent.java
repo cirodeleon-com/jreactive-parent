@@ -81,6 +81,8 @@ private final  Map<String, String> _childRefAlias = new HashMap<>();
  // 🔥 NUEVO: Lista para limpiar suscripciones viejas al ser reciclado
     private transient List<Runnable> _bindingCleanups = new ArrayList<>();
     private transient java.util.Set<String> _runningDeferredTasks = ConcurrentHashMap.newKeySet();
+    // Rastro de tareas @Defer en vuelo por stateKey (diagnóstico; transient: no se serializa).
+    private transient Map<String, java.util.concurrent.CompletableFuture<?>> _runningDeferredFutures = null;
     private transient volatile boolean _disposed = false;
 
     public void _clearBindingCleanups() {
@@ -523,6 +525,8 @@ private final  Map<String, String> _childRefAlias = new HashMap<>();
                     rx.setGenericType(extractRealType(f.getGenericType()));
                     String key = bindAnn.value().isBlank() ? f.getName() : bindAnn.value();
                     rx.setActiveGuard(() -> _state() == ComponentState.MOUNTED);
+                    // 🔒 Propaga @Bind(readOnly=true): los handlers WS deniegan escrituras del cliente
+                    rx.setReadOnly(bindAnn.readOnly());
                     map.put(key, rx);
                 }
 
@@ -1012,11 +1016,12 @@ private final  Map<String, String> _childRefAlias = new HashMap<>();
     
     private void executeDeferred(Method m, String targetState, long timeoutMs) {
         if (_runningDeferredTasks == null) _runningDeferredTasks = ConcurrentHashMap.newKeySet();
+        if (_runningDeferredFutures == null) _runningDeferredFutures = new ConcurrentHashMap<>();
 
         // ANTI-DUPLICADOS: si ya hay una tarea corriendo para este stateKey, no lanzamos otra
         if (!_runningDeferredTasks.add(targetState)) return;
 
-        java.util.concurrent.CompletableFuture
+        java.util.concurrent.CompletableFuture<?> tracked = java.util.concurrent.CompletableFuture
             .supplyAsync(() -> {
                 try { return m.invoke(this); }
                 catch (Exception e) { throw new RuntimeException(e); }
@@ -1038,9 +1043,35 @@ private final  Map<String, String> _childRefAlias = new HashMap<>();
                 Throwable cause = e;
                 while (cause.getCause() != null) cause = cause.getCause();
                 System.err.println("❌ [JReactive] @Defer '" + targetState + "': " + cause.getMessage());
+
+                // 🔥 ERROR VISIBLE: Si hay errorFallback definido, enviamos un centinela booleano (NO HTML)
+                // por WebSocket. El HTML del error ya está pre-renderizado en el DOM por AstComponentEngine;
+                // el runtime JS sólo hace visible el div jrx-error-fallback correspondiente.
+                if (_disposed) return null;
+                String errorFallbackHtml = _getDeferErrorFallback(targetState);
+                if (errorFallbackHtml != null && !errorFallbackHtml.isBlank()) {
+                    @SuppressWarnings("unchecked")
+                    ReactiveVar<Object> rv = (ReactiveVar<Object>) getRawBindings().get(targetState);
+                    if (rv != null) {
+                        java.util.Map<String, String> errorMarker = new java.util.HashMap<>();
+                        errorMarker.put("__jrx_defer_error__", "true");
+                        rv.set(errorMarker);
+                        this._syncState();
+                    }
+                }
                 return null;
             })
-            .whenComplete((r, e) -> _runningDeferredTasks.remove(targetState));
+            .whenComplete((r, e) -> {
+                // Limpiar rastro ANTES de liberar la marca: una tarea nueva del mismo stateKey
+                // sólo puede arrancar tras el remove de _runningDeferredTasks, así nunca pisa su entrada.
+                _runningDeferredFutures.remove(targetState);
+                _runningDeferredTasks.remove(targetState);
+            });
+
+        // Rastro por stateKey: el future queda consultable mientras la tarea está en vuelo.
+        _runningDeferredFutures.put(targetState, tracked);
+        // Carrera put/complete: si la tarea terminó antes del registro, retiramos sólo nuestra propia entrada.
+        if (tracked.isDone()) _runningDeferredFutures.remove(targetState, tracked);
     }
 
  // 🔥 NUEVO: Lógica centralizada del modo de ejecución
@@ -1108,6 +1139,23 @@ private final  Map<String, String> _childRefAlias = new HashMap<>();
             com.ciro.jreactive.annotations.Defer deferAnn = m.getAnnotation(com.ciro.jreactive.annotations.Defer.class);
             if (deferAnn != null && stateKey.equals(deferAnn.value())) {
                 return deferAnn.fallback();
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Devuelve el HTML del errorFallback definido en @Defer para el stateKey dado.
+     * Returns null si no hay @Defer para ese stateKey o si errorFallback está vacío.
+     */
+    public String _getDeferErrorFallback(String stateKey) {
+        java.util.List<java.lang.reflect.Method> deferMethods = DEFER_CACHE.get(this.getClass());
+        if (deferMethods == null) return null;
+
+        for (java.lang.reflect.Method m : deferMethods) {
+            com.ciro.jreactive.annotations.Defer deferAnn = m.getAnnotation(com.ciro.jreactive.annotations.Defer.class);
+            if (deferAnn != null && stateKey.equals(deferAnn.value())) {
+                return deferAnn.errorFallback();
             }
         }
         return null;

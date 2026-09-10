@@ -11,6 +11,10 @@ public interface JrxMessageBroker {
     // Registrar un callback global para procesar mensajes entrantes de cualquier sesión
     // handler.accept(sessionId, messagePayload)
     void onMessage(BiConsumer<String, String> handler);
+
+    default void publishEvent(String event) {
+        publish("event:" + event, "");
+    }
     
     void publishShared(String topic, String message);
     void saveSharedState(String topic, String varName, Object value);

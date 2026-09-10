@@ -89,12 +89,17 @@ public class RedisStateStore implements StateStore {
         try (Jedis jedis = redisPool.getResource()) {
             // 🔥 CAMBIO CLAVE: Serialización agnóstica
             byte[] data = serializer.serialize(component);
-            
+
             byte[] pageKey = key(sessionId, path);
             String idxKey = indexKey(sessionId);
 
             Pipeline p = jedis.pipelined();
-            p.setex(pageKey, TTL_SECONDS, data);
+            // PUT reemplaza el estado completo. DEL también normaliza claves STRING
+            // creadas por versiones anteriores, antes de escribir el esquema HASH.
+            p.del(pageKey);
+            p.hset(pageKey, "data".getBytes(), data);
+            p.hset(pageKey, "v".getBytes(), String.valueOf(component._getVersion()).getBytes());
+            p.expire(pageKey, TTL_SECONDS);
             p.sadd(idxKey, path);
             p.expire(idxKey, TTL_SECONDS);
             p.sync();

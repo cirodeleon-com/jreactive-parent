@@ -117,4 +117,26 @@ class ReactiveVarTest {
         rx.set("activo");
         assertThat(disparos.get()).isEqualTo(1);
     }
+
+    @Test
+    @DisplayName("Debe soportar el flag readOnly (denegación cliente→servidor) sin bloquear la escritura local")
+    void testReadOnlyFlag() {
+        ReactiveVar<String> rx = new ReactiveVar<>("inicial");
+
+        // Por defecto NO es readOnly
+        assertThat(rx.isReadOnly()).isFalse();
+
+        // Se marca y consulta
+        rx.setReadOnly(true);
+        assertThat(rx.isReadOnly()).isTrue();
+
+        // El flag NO bloquea la escritura local del servidor:
+        // la denegación vive en los handlers WS (runtime-jvm), no en la variable.
+        rx.set("local");
+        assertThat(rx.get()).isEqualTo("local");
+
+        // Se puede desmarcar
+        rx.setReadOnly(false);
+        assertThat(rx.isReadOnly()).isFalse();
+    }
 }

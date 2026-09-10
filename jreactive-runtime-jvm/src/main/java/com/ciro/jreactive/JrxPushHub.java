@@ -385,6 +385,11 @@ public class JrxPushHub {
         }
         
         if (rv != null) {
+            // 🔒 @Bind(readOnly=true): denegar escrituras cliente→servidor (raíz y profundas)
+            if (rv.isReadOnly()) {
+                System.err.println("⛔ [JReactive] Escritura denegada sobre binding de solo lectura: " + k);
+                return;
+            }
             // Actualización de variable raíz (Ej: count = 5)
             if (!k.contains(".")) {
                 if (Objects.equals(rv.get(), v)) return;

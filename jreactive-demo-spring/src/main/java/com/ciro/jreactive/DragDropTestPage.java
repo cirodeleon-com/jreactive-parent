@@ -2,7 +2,6 @@ package com.ciro.jreactive;
 
 import com.ciro.jreactive.annotations.Call;
 import com.ciro.jreactive.annotations.Client;
-import com.ciro.jreactive.annotations.StatefulRam;
 import com.ciro.jreactive.router.Route;
 import org.springframework.stereotype.Component;
 
@@ -12,7 +11,6 @@ import java.util.List;
 
 @Route(path = "/kanban")
 @Client
-@StatefulRam
 public class DragDropTestPage extends AppPage {
 
     // Nuestra lista reactiva

@@ -2,14 +2,12 @@ package com.ciro.jreactive;
 
 import com.ciro.jreactive.annotations.Call;
 import com.ciro.jreactive.annotations.Client;
-import com.ciro.jreactive.annotations.StatefulRam;
 import com.ciro.jreactive.router.Route;
 
 
 
 @Route(path = "/editor")
 @Client
-@StatefulRam
 public class EditorTestPage extends AppPage {
 
     // El HTML inicial

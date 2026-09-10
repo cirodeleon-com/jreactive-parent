@@ -16,8 +16,14 @@ public final class ReactiveVar<T> implements java.io.Serializable {
     
     private transient java.lang.reflect.Type genericType;
     private transient String sharedTopic = null;
+    // @Bind(readOnly=true): los handlers cliente→servidor deben denegar mutaciones.
+    // No transient a propósito: debe sobrevivir a la serialización del componente (Redis/FST/Jackson),
+    // porque tras deserializar no se vuelve a ejecutar buildBindings.
+    private boolean readOnly = false;
     public java.lang.reflect.Type getGenericType() { return genericType; }
     public void setGenericType(java.lang.reflect.Type genericType) { this.genericType = genericType; }
+    public boolean isReadOnly() { return readOnly; }
+    public void setReadOnly(boolean readOnly) { this.readOnly = readOnly; }
 
     public ReactiveVar(T initial) { this.value = initial; }
 

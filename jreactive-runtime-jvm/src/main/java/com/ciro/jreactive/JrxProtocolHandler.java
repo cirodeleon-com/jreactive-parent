@@ -27,6 +27,10 @@ public class JrxProtocolHandler {
     private final int maxQueue, flushIntervalMs;
     private final transient Runnable persistenceCallback;
     private final JrxMessageBroker broker;
+    private final ViewNode eventRoot;
+
+    // Backpressure Queues
+    private final StateWriteGuard writeGuard;
     
     // Backpressure Queues
     private final ConcurrentLinkedQueue<Event> queue = new ConcurrentLinkedQueue<>();
@@ -56,6 +60,10 @@ public class JrxProtocolHandler {
         this.flushIntervalMs = fi;
         this.persistenceCallback = persistenceCallback;
         this.broker = broker;
+        this.eventRoot = root;
+
+        // 1. Collect bindings & map owners
+        this.writeGuard = new StateWriteGuard(m);
         
         // 1. Collect bindings & map owners
         this.bindings = collect(root); 
@@ -158,6 +166,18 @@ public class JrxProtocolHandler {
             ReactiveVar<Object> rv = (ReactiveVar<Object>) bindings.get(k);
             
             if (rv != null) {
+                // 🔒 @Bind(readOnly=true): denegar escrituras cliente→servidor
+                if (rv.isReadOnly()) {
+                    log.warn("⛔ Escritura denegada sobre binding de solo lectura: {}", k);
+                    return;
+                }
+                // 🔒 Conformidad de tipo: el navegador no puede cambiar la forma del estado
+                StateWriteGuard.Verdict verdict = writeGuard.inspect(rv, v);
+                if (!verdict.accepted()) {
+                    log.warn("⛔ Escritura descartada sobre '{}': {}", k, verdict.reason());
+                    return;
+                }
+                v = verdict.value();
                 rv.set(v);
                 if (this.persistenceCallback != null) {
                     try {
@@ -202,6 +222,12 @@ public class JrxProtocolHandler {
         }
         
         if (root == null || root.get() == null) return;
+        
+        // 🔒 @Bind(readOnly=true): denegar mutaciones profundas cliente→servidor
+        if (root.isReadOnly()) {
+            log.warn("⛔ Escritura profunda denegada sobre binding de solo lectura: {}", fk);
+            return;
+        }
         
         Object o = root.get();
 
@@ -285,6 +311,7 @@ public class JrxProtocolHandler {
 
     public void onOpen(JrxSession s, JrxPushHub hub, long since) {
         sessions.add(s);
+        JrxEventRuntime.connectionOpened(eventRoot);
         boolean recovered = false;
 
         // History Recovery
@@ -325,7 +352,8 @@ public class JrxProtocolHandler {
     }
 
     public void onClose(JrxSession s) { 
-        sessions.remove(s); 
+        sessions.remove(s);
+        JrxEventRuntime.connectionClosed(eventRoot);
         if (sessions.isEmpty()) { 
             queue.clear(); 
             activeSmartCleanups.values().forEach(Runnable::run); 
