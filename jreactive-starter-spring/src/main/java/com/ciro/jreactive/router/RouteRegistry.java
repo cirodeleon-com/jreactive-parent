@@ -49,7 +49,10 @@ public class RouteRegistry implements RouteProvider {
 
         for (org.springframework.beans.factory.config.BeanDefinition bd : scanner.findCandidateComponents(basePackage)) {
             try {
-                Class<?> clazz = Class.forName(bd.getBeanClassName());
+                Class<?> clazz = org.springframework.util.ClassUtils.forName(
+                        bd.getBeanClassName(),
+                        ctx.getClassLoader()
+                );
                 Route ann = clazz.getAnnotation(Route.class);
                 
                 if (ann != null && HtmlComponent.class.isAssignableFrom(clazz)) {

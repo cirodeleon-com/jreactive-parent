@@ -55,4 +55,36 @@ class RouteRegistryTest {
         RouteProvider.Result fallbackRes = registry.resolve("/not-found-page");
         assertThat(fallbackRes.component()).isInstanceOf(DummyRootPage.class);
     }
+
+    @Test
+    @DisplayName("Debe cargar las rutas con el ClassLoader del ApplicationContext")
+    void shouldUseApplicationContextClassLoader() {
+        ApplicationContext ctx = mock(ApplicationContext.class);
+        AutowireCapableBeanFactory factory = mock(AutowireCapableBeanFactory.class);
+
+        java.util.concurrent.atomic.AtomicBoolean routeLoaded =
+                new java.util.concurrent.atomic.AtomicBoolean(false);
+
+        ClassLoader applicationClassLoader =
+                new ClassLoader(RouteRegistryTest.class.getClassLoader()) {
+                    @Override
+                    protected Class<?> loadClass(String name, boolean resolve)
+                            throws ClassNotFoundException {
+                        if (DummyRootPage.class.getName().equals(name)) {
+                            routeLoaded.set(true);
+                        }
+                        return super.loadClass(name, resolve);
+                    }
+                };
+
+        when(ctx.getAutowireCapableBeanFactory()).thenReturn(factory);
+        when(ctx.getClassLoader()).thenReturn(applicationClassLoader);
+        when(ctx.getBeansWithAnnotation(
+                org.springframework.boot.autoconfigure.SpringBootApplication.class
+        )).thenReturn(Map.of());
+
+        new RouteRegistry(ctx);
+
+        assertThat(routeLoaded.get()).isTrue();
+    }
 }

@@ -48,6 +48,13 @@ public class JReactiveAutoConfiguration {
     }
     
     @Bean
+    @ConditionalOnMissingBean(JrxStateSnapshotController.class)
+    public JrxStateSnapshotController jrxStateSnapshotController(
+            JrxHubManager hubManager) {
+        return new JrxStateSnapshotController(hubManager);
+    }
+
+    @Bean
     @ConditionalOnMissingBean(com.ciro.jreactive.spi.JrxMessageBroker.class)
     public com.ciro.jreactive.spi.JrxMessageBroker localMessageBroker() {
         System.out.println("🚀 JReactive: Iniciando LocalMessageBroker (RAM Multijugador)");

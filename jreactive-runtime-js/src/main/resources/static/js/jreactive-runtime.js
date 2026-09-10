@@ -532,6 +532,26 @@ async function syncStateHttp() {
     if (socket && socket.readyState === 1) return; 
 
     try {
+        try {
+            const stateResponse = await fetch('/jrx/state?t=' + Date.now(), {
+                headers: { 'X-Path': window.location.pathname },
+                credentials: 'include',
+                cache: 'no-store'
+            });
+
+            if (stateResponse.ok) {
+                const stateText = await stateResponse.text();
+                const statePayload = JSON.parse(stateText);
+
+                if (statePayload && Array.isArray(statePayload.batch)) {
+                    applyBatch(statePayload.batch);
+                    return;
+                }
+            }
+        } catch (_) {
+            // El endpoint especializado es opcional; continúa con el fallback HTML existente.
+        }
+
         const separator = currentPath.includes('?') ? '&' : '?';
         const url = currentPath + separator + 't=' + Date.now();
         
@@ -2113,7 +2133,8 @@ function setupEventBindings(root = document) {
 	          headers: { 
 	              'X-Requested-With': 'JReactive', 
 	              'Content-Type': 'application/json',
-	              'X-Jrx-Path': window.location.pathname // Fix: Ruta real
+	              'X-Jrx-Path': window.location.pathname,
+	              'X-Path': window.location.pathname
 	          },
 	          body: JSON.stringify({ args, stateToken }) // Enviamos la mochila y los argumentos
 	        });

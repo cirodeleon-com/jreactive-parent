@@ -151,6 +151,29 @@ describe("JReactive JS Runtime - The Core Engine", () => {
         expect(document.getElementById('app').innerHTML).toContain('Nuevo HTML');
     });
 
+    test("@Call debe conservar la ruta actual en los headers compatibles", async () => {
+        window.history.replaceState({}, '', '/bandeja');
+
+        const button = document.createElement('button');
+        button.id = 'btn-path';
+        button.dataset.callClick = 'refrescar';
+        document.getElementById('app').appendChild(button);
+
+        bootJReactive();
+        button.click();
+        await new Promise(r => setTimeout(r, 20));
+
+        expect(global.fetch).toHaveBeenCalledWith(
+            expect.stringContaining('/call/refrescar'),
+            expect.objectContaining({
+                headers: expect.objectContaining({
+                    'X-Jrx-Path': '/bandeja',
+                    'X-Path': '/bandeja'
+                })
+            })
+        );
+    });
+
     test("Validación: Debe mostrar errores debajo del input", async () => {
         document.body.innerHTML = `<div id="app"><input name="email" id="email" /><button id="btn" data-call-click="save">Save</button></div>`;
         global.fetch.mockImplementationOnce(() => Promise.resolve({
