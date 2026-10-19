@@ -9,6 +9,8 @@
 >
 > **Cambios de esta auditoría:** la épica 2 (@Defer) cerró el hueco de error visible: `errorFallback` se pre-renderiza en el DOM por AstComponentEngine y el runtime JS sólo togglea visibility con un centinela booleano (sin innerHTML). La épica 7 (@Authorize) cerró los huecos de transporte HTTP: Spring extrae authorities vía reflection del `Authentication` y standalone extrae roles de `Undertow Account.getRoles()`. Permanece pendiente la decisión sobre autorización en mutaciones WebSocket (`updateDeep`).
 
+> **Actualización 17 de octubre de 2026:** se detectó que `JrxFile.saveTo` permitía llevar cualquier archivo del servidor a cualquier ruta, porque `tempPath` y `name` llegan desde el navegador. Se cerró en core (épica 8); la exposición de `tempPath` y la ausencia del endpoint de subida en el starter siguen pendientes.
+
 ## Leyenda
 
 * ✅ **Implementado:** existe una ruta funcional clara en el código.
@@ -28,6 +30,8 @@
 | 5 | JReactive Data Streams              | 🔴 Pendiente, con JTable básico         | P1                    |
 | 6 | Service Worker Offline Cache        | 🔴 Pendiente, con Optimistic UI existente | P2                    |
 | 7 | Autorización de @Call (@Authorize)  | 🟡 HTTP cerrado, WebSocket pendiente      | P1: decisión WS       |
+| 8 | Subida segura de archivos (JrxFile) | 🟡 Guardado endurecido, endpoint en demo  | P0: completar         |
+| 9 | Starter Spring sin fricción         | 🟡 Autoconfiguración lista, endpoint pendiente | P0              |
 
 ---
 
@@ -345,11 +349,72 @@ Construir primero el contrato explícito entre JTable y JrxPageable. Añadir az�
 
 ---
 
+## 8. Epic: Subida segura de archivos (JrxFile)
+
+**Estado:** 🟡 el guardado del archivo está endurecido; el ciclo de subida completo todavía vive en la demo.
+
+**Objetivo:** que una aplicación pueda recibir y guardar archivos sin que el navegador decida rutas del servidor.
+
+### Hecho
+
+* [x] `JrxFile` usa un archivo temporal en disco en lugar de base64 en memoria.
+* [x] `JFileUpload` sube por HTTP multipart con barra de progreso.
+* [x] `JrxFile.saveTo` solo acepta como origen un archivo regular `jrx_*.tmp` ubicado directamente en `java.io.tmpdir`. Antes aceptaba cualquier ruta enviada por el cliente.
+* [x] `JrxFile.saveTo` toma solo el nombre base y verifica que el destino quede dentro de la carpeta elegida.
+* [x] `JrxFileTest` cubre el éxito, un origen fuera de tmp, un archivo de tmp no subido, un nombre con `../` y un nombre inválido.
+* [x] La convención `jrx_*.tmp` vive solo en `JrxFile.TEMP_PREFIX`, `JrxFile.TEMP_SUFFIX` y `JrxFile.isUploadName`; el endpoint y el borrado programado de la demo la reutilizan, y una prueba garantiza que un temporal creado así es aceptado por `saveTo`.
+* [x] `PageControllerTest` (demo) comprueba que un archivo recibido por `/api/upload` es aceptado por `saveTo` y que el borrado programado elimina solo los `jrx_*.tmp` con más de dos horas. Cuando el endpoint pase al starter, estas pruebas deben viajar con él.
+
+### Falta
+
+* [ ] Llevar `/api/upload` y la depuración de temporales de `PageController` (demo) al starter Spring y al standalone. Hoy una aplicación consumidora no tiene endpoint de subida.
+* [ ] Dejar de enviar `tempPath` al navegador: usar un `fileId` opaco resuelto en servidor y ligado a la sesión que subió el archivo.
+* [ ] Limitar tamaño por defecto (la demo usa `max-file-size: -1`) y permitir una lista de tipos aceptados.
+* [ ] Impedir que una sesión use el archivo subido por otra sesión.
+* [ ] Documentar el contrato de `saveTo` y la convención `jrx_*.tmp`.
+
+### Criterio de terminado
+
+* [ ] Una aplicación externa sube y guarda archivos usando solo los módulos publicados.
+* [ ] El navegador nunca conoce ni decide rutas del servidor.
+* [ ] Un archivo subido solo puede ser usado por la sesión que lo subió.
+
+---
+
+## 9. Epic: Starter Spring sin fricción
+
+**Estado:** 🟡 el starter ya se autoconfigura; el endpoint de páginas todavía lo escribe cada aplicación.
+
+**Objetivo:** que una aplicación Spring Boot use JReactive con solo agregar la dependencia, y que cada página controle su respuesta HTTP.
+
+> Origen: en el sitio `ciro-de-leon-com`, primer uso real del framework, hubo que escanear `com.ciro.jreactive`, copiar el `PageController` de la demo y escribir a mano los scripts del runtime en el layout. Su página de licencia se construyó fuera de JReactive; hoy una página no puede decidir su código HTTP ni sus cabeceras.
+
+### Hecho
+
+* [x] El starter se registra como autoconfiguración de Spring Boot. Una aplicación que solo agrega la dependencia ya no necesita escanear `com.ciro.jreactive`; las que lo escanean siguen funcionando sin beans duplicados, y las piezas web solo se registran en aplicaciones servlet.
+
+### Falta
+
+* [ ] Ofrecer desde el starter el endpoint de páginas y el de `@Call`, con salida para las aplicaciones que ya tienen el suyo.
+* [ ] Permitir que una página decida su código HTTP y sus cabeceras (por ejemplo 202, 400 o una CSP propia).
+* [ ] Páginas estáticas: sin sesión HTTP, sin token de estado ni runtime, y cacheables cuando no tienen estado ni llamadas.
+* [ ] Inyectar los scripts del runtime desde el framework en lugar de escribirlos a mano en el layout.
+* [ ] Registrar `jreactive-store-redis` como autoconfiguración; hoy solo se activa si la aplicación escanea `com.ciro.jreactive`.
+
+### Criterio de terminado
+
+* [ ] Una aplicación nueva funciona con la dependencia del starter, un layout y sus páginas, sin clases de infraestructura propias.
+* [ ] Una página puede responder con el código y las cabeceras que necesite sin salir de JReactive.
+
+---
+
 # Orden de ejecución recomendado
 
 1. Puertas de salida para V1.0.
 2. ~~Cerrar los huecos de transporte de @Authorize: standalone~~ ✅ Standalone y Spring cerrados; falta decisión sobre WebSocket.
 3. ~~Estado de error visible en @Defer.~~ ✅ Completado.
+4. Completar la subida segura de archivos: endpoint en starter/standalone y `fileId` opaco por sesión (el guardado ya está endurecido).
+4. Starter Spring sin fricción (épica 9): endpoint de páginas en el starter, respuesta HTTP decidida por la página y páginas estáticas (la autoconfiguración ya está hecha).
 4. Pruebas y endurecimiento del generador de Web Components.
 5. Protocolo formal de resurrección de estado.
 6. Data Streams MVP.

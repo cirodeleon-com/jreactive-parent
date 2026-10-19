@@ -11,7 +11,10 @@ public class SmartSet<E> extends HashSet<E> {
     private final transient List<Consumer<Change>> listeners = new CopyOnWriteArrayList<>();
 
     public SmartSet() { super(); }
-    public SmartSet(Collection<? extends E> c) { super(c); }
+    public SmartSet(Collection<? extends E> c) {
+        this();
+        addAll(c);
+    }
 
     public record Change(String op, Object item) {}
     

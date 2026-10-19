@@ -1,160 +1,19 @@
 package com.ciro.jreactive;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.MediaType;
-import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
-import java.util.HashMap;
 import java.util.Map;
 
+/**
+ * Subida de archivos de la demo y limpieza de sus temporales.
+ *
+ * <p>Las páginas y los @Call los sirve JrxPageController, del starter. La subida sigue aquí
+ * hasta que la épica 8 la lleve al starter con un fileId opaco; entonces esta clase desaparece.
+ */
 @RestController
 public class PageController {
 
-    private final PageResolver pageResolver; // (puede quedarse)
-    private final JrxHttpApi api;
-    private final JrxRequestQueue queue;
-
-    public PageController(PageResolver pageResolver,
-                          ObjectMapper objectMapper,
-                          CallGuard guard,
-                          WsConfig wsConfig,
-                          JrxRequestQueue queue,JrxHubManager hubManager) {
-        this.pageResolver = pageResolver;
-        this.api = new JrxHttpApi(pageResolver, objectMapper, guard, wsConfig.isPersistentState(),hubManager);
-        this.queue = queue;
-    }
-
-    @GetMapping(value = {
-            "/",
-            "/{x:^(?!js|ws|css|static|jrx).*$}",
-            "/{x:^(?!js|ws|css|static|jrx).*$}/**"
-    }, produces = MediaType.TEXT_HTML_VALUE)
-    public ResponseEntity<String> page(HttpServletRequest req,
-                                       @RequestHeader(value = "X-Partial", required = false) String partial) {
-
-        String path = req.getRequestURI();
-        String sessionId = req.getSession(true).getId();
-
-        // SPA: X-Partial == "1" => renderLayout=false
-        boolean renderLayout = !"1".equals(partial);
-        
-        Map<String, String> queryParams = new HashMap<>();
-        req.getParameterMap().forEach((k, v) -> {
-            if (v != null && v.length > 0) queryParams.put(k, v[0]);
-        });
-
-        // ✅ serializamos también render por si hay rutas que disparan timers/state a la par de eventos
-        String html = queue.run(sessionId, path, () -> api.render(sessionId, path, renderLayout, queryParams));
-
-        return ResponseEntity.ok()
-                .header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
-                .header("Pragma", "no-cache")
-                .header("Expires", "0")
-                .body(html);
-    }
-
-    @PostMapping(
-            value = "/call/{qualified:.+}",
-            consumes = MediaType.APPLICATION_JSON_VALUE,
-            produces = MediaType.TEXT_PLAIN_VALUE
-    )
-    public String callMethod(@PathVariable("qualified") String qualified,
-                             @RequestBody Map<String, Object> body,
-                             HttpServletRequest req) {
-
-        System.out.println("➡️ JRX CALL qualified=" + qualified + " body=" + body);
-
-        String sessionId = req.getSession(true).getId();
-        String path = extractPath(req); // ✅ helper robusto
-            Map<String, String> queryParams = new HashMap<>();
-            req.getParameterMap().forEach((k, v) -> {
-                if (v != null && v.length > 0) queryParams.put(k, v[0]);
-            });
-
-            // 🔐 Capturamos la identidad en el HILO DE REQUEST (aquí sí existe el contexto de seguridad).
-            // OBLIGATORIO capturarla antes de la cola: la tarea corre en otro hilo virtual y la perdería.
-            java.security.Principal principal = req.getUserPrincipal();
-            java.util.Set<String> extractedRoles = new java.util.HashSet<>();
-
-            if (principal != null) {
-                // Spring Security Authentication.getAuthorities() vía reflection (sin dependencia dura):
-                // si el principal expone authorities estándar, los extraemos como strings para
-                // que ctx.roles() sirva a cualquier AuthorizationProvider declarativo.
-                try {
-                    Class<?> authClass = Class.forName("org.springframework.security.core.Authentication");
-                    if (authClass.isInstance(principal)) {
-                        Object authorities = authClass.getMethod("getAuthorities").invoke(principal);
-                        if (authorities instanceof java.util.Collection<?> col) {
-                            for (Object ga : col) {
-                                Object authority = ga.getClass().getMethod("getAuthority").invoke(ga);
-                                if (authority != null) extractedRoles.add(String.valueOf(authority));
-                            }
-                        }
-                    }
-                } catch (ClassNotFoundException ignored) {
-                    // Spring Security no está en el classpath: caemos al siguiente fallback.
-                } catch (Exception ignored) {
-                    // Error inesperado inspeccionando authorities: continuamos sin romper el request.
-                }
-
-                // Fallback: principals que exponen getRoles() (DemoPrincipal y similares).
-                // Permite que el demo funcione sin Spring Security en el classpath.
-                if (extractedRoles.isEmpty()) {
-                    try {
-                        java.lang.reflect.Method m = principal.getClass().getMethod("getRoles");
-                        Object result = m.invoke(principal);
-                        if (result instanceof java.util.Collection<?> col) {
-                            col.forEach(r -> extractedRoles.add(String.valueOf(r)));
-                        }
-                    } catch (Exception ignored) {
-                        // El principal no expone roles: AuthContext.roles() queda vacío (comportamiento histórico).
-                    }
-                }
-            }
-
-            com.ciro.jreactive.spi.AuthorizationProvider.AuthContext authCtx =
-                    (principal == null)
-                            ? com.ciro.jreactive.spi.AuthorizationProvider.AuthContext.anonymous()
-                            : new com.ciro.jreactive.spi.AuthorizationProvider.AuthContext(
-                                    principal.getName(), extractedRoles, principal);
-
-            // ✅ Cola por (sessionId+path): orden garantizado entre set/call/call
-            return queue.run(sessionId, path, () -> {
-                com.ciro.jreactive.spi.AuthorizationProvider.Holder.set(authCtx);
-                try {
-                    return api.call(sessionId, path, qualified, body, queryParams);
-                } finally {
-                    com.ciro.jreactive.spi.AuthorizationProvider.Holder.clear();
-                }
-            });
-    }
-
-    private String extractPath(HttpServletRequest req) {
-        // ✅ Preferido: si el JS algún día manda header X-Path (no rompe nada)
-        String xPath = req.getHeader("X-Path");
-        if (xPath != null && !xPath.isBlank()) return strip(xPath);
-
-        // Fallback: Referer
-        String ref = req.getHeader("Referer");
-        String path = (ref == null) ? "/" : ref.replaceFirst("https?://[^/]+", "");
-        return strip(path);
-    }
-
-    private String strip(String path) {
-        if (path == null || path.isBlank()) return "/";
-
-        int q = path.indexOf('?');
-        if (q != -1) path = path.substring(0, q);
-
-        int hash = path.indexOf('#');
-        if (hash != -1) path = path.substring(0, hash);
-
-        return path.isBlank() ? "/" : path;
-    }
-    
-    
  // 🔥 La nueva tubería pesada (HTTP Multipart)
     @PostMapping(value = "/api/upload", produces = MediaType.APPLICATION_JSON_VALUE)
     @ResponseBody
@@ -162,7 +21,7 @@ public class PageController {
         try {
             // 1. Generar ID único y ruta en la carpeta temporal del sistema operativo
             String fileId = java.util.UUID.randomUUID().toString();
-            java.io.File tempFile = java.io.File.createTempFile("jrx_" + fileId, ".tmp");
+            java.io.File tempFile = java.io.File.createTempFile(JrxFile.TEMP_PREFIX + fileId, JrxFile.TEMP_SUFFIX);
             
             // 2. Guardar directo a disco (¡Fuera de la RAM de Java!)
             file.transferTo(tempFile);
@@ -187,7 +46,7 @@ public class PageController {
             java.io.File tempDir = new java.io.File(System.getProperty("java.io.tmpdir"));
             long expirationTime = System.currentTimeMillis() - (2 * 3600 * 1000); // 2 horas de antigüedad
 
-            java.io.File[] files = tempDir.listFiles((dir, name) -> name.startsWith("jrx_") && name.endsWith(".tmp"));
+            java.io.File[] files = tempDir.listFiles((dir, name) -> JrxFile.isUploadName(name));
             
             if (files != null) {
                 for (java.io.File file : files) {

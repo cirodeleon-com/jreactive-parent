@@ -56,6 +56,9 @@ class JrxHttpApiTest {
     public String payload = "</script><script>alert('xss')</script>&"
     + String.valueOf((char) 0x2028);
 
+    // Con un @Call la página es interactiva y lleva su estado al navegador, que es lo que esta prueba revisa.
+    @Call public void refrescar() { }
+
       @Override
       protected String template() {
           return "<div>{{payload}}</div>";

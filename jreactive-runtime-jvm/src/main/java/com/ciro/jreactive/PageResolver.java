@@ -69,6 +69,26 @@ public class PageResolver {
         return res.params();
     }
 
+    /**
+     * Resolver para una petición HTTP de página. Si la página implementa {@link HttpPage}, corre
+     * su onInit si aún no corrió y después su onRequest, donde decide su código de estado y sus
+     * cabeceras. Las demás páginas se resuelven igual que siempre. Los @Call y el WebSocket usan
+     * el resolver normal y no pasan por onRequest.
+     */
+    public PageResolver forRequest(JrxResponse response) {
+        return new PageResolver(registry, store) {
+            @Override
+            public HtmlComponent getPage(String sessionId, String path, Map<String, String> queryParams) {
+                HtmlComponent page = super.getPage(sessionId, path, queryParams);
+                if (page instanceof HttpPage httpPage) {
+                    page._initIfNeeded();
+                    httpPage.onRequest(response);
+                }
+                return page;
+            }
+        };
+    }
+
     public HtmlComponent getHomePageInstance(String sessionId) {
         return getPage(sessionId, "/",null);
     }

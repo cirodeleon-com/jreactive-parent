@@ -35,6 +35,14 @@ public class JrxHttpApi {
         this.hubManager = hubManager;
     }
 
+    /**
+     * API para una petición HTTP de página: la página decide en onRequest el código de estado y
+     * las cabeceras de esa respuesta. Los @Call se atienden con la instancia normal.
+     */
+    public JrxHttpApi forRequest(JrxResponse response) {
+        return new JrxHttpApi(pageResolver.forRequest(response), objectMapper, guard, persistenceEnabled, hubManager);
+    }
+
     /** Render HTML del componente asociado a sessionId + path */
     public String render(String sessionId, String path, boolean renderLayout, Map<String, String> queryParams) {
         HtmlComponent page = pageResolver.getPage(sessionId, path, queryParams);
@@ -99,8 +107,8 @@ public class JrxHttpApi {
                 collectBindingsRecursive(layoutInstance, allBindings);
             }
             
-            // Inyectamos el Token con todo el estado consolidado
-            finalHtml = injectStatelessToken(finalHtml, allBindings, page.getId());
+            // Inyectamos el Token con el estado que la página necesita en el navegador
+            finalHtml = injectStatelessToken(finalHtml, stateForClient(page, layoutInstance, finalHtml, allBindings), page.getId());
         }
 
         return finalHtml; // 👈 Retornamos el producto final ensamblado
@@ -530,6 +538,15 @@ public class JrxHttpApi {
               .replace("\u2028", "\\u2028")
               .replace("\u2029", "\\u2029");
 
+    }
+
+    /**
+     * Estado que viaja al navegador. Una página que solo muestra datos lleva el token vacío: no
+     * repite sus datos dentro del HTML y el runtime, si está cargado, sigue sin abrir WebSocket.
+     */
+    private static Map<String, ReactiveVar<?>> stateForClient(HtmlComponent page, HtmlComponent layout,
+                                                              String html, Map<String, ReactiveVar<?>> bindings) {
+        return PageInteractivity.isInteractive(page, layout, html) ? bindings : Map.of();
     }
 
     private String injectStatelessToken(String html, Map<String, ReactiveVar<?>> all, String rootIdOrNull) {
